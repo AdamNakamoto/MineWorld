@@ -1,7 +1,8 @@
 # Audit brief
 
 What MineWorldCraft's contracts do, what they must guarantee, and where reviewers should look hardest. Everything
-referenced is in https://github.com/AdamNakamoto/MineWorld at commit `<COMMIT>`. Nothing is deployed yet: every
+referenced is in https://github.com/AdamNakamoto/MineWorld at commit `1ea2585` (the contracts are the same at every later commit
+that only touches this brief). Nothing is deployed yet: every
 contract in `contracts/src` is audited before anything goes to Robinhood Chain. The deploy settings are in
 `contracts/launch.env`.
 
@@ -87,7 +88,7 @@ limits.
 
 ## 2. Scope
 
-Repository https://github.com/AdamNakamoto/MineWorld, commit `<COMMIT>`. Solidity 0.8.26, via-IR, optimizer 200
+Repository https://github.com/AdamNakamoto/MineWorld, commit `1ea2585`. Solidity 0.8.26, via-IR, optimizer 200
 runs, EVM `cancun` (transient storage: `MineHook`'s fee slot and OpenZeppelin's `ReentrancyGuardTransient`). Libraries
 are the same commits Courier World uses: OpenZeppelin Contracts 5.4.0, Uniswap v4-core `46c6834`, forge-std 1.17.0.
 
