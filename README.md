@@ -252,22 +252,35 @@ draws and fail while the generated files are stale:
 ~/.local/node/bin/node tools/gen-crafter-art.mjs --check   # or only check they're up to date
 ```
 
-Settings are in `contracts/launch.env` (public values only). The real launch, after an audit:
+Settings are in `contracts/launch.env` (public values only). The real launch, step by step:
 
-1. Generate the server's voucher key straight into the Worker (never print it) and note its address:
+0. **Audit first.** Every contract in `contracts/src` goes to IMD Swarm with [`AUDIT.md`](AUDIT.md) (the brief) and
+   the commit it describes. Fix every finding, have IMD re-check the fixes, and deploy only the commit IMD has seen.
+1. **Accounts.** The owner wallet (`OWNER`, 0x6e85…70eD) holds a little ETH on Robinhood Chain for gas. The world
+   server goes on its own free Cloudflare account (Durable Object limits are per account, so Courier World's room is
+   unaffected): `npx wrangler login` in `multiplayer/`.
+2. **The voucher key.** Generate it straight into the Worker (never printed) and note its address:
    `npx wrangler secret put MINING_KEY` in `multiplayer/`.
-2. `MINING_SIGNER=<that address> ./script/deploy-mainnet.sh launch --broadcast --browser --browser-disable-open`
-   (sign at http://127.0.0.1:9545 with the wallet on Robinhood Chain; it becomes the owner of MiningSites).
-3. `./script/deploy-mainnet.sh crafters --broadcast --browser --browser-disable-open` (the art, then the collection
-   with the sale closed; the reveal secret goes to `~/mineworldcraft-crafters-reveal-secret.txt`, never printed; keep
-   it safe). Open the mint with `setSaleOpen(true)`; after it, `setSaleOpen(false)`, wait for the next block, then
+3. **Dry runs** against a fork, nothing sent: `./script/deploy-mainnet.sh crafters`, then
+   `MINING_SIGNER=<that address> ./script/deploy-mainnet.sh launch`.
+4. **The Crafters:** `./script/deploy-mainnet.sh crafters --broadcast --browser --browser-disable-open`. Open
+   http://127.0.0.1:9545 in your browser, wallet on Robinhood Chain, and approve each transaction. The reveal secret
+   goes to `~/mineworldcraft-crafters-reveal-secret.txt` (never printed): keep a copy in a password manager.
+5. **$MINE and the game contracts:** `MINING_SIGNER=<address> CRAFTERS=<Crafters address> ./script/deploy-mainnet.sh
+   launch --broadcast --browser --browser-disable-open`: the hook, $MINE (its owner renounced), MineVault, MiningSites,
+   MinePayments and CrafterLevels; the pool opened with 10.5M $MINE locked; the hook renounced. If the signing wallet
+   isn't `OWNER`, `OWNER` then makes the calls the script prints (`acceptOwnership`, `setAttributesExtension`).
+6. **Verify the sources:** `./script/deploy-mainnet.sh verify` (Sourcify, as Courier World). A token scanner should
+   read $MINE like $STAMP: owner renounced, no proxy, pause, blacklist or transfer tax.
+7. **The world server:** set `CHAIN_ID`, `CHAIN_RPC`, `MINING_ADDRESS` (the MiningSites proxy), `CRAFTERS_ADDRESS`,
+   `LEVELS_ADDRESS` and `PAYMENTS_ADDRESS` in `multiplayer/wrangler.toml` and the site's address in the Worker's
+   `ORIGINS`, then `npx wrangler deploy`.
+8. **The website:** `./script/export-web.sh` writes `web/deployments/robinhood.json`; put the Worker's address in
+   `web/config.js` (`LIVE_ROOM`) and publish `web/` as it is (no build), e.g. on Vercel or IMD's site hosting.
+9. **The mint:** `setSaleOpen(true)`. When it's over, `setSaleOpen(false)`, wait for the next block, then
    `reveal(secret)`.
-4. Set `CHAIN_ID`, `CHAIN_RPC`, `MINING_ADDRESS`, `CRAFTERS_ADDRESS`, `LEVELS_ADDRESS` (CrafterLevels, for the
-   Crafters' boosts) and `PAYMENTS_ADDRESS` (MinePayments, for rocket tickets) in `multiplayer/wrangler.toml`, deploy the
-   Worker, put its address in `web/config.js` (`LIVE_ROOM`) and its domain in the Worker's `ORIGINS`, and publish the
-   site with `web/deployments/robinhood.json` (written by `export-web.sh`).
-5. On OpenSea: set the collection's links and pictures (or call `setLinks` and `setCollectionImages`) and turn on
-   creator earnings.
+10. **OpenSea:** set the collection's links and pictures (or call `setLinks` and `setCollectionImages`) and turn on
+    creator earnings in OpenSea Studio.
 
 ## The world server
 

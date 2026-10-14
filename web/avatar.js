@@ -8,6 +8,32 @@ import { ARMOR_COLOURS } from "./textures.js";
 
 const PX = 1.8 / 32; // one "pixel" of the 32-pixel-tall figure, in metres
 
+/// The turn that takes a held icon's blade (its diagonal, up and to the right) to `blade` and its face to `face`,
+/// both given in the body's frame (the miner faces +z; its right is -x).
+function turnTo(blade, face) {
+  const b = new THREE.Vector3(1, 1, 0).normalize(), n = new THREE.Vector3(0, 0, 1), s = new THREE.Vector3().crossVectors(b, n);
+  const d = new THREE.Vector3(...blade).normalize();
+  const f = new THREE.Vector3(...face);
+  f.addScaledVector(d, -f.dot(d)).normalize();
+  const t = new THREE.Vector3().crossVectors(d, f);
+  const m = new THREE.Matrix4().makeBasis(d, f, t).multiply(new THREE.Matrix4().makeBasis(b, n, s).transpose());
+  return new THREE.Quaternion().setFromRotationMatrix(m);
+}
+const armTurn = (angle) => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), angle);
+/// How each kind of held thing (held.js heldKind) is held: the right arm's angle at rest (negative raises it forward)
+/// and the thing's turn in the hand, given in the arm's frame (so it's the body-frame turn undone by the arm's).
+const POSES = {
+  // A weapon held out, ready, like the classic games' heroes: the arm raised forward, the blade out to the side, a
+  // little forward and down, its face to the front.
+  weapon: { arm: -1.0, q: armTurn(1.0).multiply(turnTo([-1, -0.3, 0.35], [0, 0.15, 1])) },
+  // A tool with the arm down: its head up, forward and out, its face half to the front.
+  tool: { arm: 0, q: armTurn(0.3).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -0.75 * Math.PI)) },
+  // A block a little forward, as if about to place it.
+  block: { arm: -0.35, q: new THREE.Quaternion() },
+  none: { arm: 0, q: new THREE.Quaternion() },
+};
+POSES.item = POSES.tool;
+
 /// The look of a player without a Crafter: brown bob, charcoal hoodie, no hat.
 export const ROOKIE = { hair: 9, outfit: 4, eyes: 0, gaze: 0, background: 0, skin: 1, hat: 0, blush: 0 };
 
@@ -143,13 +169,18 @@ export function createAvatar(traits, gear = [0, 0, 0, 0]) {
   grip.position.set(0, -11 * PX, 0.5 * PX);
   arms[0].add(grip);
 
-  let phase = 0, swing = 0;
+  let phase = 0, swing = 0, rest = 0; // rest: the right arm's angle for what it holds
   return {
     root, head,
-    /// Puts `model` (held.js heldModel, or null for nothing) in the hand, in place of what was there.
+    /// Puts `model` (held.js heldModel, or null for nothing) in the hand, in place of what was there, and holds it
+    /// the way its kind is held (POSES).
     hold(model) {
       grip.clear();
+      const pose = POSES[model?.userData.kind] ?? POSES.none;
+      rest = pose.arm;
+      grip.quaternion.copy(pose.q);
       if (model) grip.add(model);
+      arms[0].rotation.x = rest;
     },
     /// speed: metres per second along the ground; swinging: mining or fighting.
     animate(dt, speed, swinging) {
@@ -157,7 +188,7 @@ export function createAvatar(traits, gear = [0, 0, 0, 0]) {
       const a = Math.sin(phase) * Math.min(speed / 4, 1) * 0.8;
       legs[0].rotation.x = a;
       legs[1].rotation.x = -a;
-      arms[0].rotation.x = -a;
+      arms[0].rotation.x = rest - a * (rest ? 0.25 : 1); // (a raised arm barely swings as you walk)
       arms[1].rotation.x = a;
       swing = swinging ? (swing + dt * 9) % (Math.PI * 2) : 0;
       if (swinging) arms[0].rotation.x = -1.2 - Math.sin(swing) * 0.9;

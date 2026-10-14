@@ -270,7 +270,11 @@ function updateHeld() {
     me?.hold(heldModel(id));
     sendGear();
   }
-  if (heldMesh) { heldGroup.remove(heldMesh); heldMesh.geometry.dispose(); heldMesh.material.map !== atlasTex && heldMesh.material.map?.dispose(); heldMesh.material.dispose(); heldMesh = null; }
+  if (heldMesh) {
+    heldGroup.remove(heldMesh);
+    if (heldMesh.isMesh) { heldMesh.geometry.dispose(); heldMesh.material.dispose(); } // (an item's model is shared: held.js)
+    heldMesh = null;
+  }
   const s = inv.slot(player.sel);
   if (!s) return;
   if (s.id < 64 && !BLOCKS[s.id]?.plant && s.id !== BLK.TORCH) {
@@ -280,10 +284,11 @@ function updateHeld() {
     heldMesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ map: atlasTex, alphaTest: 0.5, transparent: s.id === WATER }));
     heldMesh.rotation.set(0.2, 0.7, 0);
   } else {
-    const t = new THREE.TextureLoader().load(iconFor(s.id, atlas));
-    t.magFilter = THREE.NearestFilter;
-    heldMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.34), new THREE.MeshBasicMaterial({ map: t, transparent: true, alphaTest: 0.3, side: THREE.DoubleSide }));
-    heldMesh.rotation.set(0, -0.3, 0.2);
+    // The same model the others see in your hand (held.js), smaller, its blade or head up and to the left.
+    heldMesh = heldModel(s.id);
+    heldMesh.scale.setScalar(heldMesh.userData.kind === "weapon" ? 0.38 : 0.48);
+    heldMesh.rotation.set(0, -0.35, 1.4);
+    heldMesh.position.set(0.02, 0.02, 0);
   }
   heldGroup.add(heldMesh);
 }

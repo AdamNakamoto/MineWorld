@@ -1,10 +1,11 @@
-// What a miner holds, as a model for their hand in third person (your own, seen with V, and everyone else's): a block
-// is a small cube in its own textures; a tool, weapon, food, torch or plant is its 16 x 16 icon given one pixel of
-// thickness, the way the classic block games draw a held item. One model is made per item and shared by every hand
-// holding it (its meshes are marked userData.shared, so an avatar's dispose() leaves them alone).
+// What a miner holds, as a model for their hand (your own, in first person and seen with V, and everyone else's): a
+// block is a small cube in its own textures; a tool, weapon, food, torch or plant is its 16 x 16 icon given one pixel
+// of thickness, the way the classic block games draw a held item. Crystal things glow: a pale outline round the icon,
+// unlit, so it shows at night too. One model is made per item and shared by every hand holding it (its meshes are
+// marked userData.shared, so an avatar's dispose() leaves them alone). How it's held (the pose) is avatar.js's.
 
 import * as THREE from "https://esm.sh/three@0.160.0";
-import { BLOCKS, TORCH, WATER, TOOLS, WAR_HAMMER } from "./blocks.js";
+import { BLOCKS, TORCH, WATER, TOOLS, ARMOR, CRYSTAL_PICK, CRYSTAL_SWORD } from "./blocks.js";
 import { ATLAS_TILES, faceTiles, iconCanvas } from "./textures.js";
 
 let atlas = null, atlasTex = null;
@@ -45,7 +46,7 @@ function blockMeshes(id) {
 /// Item `id`'s icon, `size` metres across, one icon pixel thick: the picture on both faces, and the edge of every
 /// pixel that borders a clear one filled in with that pixel's colour. Placed so the point (gx, gy) (icon pixels, y
 /// down) is at the origin, where the hand holds it.
-function itemMeshes(id, size, gx, gy) {
+function itemMeshes(id, size, gx, gy, glow = null) {
   const canvas = iconCanvas(id, atlas);
   const data = canvas.getContext("2d").getImageData(0, 0, 32, 32).data;
   const S = size / N;
@@ -90,29 +91,60 @@ function itemMeshes(id, size, gx, gy) {
   edges.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
   edges.setIndex(idx);
   const rim = new THREE.Mesh(edges, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
-  return [front, back, rim];
+  if (!glow) return [front, back, rim];
+
+  // The glow: every clear pixel touching the icon (corners too), on a plane through the middle of the item, so it
+  // rings the outline from both sides.
+  const halo = document.createElement("canvas");
+  halo.width = halo.height = N + 2;
+  const h = halo.getContext("2d");
+  h.fillStyle = glow;
+  for (let y = -1; y <= N; y++) for (let x = -1; x <= N; x++) {
+    if (solid(x, y)) continue;
+    let near = false;
+    for (let dy = -1; dy <= 1 && !near; dy++) for (let dx = -1; dx <= 1; dx++) if (solid(x + dx, y + dy)) { near = true; break; }
+    if (near) h.fillRect(x + 1, y + 1, 1, 1);
+  }
+  const haloTex = new THREE.CanvasTexture(halo);
+  haloTex.magFilter = THREE.NearestFilter;
+  haloTex.minFilter = THREE.NearestFilter;
+  haloTex.colorSpace = THREE.SRGBColorSpace;
+  const ring = new THREE.Mesh(
+    new THREE.PlaneGeometry(size + 2 * S, size + 2 * S),
+    new THREE.MeshBasicMaterial({ map: haloTex, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide }),
+  );
+  ring.position.set(ox + size / 2, oy - size / 2, 0);
+  return [front, back, rim, ring];
 }
 
-/// A model of item `id` for an avatar's hand, or null for an empty hand. Its origin goes at the hand (avatar.hold):
-/// with the arm hanging down, a tool's head or a sword's blade points up, forward and out to the side, its
-/// flat side turned half towards the front, so it reads from in front, from behind and from the side.
+/// The glow round an item, if it has one: Crystal tools, weapons and armor.
+const GLOW = "#f3d2ff";
+const glowOf = (id) => (id === CRYSTAL_PICK || id === CRYSTAL_SWORD || ARMOR[id]?.tier === 4 ? GLOW : null);
+/// How an item is held (avatar.js poses the arm for it): "weapon" (swords and the war hammer, held out, ready),
+/// "tool" (pickaxes), "block" or "item" (food, torches, armor and the rest).
+export function heldKind(id) {
+  if (isBlock(id)) return "block";
+  const t = TOOLS[id];
+  return t?.kind === "sword" ? "weapon" : t ? "tool" : "item";
+}
+
+/// A model of item `id` for a hand, or null for an empty hand: the icon (or cube) in its own plane, the point where
+/// it's gripped at the origin, and its kind (heldKind) in userData.kind. avatar.js turns it to suit the pose.
 export function heldModel(id) {
   if (!id || !atlas) return null;
+  const kind = heldKind(id);
   if (!cache.has(id)) {
-    const tool = TOOLS[id] || id === WAR_HAMMER;
-    // Tools and weapons are drawn corner to corner, handle at the bottom left: held near its end. Anything else is
-    // held by its middle, smaller.
-    const meshes = isBlock(id) ? blockMeshes(id) : tool ? itemMeshes(id, 0.7, 4, 12) : itemMeshes(id, 0.42, 8, 11);
+    // Tools and weapons are drawn corner to corner, handle at the bottom left: held near its end (a weapon is a
+    // little bigger). Anything else is held by its middle, smaller.
+    const meshes = kind === "block" ? blockMeshes(id)
+      : kind === "weapon" ? itemMeshes(id, 0.9, 4, 12, glowOf(id))
+      : kind === "tool" ? itemMeshes(id, 0.7, 4, 12, glowOf(id))
+      : itemMeshes(id, 0.42, 8, 11, glowOf(id));
     for (const m of meshes) m.userData.shared = true;
-    cache.set(id, { meshes, block: isBlock(id) });
+    cache.set(id, meshes);
   }
-  const { meshes, block } = cache.get(id);
-  const tilt = new THREE.Group(), turn = new THREE.Group();
-  if (!block) {
-    turn.rotation.y = -0.75 * Math.PI; // the icon's right (the blade) points forward and out (the right hand's out is -x)
-    tilt.rotation.x = 0.3; // and up, a little less steep than the icon's 45 degrees
-  }
-  for (const m of meshes) turn.add(m.clone());
-  tilt.add(turn);
-  return tilt;
+  const model = new THREE.Group();
+  for (const m of cache.get(id)) model.add(m.clone());
+  model.userData.kind = kind;
+  return model;
 }
