@@ -82,8 +82,9 @@ contract CrafterLevelsTest is Test {
         crafters.mint(1);
         vm.startPrank(owner);
         crafters.setSaleOpen(false);
-        vm.roll(block.number + 1);
         crafters.reveal(SECRET);
+        vm.roll(block.number + 2);
+        crafters.seal();
         crafters.setAttributesExtension(address(levels));
         vm.stopPrank();
     }

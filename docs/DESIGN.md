@@ -14,18 +14,18 @@ $STAMP hook for the 4% fee, the audited enforced-royalty NFT pattern, and server
 | 50% to mine | 10,500,000 $MINE minted by the mining vault (`MineVault`, the token's one minter) only as players convert what they earn in the game: at most 35,000 a UTC day and 10,500,000 in all, fixed in the vault whatever the rules contract asks (at least 300 days). Nobody (not the owner) can take it any other way |
 | 4% trading fee | Every swap pays 4% of its IMD side to `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` (the fee recipient). Plain transfers are never taxed |
 | Mining site | Opened once per wallet with ETH (0.005 ETH at launch, owner-settable, never zero), paid straight to the treasury. Needed to convert earnings to $MINE. Not transferable. Levels 1 to 5 convert 50%, 60%, 70%, 85% and 100% of the earnings claimed; upgrades cost 4,620, 18,942, 77,662 and 318,415 $MINE |
-| Crafter levels | `CrafterLevels`: a Crafter's holder raises it from level 1 to 5 for 2,310, 9,471, 38,831 and 159,207 $MINE. The level belongs to the token (it stays when sold) and adds to its boost |
+| DIO levels | `CrafterLevels`: a DIO's holder raises it from level 1 to 5 for 2,310, 9,471, 38,831 and 159,207 $MINE. The level belongs to the token (it stays when sold) and adds to its boost |
 | Shop and tickets | `MinePayments`: the Smithy's shop (kind 0) and rocket tickets (kind 1, 2,100 $MINE to Deepvein or Cinderfall, 210 to Red Mesa), at the prices in `web/shop.js` and `web/zones.js` |
-| Burns | Site upgrades, Crafter levels and the shop burn 75% of what they cost (owner-settable, 0-100%) and send the rest to the treasury; tickets burn nothing. Taken straight from the player's wallet with an exact approval: the contracts never hold anyone's $MINE |
-| NFT | "MineWorld Crafters": 3,333 characters from the user's own pixel-art designs, drawn and stored fully on-chain (the contract builds each SVG from the trait layers in `web/crafters-art.js`). Free mint (gas only; price owner-settable), per-wallet limit, commit-reveal. No two alike: hair x outfit x eyes x gaze is a different one of 6,912 combinations for every token; background, skin, hat and blush are weighted. The Crafter a player wears is how their miner looks in the game, and boosts their mining by its rarity and level (`web/boosts.js`). 5% royalty, enforced (ERC721-C, OpenSea's registry), rate fixed. Owner can update the collection's website and social links shown on OpenSea at any time |
+| Burns | Site upgrades, DIO levels and the shop burn 75% of what they cost (owner-settable, 0-100%) and send the rest to the treasury; tickets burn nothing. Taken straight from the player's wallet with an exact approval: the contracts never hold anyone's $MINE |
+| NFT | "I'M DIO" (symbol DIO; contract `MineWorldCrafters`, first named MineWorld Crafters: the code keeps that name): 3,333 characters from the user's own pixel-art designs, drawn and stored fully on-chain (the contract builds each SVG from the trait layers in `web/crafters-art.js`). Free mint (gas only; price owner-settable), per-wallet limit, commit-reveal (the owner publishes the secret, the seed waits for the next block's hash, anyone seals it). No two alike: hair x outfit x eyes x gaze is a different one of 6,912 combinations for every token; background, skin, hat and blush are weighted. The DIO a player wears is how their miner looks in the game, and boosts their mining by its rarity and level (`web/boosts.js`). 5% royalty, enforced (ERC721-C, OpenSea's registry), rate fixed. Owner can update the collection's website and social links shown on OpenSea at any time |
 | Treasury | Site sales, the unburned share of upgrades and shop payments, tickets, any NFT mint price and the NFT royalty. Defaults to the fee recipient `0x6e85…70eD`; separate setting |
-| Owner | `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` owns the vault, the three proxies and the Crafters. Two-step transfer, never renounced (`OwnedUUPS`); can be a multisig or a timelock |
+| Owner | `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` owns the vault, the three proxies and I'M DIO. Two-step transfer, never renounced (`OwnedUUPS`); can be a multisig or a timelock |
 
 No auto yield farming: nothing pays for holding or waiting. $MINE is only paid for things players do in the game.
 
 **Fixed forever:** the token, the vault (its daily and total limits; a new distributor only two days after it's
-proposed, in the open), the hook (renounced: the 4% fee and its recipient are final) and the locked liquidity, and the
-Crafters' art, rarities and 5% royalty. **Upgradeable** (UUPS, owner only, state in ERC-7201 namespaced storage so
+proposed, in the open), the hook (renounced: the 4% fee is final, and only the current fee recipient can move its fees)
+and the locked liquidity, and I'M DIO's art, rarities and 5% royalty. **Upgradeable** (UUPS, owner only, state in ERC-7201 namespaced storage so
 every site, level and total carries over): `MiningSites`, `CrafterLevels`, `MinePayments`. Whatever code runs in them,
 the vault caps what can be minted at 35,000 a day.
 
@@ -41,8 +41,8 @@ the vault caps what can be minted at 35,000 a day.
    sword. Each wallet earns at most a daily cap (server-side: `DAILY_EARN_CAP` 300 times its NFT cap boost and the
    zone's `capMul`), and everyone together at most `WORLD_DAILY_CAP` (35,000) a day. The ledger counts ten-thousandths
    of a $MINE (`UNIT`); vouchers are in wei.
-5. NFT boosts (`web/boosts.js`): the NFTs a signed-in player uses (one per slot: Crafter, skin, companion, aura,
-   vehicle; only the Crafter is out) add a % to their block-breaking speed (allowed for in the server's break-rate
+5. NFT boosts (`web/boosts.js`): the NFTs a signed-in player uses (one per slot: DIO, skin, companion, aura,
+   vehicle; only the DIO is out) add a % to their block-breaking speed (allowed for in the server's break-rate
    check), to every block, monster and boss share they earn, to their daily cap, and (client only) to walking. Totals
    are clamped (+150% speed, +150% earn, +300% cap, +100% move). The server checks ownership and reads the tier and
    level on-chain when the player signs in, wears or equips, and again every 10 minutes while they earn. Nothing pays
@@ -59,9 +59,10 @@ the vault caps what can be minted at 35,000 a day.
 - `openSite()` payable: exactly `sitePrice`, once per wallet, ETH forwarded to `treasury`; the site opens at level 1.
   `siteOf(address) → uint64 openedAt` (0 = none), `hasSite(address) → bool`, `siteLevel(address) → level` (0 = none).
   Event `SiteOpened(address indexed owner, uint256 price)`.
-- `upgradeSite(uint256 maxCost)`: raises the caller's site one level for `upgradeCost(level + 1)` $MINE, taken from
-  the wallet with its approval: `upgradeBurnBps` (75%) burned, the rest to the treasury. The game passes the cost it
-  shows as `maxCost` and approves exactly that. Reverts `NoSite`, `MaxLevel`, `CostAboveMax(cost, maxCost)`. Event `SiteUpgraded(address indexed owner, uint256 level, uint256 cost, uint256 burned)`.
+- `upgradeSite(uint256 maxCost, uint256 minRateBps)`: raises the caller's site one level for `upgradeCost(level + 1)`
+  $MINE, taken from the wallet with its approval: `upgradeBurnBps` (75%) burned, the rest to the treasury. The game
+  passes the cost and the next level's rate it shows, and approves exactly the cost. Reverts `NoSite`, `MaxLevel`,
+  `CostAboveMax(cost, maxCost)`, `RateBelowMin(rate, minRateBps)`. Event `SiteUpgraded(address indexed owner, uint256 level, uint256 cost, uint256 burned)`.
   `maxLevel()` (5 at launch), `upgradeCost(level)` (2 to maxLevel), `upgradeCosts()`, `upgradeBurnBps()`.
 - Rates: `rateBps(address)` (the wallet's, 0 without a site), `levelRateBps(level)`, `rates()`: 5,000, 6,000, 7,000,
   8,500 and 10,000 at launch.
@@ -84,14 +85,17 @@ the vault caps what can be minted at 35,000 a day.
 **MineVault** (not upgradeable): `release(to, amount)` only from `distributor` (MiningSites), at most `DAILY_LIMIT`
 (35,000) a UTC day and `TOTAL_LIMIT` (10,500,000) in all; `released`, `releasedToday()`, `remaining()`, `roomToday()`.
 Owner: `proposeDistributor` (an address, code or not: a proxy's predicted address), `cancelDistributor`,
-`acceptDistributor` (after `DISTRIBUTOR_DELAY`, 2 days, and only a contract whose `owner()` is the vault's owner),
-`sweep`. A replacement MiningSites proxy is deployed with `initialize` in its constructor (it accepts the vault's
-pending distributor), never left uninitialised.
+`acceptDistributor` (after `DISTRIBUTOR_DELAY`, 2 days, and only a contract whose `owner()` is the vault's owner,
+`vault()` the vault and `predecessor()` the current distributor), `sweep`. A replacement MiningSites proxy is deployed
+with `initialize` in its constructor (which alone, or the vault's owner, can run it; it accepts the vault's pending
+distributor and records the current one as its predecessor). It carries each player's site, `settled` and `claimed`
+over (`bookOf` reads through; a player's first `openSite`, `upgradeSite` or `claim` imports them), and the replaced
+one retires: its `openSite`, `upgradeSite` and `claim` revert `NotActive`. Per-day counters restart at a replacement.
 
 **CrafterLevels** (UUPS proxy): `levelOf(tokenId)` (1 until upgraded), `upgrade(tokenId, maxCost)` by the token's
 holder for `upgradeCost(level + 1)`, never more than `maxCost` (75% burned; costs 2,310, 9,471, 38,831, 159,207 at launch, each at most 2,000,000), `maxLevel`,
 `upgradeCosts`, `upgradeBurnBps`; event `CrafterUpgraded(uint256 indexed tokenId, address indexed holder, uint256 level,
-uint256 cost, uint256 burned)`. `attributesOf(tokenId)` is the Crafter's "Level" trait. Owner: costs, burn share,
+uint256 cost, uint256 burned)`. `attributesOf(tokenId)` is the DIO's "Level" trait. Owner: costs, burn share,
 `addLevel(cost)`, treasury, upgrades.
 
 **MinePayments** (UUPS proxy): `pay(kind, amount, ref)` takes `amount` from the caller (exact approval), burns the
@@ -101,7 +105,7 @@ amount, uint256 burned, bytes32 indexed ref)`. Kinds: 0 "shop" (7,500), 1 "ticke
 contract's. The game makes `ref` 32 random bytes per payment.
 
 How the game pays: approve exactly the price for the contract that takes it (unless the allowance is exactly that
-already), then call it (`chain.js` `payMine`). Site upgrades and Crafter levels are on-chain state the game reads back.
+already), then call it (`chain.js` `payMine`). Site upgrades and DIO levels are on-chain state the game reads back.
 The shop checks its own receipts (the Paid event with this wallet, kind 0, the price and its `ref`): inventories live
 in the browser, and every delivered payment's hash is remembered there, so none delivers twice. Tickets are checked by
 the world server (below).
@@ -149,9 +153,9 @@ while someone is in the fight.
 Every $MINE amount the room sends is in units of 1/10,000 $MINE (`rewards.js` UNIT): `["earn", units, today, total,
 what]` (`what` a block id, a monster, "boss", or "cap" / "worldcap" with 0), `["signedin", wallet, token, today, total,
 dailyCap, name]`, `["bossreward", units, ...]`. Vouchers stay 18-decimal wei of the lifetime total (units x 1e14). NFT
-boosts (`web/boosts.js`): client → room `["wear", crafterId | null]` (the Crafter slot, as before) and `["equip", slot,
+boosts (`web/boosts.js`): client → room `["wear", crafterId | null]` (the DIO slot, as before) and `["equip", slot,
 tokenId | null]` (any other slot: checked with `ownerOf` and the slot's `tierOf` on its contract; "coming soon" while it
-has none) and `["recheck"]` (read what the player uses again now, sent after leveling up the Crafter they wear; two at
+has none) and `["recheck"]` (read what the player uses again now, sent after leveling up the DIO they wear; two at
 once, then one every 15 s; answered with a boost); room → client `["boost", speed, earn, cap, move, sources, dailyCap]`,
 sources `[slot, label, speed, earn, cap, move]` per item, dailyCap in units for the zone the player is on (sent after a
 wear or equip, a flight, a recheck, and when a re-check changes it). Local testing only (`wrangler dev --var DEV_HOOKS:1`, connections to that local server):

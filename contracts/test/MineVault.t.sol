@@ -9,10 +9,12 @@ import {MineToken} from "../src/MineToken.sol";
 import {MineVault} from "../src/MineVault.sol";
 
 /// Stands in for MiningSites: asks the vault to mint. Owned by the vault's owner once wired (as a MiningSites proxy
-/// initialised for that vault is), or by whoever `setOwner` names.
+/// initialised for that vault is), or by whoever `setOwner` names. Its predecessor is the vault's distributor of the
+/// moment (a replacement follows the one it replaces), unless `setPredecessor` fixes one.
 contract MockDistributor {
     MineVault public vault;
     address public owner;
+    address internal fixedPredecessor;
 
     function setVault(MineVault v) external {
         vault = v;
@@ -21,6 +23,18 @@ contract MockDistributor {
 
     function setOwner(address o) external {
         owner = o;
+    }
+
+    function setVaultOnly(MineVault v) external {
+        vault = v;
+    }
+
+    function setPredecessor(address p) external {
+        fixedPredecessor = p;
+    }
+
+    function predecessor() external view returns (address) {
+        return fixedPredecessor != address(0) ? fixedPredecessor : vault.distributor();
     }
 
     function pay(address to, uint256 amount) external {
@@ -229,9 +243,26 @@ contract MineVaultTest is VaultFixture {
         vault.acceptDistributor();
         vm.stopPrank();
 
-        // The owner's own: accepted, and only it mints from then on.
+        // Owned by the owner, but paying from another vault, or not following the current distributor: refused.
+        (, MineVault otherVault) = _vault(owner, address(d), makeAddr("pool2"));
+        d.setVaultOnly(otherVault);
+        d.setOwner(owner);
+        vm.startPrank(owner);
+        vault.proposeDistributor(address(d));
+        vm.warp(_now() + 2 days);
+        vm.expectRevert(MineVault.WrongVault.selector);
+        vault.acceptDistributor();
+        vm.stopPrank();
         d.setVault(vault);
+        d.setPredecessor(address(next)); // not the distributor it would replace (`sites`)
+        vm.prank(owner);
+        vm.expectRevert(MineVault.NotASuccessor.selector);
+        vault.acceptDistributor();
+        d.setPredecessor(address(0));
+
+        // The owner's own, for this vault, following the current distributor: accepted, and only it mints from then on.
         assertEq(d.owner(), owner);
+        assertEq(d.predecessor(), address(sites));
         vm.startPrank(owner);
         vault.proposeDistributor(address(d));
         vm.warp(_now() + 2 days);

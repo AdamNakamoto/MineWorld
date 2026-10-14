@@ -9,10 +9,10 @@ import {UpgradeCosts} from "./UpgradeCosts.sol";
 import {ICrafterAttributes, ICrafterMetadata} from "./ICrafterAttributes.sol";
 
 /// @title CrafterLevels
-/// @notice Levels for MineWorld Crafters, bought with $MINE. Every Crafter starts at level 1; its holder raises it a
-///         level at a time for `upgradeCost(level)` (see UpgradeCosts: 75% burned at launch, the rest to the treasury,
-///         taken straight from the holder's wallet). The level belongs to the token, so it stays when the Crafter is
-///         sold or given away. It shows on marketplaces as the "Level" trait: MineWorldCrafters reads it through
+/// @notice Levels for the I'M DIO characters (contract MineWorldCrafters; a "Crafter" here is one DIO), bought with
+///         $MINE. Every Crafter starts at level 1; its holder raises it a level at a time for `upgradeCost(level)`
+///         (see UpgradeCosts: 75% burned at launch, the rest to the treasury, taken straight from the holder's wallet).
+///         The level belongs to the token, so it stays when the Crafter is sold or given away. It shows on marketplaces as the "Level" trait: MineWorldCrafters reads it through
 ///         `attributesOf` once its owner points it here (`setAttributesExtension`).
 ///
 ///         Behind a UUPS proxy: the owner can tune the costs, the burn share, add levels (up to 20, never fewer) and

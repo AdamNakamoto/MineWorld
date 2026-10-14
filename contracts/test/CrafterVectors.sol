@@ -10,7 +10,7 @@ library CrafterVectors {
     /// @notice keccak256 of each source file when this was generated: forge test fails once one changes, until
     ///         `~/.local/node/bin/node tools/gen-crafter-art.mjs` is run again.
     bytes32 internal constant ART_JS = 0x6fc62065a68a3e9c77385e1e6c654c3f3d754b9c614b785856a1be7b5cfecb2d; // web/crafters-art.js
-    bytes32 internal constant RULES_JS = 0x23f1a0b55134fecc14d5e0e6dc917a7bf21e094c5c45fec00a3372d9ce34df84; // web/crafters.js
+    bytes32 internal constant RULES_JS = 0xa3faaab751c276611ff26e9eccc48777ecd24840a325ec8dd05c663b5365c943; // web/crafters.js
     bytes32 internal constant GENERATOR = 0x7c8ba0160c088815044dc293e11a73dc1e525c848caf6e53c65b34c5e758f44d; // tools/gen-crafter-art.mjs
 
     /// @notice The seed the token vectors were worked out with (keccak256("MineWorld Crafters test vectors")).

@@ -1,5 +1,5 @@
 // The on-chain side: log in with a browser wallet, open a mining site (ETH) and upgrade it ($MINE), convert earnings to
-// $MINE with the room's voucher, mint MineWorld Crafters (and read their traits) and level them up ($MINE), pay the game
+// $MINE with the room's voucher, mint I'M DIO characters (and read their traits) and level them up ($MINE), pay the game
 // in $MINE (the shop, rocket tickets: MinePayments), and trade $MINE. Every $MINE payment approves exactly what it
 // pays, then pays (payMine). Uses web/chain.json from ./dev.sh when
 // present, otherwise the mainnet deployment (web/deployments/robinhood.json). Without either, the game plays and the
@@ -22,18 +22,19 @@ const ERROR_TEXT = {
   Paused: "Converting is paused for now. Your earnings stay safe on the ledger.",
   Expired: "That voucher expired. Try again.",
   BadSignature: "The voucher didn't check out. Try again.",
-  SaleClosed: "The Crafters mint is closed.",
-  SoldOut: "Sold out: all 3,333 Crafters have been minted.",
+  SaleClosed: "The I'M DIO mint is closed.",
+  SoldOut: "Sold out: all 3,333 DIOs have been minted.",
   BadQuantity: "Mint between 1 and 5 at a time.",
-  WalletLimit: "That's as many Crafters as one wallet can mint.",
-  NotRevealed: "Still sealed: the Crafters are revealed after the mint.",
-  SaleStillOpen: "The Crafters mint is still open.",
-  NoRevealBlock: "The Crafters mint hasn't closed yet.",
-  RevealTooSoon: "Not yet: the block the mint closed in isn't over. Try again in a few seconds.",
-  RevealBlockExpired: "Too late for this one: nobody locked in the reveal in time. The owner closes the mint again to fix a new reveal block.",
-  AlreadySealed: "Already locked in: every Crafter's look is fixed.",
-  SealPending: "The reveal's randomness is ready: lock it in first (anyone can).",
+  WalletLimit: "That's as many DIOs as one wallet can mint.",
+  NotRevealed: "Still sealed: the DIOs are revealed after the mint.",
+  SaleStillOpen: "The I'M DIO mint is still open.",
+  NoSecret: "Not yet: the owner hasn't published the reveal's secret.",
+  RevealTooSoon: "Not yet: the reveal's block isn't over. Try again in a moment.",
+  EntropyUnavailable: "The chain didn't give the reveal's block hash. Try again in a moment.",
+  AlreadyRevealed: "Already revealed: every DIO's look is fixed.",
   CostAboveMax: "The price just changed. Check the new price and try again.",
+  RateBelowMin: "The level's rate just changed. Check it and try again.",
+  NotActive: "This mining contract has been replaced. Reload the page to use the new one.",
   Slippage: "The price moved past your slippage limit. Try again, or allow more slippage.",
   PartialFill: "The pool can't fill that much right now. Try a smaller amount.",
   DustSwap: "That amount is too small to trade.",
@@ -43,7 +44,7 @@ const ERROR_TEXT = {
   PriceLimitAlreadyExceeded: "The pool doesn't hold any IMD to pay for sells right now.",
   MaxLevel: "That's already the top level.",
   BadLevel: "There's no such level.",
-  NotHolder: "Only the Crafter's holder can level it up.",
+  NotHolder: "Only the DIO's holder can level it up.",
   NoSuchKind: "The game doesn't take that kind of payment.",
   ZeroAmount: "Nothing to pay.",
   ERC20InsufficientAllowance: "The price just changed, so the approval didn't cover it. Check the new price and try again.",
@@ -118,7 +119,7 @@ export async function connectChain() {
     mine: { address: dep.contracts.mine, abi: withErrors(abis.mine) },
     sites: { address: dep.contracts.sites, abi: withErrors(abis.sites) },
     crafters: dep.contracts.crafters ? { address: dep.contracts.crafters, abi: withErrors(abis.crafters) } : null,
-    // CrafterLevels and MinePayments (proxies): Crafter upgrades, and the game's shop and tickets.
+    // CrafterLevels and MinePayments (proxies): DIO levels, and the game's shop and tickets.
     levels: dep.contracts.levels && abis.levels ? { address: dep.contracts.levels, abi: withErrors(abis.levels) } : null,
     payments: dep.contracts.payments && abis.payments ? { address: dep.contracts.payments, abi: withErrors(abis.payments) } : null,
   };
@@ -186,8 +187,8 @@ export async function connectChain() {
       const [price, saleOpen, minted, seed, max, limit, revealStatus] = await Promise.all([
         read(K, "price"), read(K, "saleOpen"), read(K, "totalMinted"), read(K, "seed"), read(K, "MAX_SUPPLY"),
         has(K, "walletLimit") ? read(K, "walletLimit") : null,
-        // MineWorldCrafters.RevealStatus: 0 none, 1 waiting, 2 sealable (anyone can lock it in), 3 expired, 4 sealed,
-        // 5 revealed.
+        // MineWorldCrafters.RevealStatus: 0 the secret isn't out, 1 waiting for the next block, 2 sealable (anyone can
+        // lock it in), 3 expired (seal() picks a new block), 4 revealed.
         has(K, "revealStatus") ? read(K, "revealStatus").then(Number) : null,
       ]);
       s.crafters = { price, saleOpen, minted: Number(minted), seed, max: Number(max), limit: limit === null ? null : Number(limit), revealStatus, mine: [] };
@@ -222,7 +223,7 @@ export async function connectChain() {
     if (C.crafters) {
       const ids = (await read(C.crafters, "tokensOfOwner", [account])).map(Number);
       const seed = s.crafters.seed;
-      // Each Crafter's level (CrafterLevels; null if it can't be read), and the levels' costs: costs[i] reaches level
+      // Each DIO's level (CrafterLevels; null if it can't be read), and the levels' costs: costs[i] reaches level
       // i + 2.
       const L = C.levels;
       const [levels, levelInfo] = await Promise.all([
@@ -353,7 +354,7 @@ export async function connectChain() {
     chainName: dep.chainName,
     explorer: dep.explorer,
     addresses: { mine: C.mine.address, sites: C.sites.address, crafters: C.crafters?.address ?? null, levels: C.levels?.address ?? null, payments: C.payments?.address ?? null },
-    /// Whether this chain has CrafterLevels (Crafter upgrades) and MinePayments (the shop and tickets).
+    /// Whether this chain has CrafterLevels (DIO levels) and MinePayments (the shop and tickets).
     hasLevels: !!C.levels,
     hasPayments: !!C.payments,
     get account() { return account; },
@@ -401,25 +402,31 @@ export async function connectChain() {
     },
     claimable: (total) => read(C.sites, "claimable", [account, total]),
     mintCrafters: (n, price) => send(C.crafters, "mint", [BigInt(n)], price * BigInt(n)),
-    /// Lock in the Crafters' reveal (MineWorldCrafters.seal): once the block the mint closed in is over, anyone can
-    /// record its hash for good, which fixes every Crafter's look (the owner then reveals). It should happen promptly.
-    sealReveal: () => send(C.crafters, "seal"),
+    /// Lock in the I'M DIO reveal (MineWorldCrafters.seal): once the owner has published the secret and the next block
+    /// is over, anyone can set the seed, which fixes and shows every DIO's look. Resolves true if it did, false if the
+    /// window had passed and it picked a new block instead (call it again a moment later).
+    async sealReveal() {
+      const receipt = await send(C.crafters, "seal");
+      return !!event(C.crafters, receipt, "Revealed");
+    },
     /// The logged-in wallet's $MINE (wei), or null when logged out.
     mineBalance: () => (account ? read(C.mine, "balanceOf", [account]) : Promise.resolve(null)),
     /// Raise your mining site one level for `cost` $MINE (MiningSites.upgradeCost of the next level, as shown):
-    /// approve exactly that, then upgradeSite(cost): `cost` is also the most it may charge, so a price raised
-    /// meanwhile makes it fail (CostAboveMax) instead of charging more. Resolves with the new level.
+    /// approve exactly that, then upgradeSite(cost, opts.minRateBps): `cost` is the most it may charge and minRateBps
+    /// (the next level's rate, as shown) the least it must buy, so a price raised or a rate cut meanwhile makes it fail
+    /// (CostAboveMax, RateBelowMin) instead of charging for less. Resolves with the new level.
     async upgradeSite(cost, opts = {}) {
-      const args = arity(C.sites, "upgradeSite") === 1 ? [cost] : [];
+      const n = arity(C.sites, "upgradeSite");
+      const args = n === 2 ? [cost, BigInt(opts.minRateBps ?? 0)] : n === 1 ? [cost] : [];
       const receipt = await payMine(C.sites, cost, "upgradeSite", args, { ...opts, what: " for the upgrade" });
       return Number(event(C.sites, receipt, "SiteUpgraded")?.level ?? 0) || null;
     },
-    /// Raise Crafter `id` one level for `cost` $MINE (CrafterLevels.upgradeCost of its next level, as shown): approve
+    /// Raise DIO `id` one level for `cost` $MINE (CrafterLevels.upgradeCost of its next level, as shown): approve
     /// exactly that, then upgrade(id, cost), `cost` being the most it may charge. Resolves with its new level.
     async levelUp(id, cost, opts = {}) {
-      if (!C.levels) throw new Error("Crafter levels aren't on this chain yet.");
+      if (!C.levels) throw new Error("DIO levels aren't on this chain yet.");
       const args = arity(C.levels, "upgrade") === 2 ? [BigInt(id), cost] : [BigInt(id)];
-      const receipt = await payMine(C.levels, cost, "upgrade", args, { ...opts, what: ` for Crafter #${id}` });
+      const receipt = await payMine(C.levels, cost, "upgrade", args, { ...opts, what: ` for DIO #${id}` });
       return Number(event(C.levels, receipt, "CrafterUpgraded")?.level ?? 0) || null;
     },
     newRef,

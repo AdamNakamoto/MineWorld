@@ -117,15 +117,25 @@ contract MineWorldCraftersTest is Test {
         crafters.setPrice(p);
     }
 
-    /// Close the sale (if it's open), wait a block, reveal: the order the contract requires.
+    /// Close the sale (if it's open), publish the secret, and once the next block is over, seal (anyone can): the
+    /// order the contract requires.
     function _reveal() internal {
         if (crafters.saleOpen()) {
             vm.prank(owner);
             crafters.setSaleOpen(false);
         }
-        vm.roll(vm.getBlockNumber() + 1);
         vm.prank(owner);
         crafters.reveal(SECRET);
+        vm.roll(vm.getBlockNumber() + 2);
+        vm.prank(bob);
+        crafters.seal();
+    }
+
+    /// Puts the test ArbSys at 0x64 (the Arbitrum path), at L2 block `n`.
+    function _arbitrum(uint256 n) internal returns (MockArbSys sys) {
+        vm.etch(address(100), address(new MockArbSys()).code);
+        sys = MockArbSys(address(100));
+        sys.setNumber(n);
     }
 
     /// blockhash(n) now, read in its own call (via-IR may otherwise move a blockhash or block.number read across a
@@ -137,8 +147,8 @@ contract MineWorldCraftersTest is Test {
     // ---------------------------------------------------------------- mint
 
     function test_TheCollection() public view {
-        assertEq(crafters.name(), "MineWorld Crafters");
-        assertEq(crafters.symbol(), "CRAFTER");
+        assertEq(crafters.name(), "I'M DIO");
+        assertEq(crafters.symbol(), "DIO");
         assertEq(crafters.MAX_SUPPLY(), 3333);
         assertEq(crafters.MAX_PER_TX(), 5);
         assertEq(crafters.walletLimit(), 10);
@@ -319,8 +329,10 @@ contract MineWorldCraftersTest is Test {
         vm.expectRevert(MineWorldCrafters.NotRevealed.selector);
         crafters.traitsOf(1);
         vm.prank(owner);
+        vm.expectRevert(MineWorldCrafters.SaleStillOpen.selector);
+        crafters.reveal(SECRET);
+        vm.prank(owner);
         crafters.setSaleOpen(false);
-        vm.roll(block.number + 1);
         vm.prank(owner);
         vm.expectRevert(MineWorldCrafters.BadSecret.selector);
         crafters.reveal(1);
@@ -331,11 +343,14 @@ contract MineWorldCraftersTest is Test {
         _reveal();
         assertFalse(crafters.saleOpen());
         assertTrue(crafters.seed() != 0);
+        assertEq(crafters.revealedSecret(), SECRET);
         vm.startPrank(owner);
         vm.expectRevert(MineWorldCrafters.AlreadyRevealed.selector);
         crafters.reveal(SECRET);
         vm.expectRevert(MineWorldCrafters.AlreadyRevealed.selector);
         crafters.setSaleOpen(true);
+        vm.expectRevert(MineWorldCrafters.AlreadyRevealed.selector);
+        crafters.seal();
         vm.stopPrank();
         crafters.traitsOf(1);
         // Only minted tokens have traits.
@@ -343,236 +358,272 @@ contract MineWorldCraftersTest is Test {
         crafters.traitsOf(3);
     }
 
-    /// Audit 25e6a0b3 #1: the reveal's entropy must not exist while anyone can still mint. Closing fixes the reveal
-    /// block (this one); its hash only exists from the next block on.
-    function test_RevealNeedsTheSaleClosedInAnEarlierBlock() public {
-        _mint(alice, 2);
-        uint256 b = vm.getBlockNumber() + 3; // (a cheatcode: via-IR may reuse one read of block.number across a roll)
-        vm.roll(b);
+    /// Until the secret is out, closing the sale is a pause: it reopens and the mint carries on. Once the secret is
+    /// out, the sale never reopens.
+    function test_TheSaleIsAPauseUntilTheSecretIsOut() public {
+        _mint(alice, 1);
         vm.startPrank(owner);
-        vm.expectRevert(MineWorldCrafters.SaleStillOpen.selector);
-        crafters.reveal(SECRET);
-        vm.expectEmit(address(crafters));
-        emit MineWorldCrafters.RevealBlockSet(b);
         crafters.setSaleOpen(false);
-        assertEq(crafters.revealBlock(), b);
-        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Waiting));
-        vm.expectRevert(MineWorldCrafters.RevealTooSoon.selector);
-        crafters.reveal(SECRET);
-        // Within that block its hash doesn't exist yet, so the sale can still reopen (clearing the reveal block) and
-        // close again.
+        vm.roll(vm.getBlockNumber() + 300);
         crafters.setSaleOpen(true);
-        assertEq(crafters.revealBlock(), 0);
-        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.None));
-        crafters.setSaleOpen(false);
-        assertEq(crafters.revealBlock(), b);
-        vm.roll(b + 1);
-        crafters.reveal(SECRET);
         vm.stopPrank();
-        assertTrue(crafters.seed() != 0);
-        assertEq(crafters.sealedHash(), this.hashOf(b));
+        _mint(bob, 2);
+        vm.prank(owner);
+        crafters.setSaleOpen(false);
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.None));
+        vm.prank(bob);
+        vm.expectRevert(MineWorldCrafters.NoSecret.selector);
+        crafters.seal();
+        vm.prank(owner);
+        crafters.reveal(SECRET);
+        vm.startPrank(owner);
+        vm.expectRevert(MineWorldCrafters.AlreadyRevealed.selector);
+        crafters.setSaleOpen(true);
+        vm.expectRevert(MineWorldCrafters.AlreadyRevealed.selector);
+        crafters.setSaleOpen(false);
+        vm.stopPrank();
+        vm.prank(alice);
+        vm.expectRevert(MineWorldCrafters.SaleClosed.selector);
+        crafters.mint(1);
+        assertEq(crafters.totalMinted(), 3);
     }
 
-    /// The audit's proof: the owner computes the seed from the secret and the current block, mints the next
-    /// ones, and reveals in the same block. The reveal refuses, so the prediction is worthless.
+    /// Audit 25e6a0b3 #1, in the current flow: the owner mints, closes the sale and publishes the secret in the same
+    /// block, but the seed then waits for the next block's hash, which doesn't exist yet: nothing it minted had a
+    /// look anyone could know, and the sale can't reopen to mint more.
     function test_OwnerCantMintKnowingTheLooks() public {
         _mint(alice, 5);
-        vm.roll(block.number + 10);
+        uint256 b = vm.getBlockNumber() + 10;
+        vm.roll(b);
         vm.startPrank(owner);
         crafters.mint(5);
         vm.expectRevert(MineWorldCrafters.SaleStillOpen.selector);
         crafters.reveal(SECRET);
         crafters.setSaleOpen(false);
-        vm.expectRevert(MineWorldCrafters.RevealTooSoon.selector);
         crafters.reveal(SECRET);
+        assertEq(crafters.entropyBlock(), b + 1);
+        assertEq(this.hashOf(b + 1), 0, "the entropy block's hash doesn't exist yet");
+        vm.expectRevert(MineWorldCrafters.RevealTooSoon.selector);
+        crafters.seal();
+        vm.roll(b + 1); // the entropy block itself: its hash still doesn't exist
+        assertEq(this.hashOf(b + 1), 0);
+        vm.expectRevert(MineWorldCrafters.RevealTooSoon.selector);
+        crafters.seal();
+        vm.expectRevert(MineWorldCrafters.AlreadyRevealed.selector);
+        crafters.setSaleOpen(true);
         vm.stopPrank();
+        vm.expectRevert(MineWorldCrafters.NotRevealed.selector);
+        crafters.rarityOf(1);
     }
 
-    /// The seed is the secret mixed with the hash of the block the sale closed in (sealed by the reveal if nobody
-    /// sealed it before), however much later the reveal comes, and never 0.
-    function test_SeedComesFromTheSecretAndTheBlock() public {
+    /// The seed is the public secret mixed with the hash of the block after the reveal's, set by whoever seals,
+    /// whenever within the window, and never 0. Sealing tells marketplaces to re-read every Crafter.
+    function test_SeedComesFromTheSecretAndTheNextBlock() public {
         _mint(alice, 1);
-        uint256 closed = vm.getBlockNumber();
         vm.prank(owner);
         crafters.setSaleOpen(false);
-        vm.roll(closed + 5);
-        bytes32 h = this.hashOf(closed);
+        uint256 b = vm.getBlockNumber();
+        vm.expectEmit(address(crafters));
+        emit MineWorldCrafters.SecretRevealed(SECRET, b + 1);
+        vm.prank(owner);
+        crafters.reveal(SECRET);
+        assertEq(crafters.entropyBlock(), b + 1);
+        assertEq(crafters.revealedSecret(), SECRET);
+        assertEq(crafters.seed(), 0);
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Waiting));
+        vm.roll(b + 5);
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Sealable));
+        bytes32 h = this.hashOf(b + 1);
         assertTrue(h != 0);
         uint256 expected = uint256(keccak256(abi.encode(SECRET, h)));
         vm.expectEmit(address(crafters));
-        emit MineWorldCrafters.Sealed(closed, h);
-        vm.expectEmit(address(crafters));
         emit MineWorldCrafters.Revealed(expected);
-        vm.prank(owner);
-        crafters.reveal(SECRET);
+        vm.expectEmit(address(crafters));
+        emit MineWorldCrafters.BatchMetadataUpdate(1, 1);
+        vm.prank(bob);
+        assertEq(crafters.seal(), expected);
         assertEq(crafters.seed(), expected);
         assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Revealed));
     }
 
-    /// Audit 0792975e #1: anyone can seal the reveal block's hash once it exists, and the reveal then uses exactly
-    /// that, whoever reveals and whenever.
-    function test_AStrangerSealsTheRevealBlock() public {
-        _mint(alice, 3);
-        uint256 closed = vm.getBlockNumber() + 2;
-        vm.roll(closed);
-        // Nothing to seal while the sale is open, or before the reveal block is over.
-        vm.prank(bob);
-        vm.expectRevert(MineWorldCrafters.SaleStillOpen.selector);
-        crafters.seal();
+    /// Re-check 8c7ba957 #6: no party knows the looks before everyone can, and the owner can't hold them back. Until
+    /// the owner publishes the secret, only it knows the secret but nobody knows the entropy; when it publishes, the
+    /// entropy block doesn't exist yet; once that block is over, everyone holds the same two public inputs, and anyone
+    /// can seal. The owner has no step left, so even a year of silence from it holds nothing up.
+    function test_NoPartyKnowsTheLooksBeforeEveryoneCan() public {
+        _mint(alice, 5);
         vm.prank(owner);
         crafters.setSaleOpen(false);
+        uint256 b = vm.getBlockNumber();
+        vm.prank(owner);
+        crafters.reveal(SECRET);
+        uint256 e = crafters.entropyBlock();
+        // In the reveal's block and in the entropy block itself, the entropy doesn't exist for anyone.
+        assertEq(this.hashOf(e), 0);
+        vm.roll(b + 1);
+        assertEq(this.hashOf(e), 0);
+        vm.expectRevert(MineWorldCrafters.NotRevealed.selector);
+        crafters.rarityOf(1);
+        // From the next block, a stranger works the seed out from public data alone, then anyone seals it.
+        vm.roll(b + 2);
+        uint256 worked = uint256(keccak256(abi.encode(crafters.revealedSecret(), this.hashOf(e))));
+        vm.prank(alice);
+        crafters.seal();
+        assertEq(crafters.seed(), worked);
+
+        // The owner going silent after its reveal holds nothing up: a year later anyone finishes it.
+        MineWorldCrafters other =
+            new MineWorldCrafters(owner, treasury, 0, keccak256(abi.encode(SECRET)), address(validator), art);
+        vm.prank(owner);
+        other.reveal(SECRET);
+        vm.roll(vm.getBlockNumber() + 2_600_000);
+        vm.warp(vm.getBlockTimestamp() + 365 days);
+        assertEq(uint8(other.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Expired));
+        vm.prank(alice);
+        assertEq(other.seal(), 0); // moves the entropy block on
+        vm.roll(vm.getBlockNumber() + 2);
+        vm.prank(alice);
+        assertTrue(other.seal() != 0);
+    }
+
+    /// If nobody seals within 256 blocks the hash can't be read any more: `seal` (anyone) moves the entropy block on
+    /// to the next block, in public, and returns 0; sealing again once that block is over sets the seed from it.
+    function test_AnExpiredEntropyBlockMovesOn() public {
+        _mint(alice, 2);
+        vm.prank(owner);
+        crafters.setSaleOpen(false);
+        uint256 b = vm.getBlockNumber();
+        vm.prank(owner);
+        crafters.reveal(SECRET);
+        uint256 e = b + 1;
+        vm.roll(e + 256); // the last block its hash can be read in
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Sealable));
+        uint256 snap = vm.snapshotState();
+        vm.prank(bob);
+        crafters.seal();
+        assertEq(crafters.seed(), uint256(keccak256(abi.encode(SECRET, this.hashOf(e)))));
+        vm.revertToState(snap);
+
+        vm.roll(e + 257);
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Expired));
+        uint256 next = e + 258;
+        vm.expectEmit(address(crafters));
+        emit MineWorldCrafters.EntropyBlockSet(next);
+        vm.prank(bob);
+        assertEq(crafters.seal(), 0);
+        assertEq(crafters.entropyBlock(), next);
+        assertEq(crafters.seed(), 0);
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Waiting));
         vm.prank(bob);
         vm.expectRevert(MineWorldCrafters.RevealTooSoon.selector);
         crafters.seal();
-
-        vm.roll(closed + 1);
-        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Sealable));
-        bytes32 h = this.hashOf(closed);
+        vm.roll(next + 1);
+        bytes32 h = this.hashOf(next);
         assertTrue(h != 0);
-        vm.expectEmit(address(crafters));
-        emit MineWorldCrafters.Sealed(closed, h);
-        vm.prank(bob);
-        assertEq(crafters.seal(), h);
-        assertEq(crafters.sealedHash(), h);
-        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Sealed));
         vm.prank(alice);
-        vm.expectRevert(MineWorldCrafters.AlreadySealed.selector);
         crafters.seal();
-
-        // Long after (past the 256 blocks the chain keeps a hash), the reveal still uses the sealed hash. Revealing
-        // stays the owner's alone (it needs the secret).
-        vm.roll(closed + 1_000);
-        vm.prank(bob);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, bob));
-        crafters.reveal(SECRET);
-        vm.prank(owner);
-        crafters.reveal(SECRET);
-        assertEq(crafters.seed(), uint256(keccak256(abi.encode(SECRET, h))));
-        assertEq(this.hashOf(closed), 0, "(the chain itself no longer has it)");
-        vm.prank(bob);
-        vm.expectRevert(MineWorldCrafters.AlreadySealed.selector);
-        crafters.seal();
-        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Revealed));
-    }
-
-    /// A collection whose sale was never closed has no reveal block: nothing to seal or reveal yet.
-    function test_NoRevealBlockUntilTheSaleCloses() public {
-        MineWorldCrafters fresh =
-            new MineWorldCrafters(owner, treasury, 0, keccak256(abi.encode(SECRET)), address(validator), art);
-        assertFalse(fresh.saleOpen());
-        assertEq(fresh.revealBlock(), 0);
-        assertEq(uint8(fresh.revealStatus()), uint8(MineWorldCrafters.RevealStatus.None));
-        vm.roll(vm.getBlockNumber() + 3);
-        vm.expectRevert(MineWorldCrafters.NoRevealBlock.selector);
-        fresh.seal();
-        vm.prank(owner);
-        vm.expectRevert(MineWorldCrafters.NoRevealBlock.selector);
-        fresh.reveal(SECRET);
-        // Closing the (already closed) sale fixes one.
-        uint256 b = vm.getBlockNumber();
-        vm.prank(owner);
-        fresh.setSaleOpen(false);
-        assertEq(fresh.revealBlock(), b);
-    }
-
-    /// Once sealed, the sale never reopens and the entropy never changes: closing again can't re-arm it.
-    function test_NoReopeningAfterASeal() public {
-        _mint(alice, 2);
-        uint256 closed = vm.getBlockNumber();
-        vm.prank(owner);
-        crafters.setSaleOpen(false);
-        vm.roll(closed + 1);
-        crafters.seal(); // (this test contract: anyone)
-        bytes32 h = crafters.sealedHash();
-        vm.roll(closed + 300); // the reveal block's hash has expired by now: it doesn't matter, it's sealed
-        vm.startPrank(owner);
-        vm.expectRevert(MineWorldCrafters.AlreadySealed.selector);
-        crafters.setSaleOpen(true);
-        vm.expectRevert(MineWorldCrafters.AlreadySealed.selector);
-        crafters.setSaleOpen(false);
-        vm.stopPrank();
-        assertFalse(crafters.saleOpen());
-        assertEq(crafters.revealBlock(), closed);
-        assertEq(crafters.sealedHash(), h);
-        vm.prank(bob);
-        vm.expectRevert(MineWorldCrafters.SaleClosed.selector);
-        crafters.mint(1);
-        vm.prank(owner);
-        crafters.reveal(SECRET);
         assertEq(crafters.seed(), uint256(keccak256(abi.encode(SECRET, h))));
     }
 
-    /// Once the reveal block's hash exists, the owner can't swap it for another by reopening or closing again: only
-    /// sealing it (anyone) or letting it expire unsealed (in public, for 256 blocks) moves things on.
-    function test_TheHashCantBeSwappedOnceItExists() public {
-        _mint(alice, 2);
-        uint256 closed = vm.getBlockNumber();
-        vm.prank(owner);
-        crafters.setSaleOpen(false);
-        for (uint256 later = 1; later <= 256; later += 51) {
-            vm.roll(closed + later);
-            assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Sealable));
-            vm.startPrank(owner);
-            vm.expectRevert(MineWorldCrafters.SealPending.selector);
-            crafters.setSaleOpen(true);
-            vm.expectRevert(MineWorldCrafters.SealPending.selector);
-            crafters.setSaleOpen(false);
-            vm.stopPrank();
-        }
-        vm.roll(closed + 256); // the last block it can be sealed in
-        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Sealable));
-        assertEq(crafters.revealBlock(), closed);
-    }
+    // ---------------------------------------------------------------- the reveal on an Arbitrum chain (ArbSys)
 
-    /// Audit 0792975e #1: if nobody seals within 256 blocks, the hash can't be read any more, so neither the seal nor
-    /// the reveal works; closing the sale again (in public: RevealBlockSet) fixes a new reveal block.
-    function test_AnExpiredRevealBlockIsReArmedByClosingAgain() public {
-        _mint(alice, 2);
-        uint256 closed = vm.getBlockNumber();
+    /// Re-check 8c7ba957 #2: with ArbSys at 0x64 (Robinhood Chain), the entropy block is the L2 block after the
+    /// reveal's, and its hash comes from ArbSys, not from `block.number` / `blockhash` (the parent chain's).
+    function test_Arbitrum_TheEntropyIsTheNextL2Block() public {
+        MockArbSys sys = _arbitrum(88_719_100);
+        vm.roll(26_193_685); // the parent chain's number, as block.number reads on Robinhood Chain
+        _mint(alice, 3);
         vm.prank(owner);
         crafters.setSaleOpen(false);
-        vm.roll(closed + 257);
-        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Expired));
-        vm.expectRevert(MineWorldCrafters.RevealBlockExpired.selector);
-        crafters.seal();
+        assertEq(crafters.chainBlock(), 88_719_100);
         vm.prank(owner);
-        vm.expectRevert(MineWorldCrafters.RevealBlockExpired.selector);
         crafters.reveal(SECRET);
-
-        uint256 again = closed + 257;
-        vm.expectEmit(address(crafters));
-        emit MineWorldCrafters.RevealBlockSet(again);
-        vm.prank(owner);
-        crafters.setSaleOpen(false);
-        assertEq(crafters.revealBlock(), again);
+        assertEq(crafters.entropyBlock(), 88_719_101);
+        vm.prank(bob);
+        vm.expectRevert(MineWorldCrafters.RevealTooSoon.selector);
+        crafters.seal();
+        sys.setNumber(88_719_101);
         assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Waiting));
-        vm.roll(again + 1);
+        vm.prank(bob);
+        vm.expectRevert(MineWorldCrafters.RevealTooSoon.selector);
+        crafters.seal();
+        sys.setNumber(88_719_102);
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Sealable));
         vm.prank(bob);
         crafters.seal();
-        bytes32 h = this.hashOf(again);
-        assertTrue(h != 0);
-        assertEq(crafters.sealedHash(), h);
-        vm.prank(owner);
-        crafters.reveal(SECRET);
-        assertEq(crafters.seed(), uint256(keccak256(abi.encode(SECRET, h))));
-
-        // An expired reveal block also lets the sale reopen (and the mint carry on) before closing again.
-        MineWorldCrafters other =
-            new MineWorldCrafters(owner, treasury, 0, keccak256(abi.encode(SECRET)), address(validator), art);
-        uint256 b = vm.getBlockNumber();
-        vm.prank(owner);
-        other.setSaleOpen(false);
-        vm.roll(b + 300);
-        vm.prank(owner);
-        other.setSaleOpen(true);
-        assertEq(other.revealBlock(), 0);
-        _mintFrom(other, bob, 1);
-        assertEq(other.totalMinted(), 1);
+        assertEq(crafters.seed(), uint256(keccak256(abi.encode(SECRET, sys.l2Hash(88_719_101)))));
     }
 
-    function _mintFrom(MineWorldCrafters c, address who, uint256 n) internal {
-        vm.prank(who);
-        c.mint(n);
+    /// Re-check 8c7ba957 #2, the skip: when the parent chain's number jumps by two, Nitro's `blockhash` for the
+    /// number skipped over returns the value written 256 parent blocks earlier, known in advance. The seal doesn't
+    /// read it: the parent numbers can skip and their hashes be anything, the seed is the L2 block's.
+    function test_Arbitrum_AParentChainSkipChangesNothing() public {
+        MockArbSys sys = _arbitrum(88_719_163);
+        uint256 parent = 26_193_685;
+        vm.roll(parent);
+        bytes32 stale = keccak256("blockhash(B - 256): readable for 256 parent blocks before the close");
+        vm.setBlockhash(parent - 256, stale);
+        vm.prank(owner);
+        crafters.setSaleOpen(false);
+        vm.prank(owner);
+        crafters.reveal(SECRET);
+        // The next L2 block carries the parent number B + 2 (a skip); slot B still holds the stale value.
+        vm.roll(parent + 2);
+        vm.setBlockhash(parent, stale);
+        vm.setBlockhash(parent + 1, keccak256("the last L2 block's hash, filed under B + 1"));
+        sys.setNumber(88_719_165);
+        vm.prank(alice);
+        crafters.seal();
+        uint256 s = crafters.seed();
+        assertEq(s, uint256(keccak256(abi.encode(SECRET, sys.l2Hash(88_719_164)))));
+        assertTrue(s != uint256(keccak256(abi.encode(SECRET, stale))), "the stale parent-chain hash was used");
+    }
+
+    /// On ArbSys too, an entropy block left unsealed for more than 256 L2 blocks moves on to the next L2 block.
+    function test_Arbitrum_ExpiryMovesTheEntropyBlockOn() public {
+        MockArbSys sys = _arbitrum(1_000);
+        vm.prank(owner);
+        crafters.setSaleOpen(false);
+        vm.prank(owner);
+        crafters.reveal(SECRET);
+        sys.setNumber(1_001 + 256);
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Sealable));
+        sys.setNumber(1_001 + 257);
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Expired));
+        vm.expectEmit(address(crafters));
+        emit MineWorldCrafters.EntropyBlockSet(1_259);
+        vm.prank(bob);
+        assertEq(crafters.seal(), 0);
+        sys.setNumber(1_260);
+        vm.prank(bob);
+        crafters.seal();
+        assertEq(crafters.seed(), uint256(keccak256(abi.encode(SECRET, sys.l2Hash(1_259)))));
+    }
+
+    /// Expiry is read from block numbers, never from a failing call: if ArbSys fails within the window (as a call
+    /// starved of gas would), the whole seal reverts and the entropy block stays put, so nobody can force a move on.
+    function test_Arbitrum_AFailingCallNeverMovesTheEntropyBlockOn() public {
+        MockArbSys sys = _arbitrum(7_000);
+        vm.prank(owner);
+        crafters.setSaleOpen(false);
+        vm.prank(owner);
+        crafters.reveal(SECRET);
+        sys.setNumber(7_002);
+        sys.setBroken(true);
+        vm.prank(bob);
+        vm.expectRevert(bytes("broken"));
+        crafters.seal();
+        assertEq(crafters.entropyBlock(), 7_001);
+        // Starved of gas: the call fails as a whole, nothing moves.
+        sys.setBroken(false);
+        vm.prank(bob);
+        (bool ok,) = address(crafters).call{gas: 20_000}(abi.encodeCall(MineWorldCrafters.seal, ()));
+        assertFalse(ok);
+        assertEq(crafters.entropyBlock(), 7_001);
+        assertEq(crafters.seed(), 0);
+        vm.prank(bob);
+        crafters.seal();
+        assertEq(crafters.seed(), uint256(keccak256(abi.encode(SECRET, sys.l2Hash(7_001)))));
     }
 
     function testFuzz_DifferentSeedsGiveValidTraits(uint256 secret) public {
@@ -583,9 +634,10 @@ contract MineWorldCraftersTest is Test {
         s.mint(5);
         vm.prank(owner);
         s.setSaleOpen(false);
-        vm.roll(block.number + 1);
         vm.prank(owner);
         s.reveal(secret);
+        vm.roll(vm.getBlockNumber() + 2);
+        s.seal();
         for (uint256 id = 1; id <= 5; id++) {
             Traits memory t = s.traitsOf(id);
             assertLt(t.hair, 36);
@@ -604,13 +656,14 @@ contract MineWorldCraftersTest is Test {
     function test_TokenURIBeforeAndAfterReveal() public {
         _mint(alice, 1);
         string memory sealedJson = Json.decodeURI(crafters.tokenURI(1));
-        assertEq(vm.parseJsonString(sealedJson, ".name"), "MineWorld Crafter #1");
+        assertEq(vm.parseJsonString(sealedJson, ".name"), "I'M DIO #1");
+        assertEq(vm.parseJsonString(sealedJson, ".description"), "A sealed I'M DIO. Its look is revealed after the mint.");
         assertEq(vm.parseJsonString(sealedJson, ".image"), string.concat("data:image/svg+xml;base64,", vm.toBase64(art.sealedSvg())));
         assertEq(vm.parseJsonString(sealedJson, ".attributes[0].value"), "Sealed");
         _reveal();
         string memory json = Json.decodeURI(crafters.tokenURI(1));
         Traits memory t = crafters.traitsOf(1);
-        assertEq(vm.parseJsonString(json, ".name"), "MineWorld Crafter #1");
+        assertEq(vm.parseJsonString(json, ".name"), "I'M DIO #1");
         assertEq(vm.parseJsonString(json, ".image"), string.concat("data:image/svg+xml;base64,", vm.toBase64(art.render(t))));
         assertEq(vm.parseJsonString(json, ".attributes[0].trait_type"), "Background");
         assertEq(vm.parseJsonString(json, ".attributes[0].value"), art.traitName(0, t.background));
@@ -618,35 +671,37 @@ contract MineWorldCraftersTest is Test {
         assertEq(vm.parseJsonString(json, ".attributes[7].value"), art.traitName(7, t.outfit));
         assertEq(vm.parseJsonString(json, ".attributes[8].trait_type"), "Rarity");
         assertFalse(vm.keyExistsJson(json, ".attributes[9]"), "no extra traits without an extension");
-        assertTrue(Json.has(json, "boosts its owner's mining in MineWorldCraft by its rarity and level"));
+        assertTrue(Json.has(vm.parseJsonString(json, ".description"), "No two DIOs look alike. Each DIO boosts its owner's mining in MineWorldCraft by its rarity and level"));
         assertFalse(Json.has(json, "Cosmetic"));
         vm.expectRevert(abi.encodeWithSelector(IERC721Errors.ERC721NonexistentToken.selector, 2));
         crafters.tokenURI(2);
     }
 
-    /// Audit 25e6a0b3 #3: the reveal tells marketplaces to re-read every token (ERC-4906).
+    /// Audit 25e6a0b3 #3: the reveal (the seal, which sets the seed) tells marketplaces to re-read every token.
     function test_RevealRefreshesMarketplaces() public {
         _mint(alice, 3);
         assertTrue(crafters.supportsInterface(0x49064906));
         vm.prank(owner);
         crafters.setSaleOpen(false);
-        vm.roll(block.number + 1);
-        vm.expectEmit(address(crafters));
-        emit MineWorldCrafters.BatchMetadataUpdate(1, 3);
         vm.prank(owner);
         crafters.reveal(SECRET);
+        vm.roll(vm.getBlockNumber() + 2);
+        vm.expectEmit(address(crafters));
+        emit MineWorldCrafters.BatchMetadataUpdate(1, 3);
+        crafters.seal();
     }
 
     /// Before any link or picture is set, the collection page has only its name and description.
     function test_CollectionMetadataWithoutLinks() public view {
         string memory json = Json.decodeURI(crafters.contractURI());
-        assertEq(vm.parseJsonString(json, ".name"), "MineWorld Crafters");
+        assertEq(vm.parseJsonString(json, ".name"), "I'M DIO");
+        assertTrue(Json.has(vm.parseJsonString(json, ".description"), "3,333 pixel-art characters for MineWorldCraft"));
         assertFalse(Json.has(json, "external_link"));
         assertFalse(Json.has(json, '"image"'));
         assertFalse(Json.has(json, "banner_image"));
         assertFalse(Json.has(json, "Website:"));
         assertFalse(Json.has(json, "Social:"));
-        assertTrue(Json.has(json, 'Each Crafter boosts its owner\'s mining in MineWorldCraft by its rarity and level: faster mining, more $MINE per block and a higher daily cap, for active play only."'));
+        assertTrue(Json.has(json, 'Each DIO boosts its owner\'s mining in MineWorldCraft by its rarity and level: faster mining, more $MINE per block and a higher daily cap, for active play only."'));
         assertFalse(Json.has(json, "Cosmetic"));
         assertEq(crafters.website(), "");
         assertEq(crafters.social(), "");
@@ -1260,14 +1315,17 @@ contract BombExtension {
     }
 }
 
-/// Audit 0792975e #1, the auditor's proof as submitted.
+/// Audit 0792975e #1, the auditor's proof, adapted to the flow that replaced the one it was written for (re-check
+/// 8c7ba957 #2).
 contract OkValidator {
     function validateTransfer(address, address, address, uint256) external view {}
 }
 
-/// Fails on the current code: the revealed seed depends on which block the owner chooses to reveal in, so the owner
-/// can wait for a block whose seed gives chosen tokens the traits they want. Passes once the entropy is bound to a
-/// block fixed when the sale closes (or the reveal is otherwise made timing-independent).
+/// The auditor's point stands: the owner must not be able to pick a seed by picking when to act. In the current flow
+/// the owner's one choice is when to publish the secret (`reveal`), and the seed then waits for the hash of the next
+/// block, which doesn't exist when the owner decides. So the proof now checks (a) at every block the owner could
+/// reveal in, the seed that reveal leads to can't be worked out yet, and a reveal can't be taken back; (b) once
+/// revealed, the seed is the same whenever, and by whomever, `seal` is sent.
 contract RevealSeedTest is Test {
     address owner = makeAddr("owner");
     address alice = makeAddr("alice");
@@ -1285,38 +1343,94 @@ contract RevealSeedTest is Test {
         c.setSaleOpen(false);
     }
 
-    /// The same closed sale, revealed one block later or seven blocks later, must give every Crafter the same look.
+    /// blockhash(n) now, in its own call.
+    function hashOf(uint256 n) external view returns (bytes32) {
+        return blockhash(n);
+    }
+
+    /// The same closed sale, revealed one block later or seven blocks later: neither reveal lets the owner see the seed
+    /// it leads to; and a reveal sealed one block or seven blocks after its entropy block gives every Crafter the same
+    /// look.
     function test_SeedDoesNotDependOnTheRevealBlock() public {
         MineWorldCrafters c = _collection();
-        uint256 closed = block.number;
-        uint256 snap = vm.snapshotState();
+        uint256 closed = vm.getBlockNumber();
+        uint256[2] memory laters = [uint256(1), 7];
+        for (uint256 i; i < 2; i++) {
+            uint256 snap = vm.snapshotState();
+            vm.roll(closed + laters[i]);
+            vm.prank(owner);
+            c.reveal(secret);
+            assertEq(this.hashOf(c.entropyBlock()), 0, "the owner could see the seed's entropy when it chose to reveal");
+            vm.revertToState(snap);
+        }
+
         vm.roll(closed + 1);
         vm.prank(owner);
         c.reveal(secret);
+        uint256 e = c.entropyBlock();
+        uint256 snap2 = vm.snapshotState();
+        vm.roll(e + 1);
+        c.seal();
         uint256 seedA = c.seed();
-        vm.revertToState(snap);
-        vm.roll(closed + 7);
-        vm.prank(owner);
-        c.reveal(secret);
+        vm.revertToState(snap2);
+        vm.roll(e + 7);
+        vm.prank(alice);
+        c.seal();
         uint256 seedB = c.seed();
-        assertEq(seedA, seedB, "the owner can pick among seeds by choosing the reveal block");
+        assertTrue(seedA != 0);
+        assertEq(seedA, seedB, "the seed depends on when it is sealed");
     }
 
-    /// The specialists' version, re-run: however long the owner looks for a block that makes its own Crafter #1
-    /// Legendary, every reveal block gives the same seed (and so the same rarity).
+    /// The specialists' version: however long the owner looks for a block that makes its own Crafter #1 Legendary,
+    /// it never sees the seed before committing to it, and can't take a reveal back to try again.
     function test_OwnerCantGrindItsOwnCrafterToLegendary() public {
         MineWorldCrafters c = _collection();
         uint256 closed = vm.getBlockNumber();
-        uint256 first;
         for (uint256 later = 1; later <= 256; later += 5) {
             uint256 snap = vm.snapshotState();
             vm.roll(closed + later);
             vm.prank(owner);
             c.reveal(secret);
-            if (later == 1) first = c.seed();
-            assertEq(c.seed(), first, "a later reveal block gave another seed");
+            assertEq(this.hashOf(c.entropyBlock()), 0, "the owner saw the entropy before committing");
+            vm.prank(owner);
+            vm.expectRevert(MineWorldCrafters.AlreadyRevealed.selector);
+            c.reveal(secret);
+            vm.prank(owner);
+            vm.expectRevert(MineWorldCrafters.AlreadyRevealed.selector);
+            c.setSaleOpen(true);
             vm.revertToState(snap);
         }
+    }
+}
+
+/// Stands in for ArbSys at 0x64 in tests: an L2 block number the test sets and, for each L2 block, a hash of its own
+/// (made up), given only for the last 256 blocks before the current one, as ArbSys does.
+contract MockArbSys {
+    error InvalidBlockNumber(uint256 requested, uint256 current);
+
+    uint256 public number;
+    bool public broken;
+
+    function setNumber(uint256 n) external {
+        number = n;
+    }
+
+    function setBroken(bool b) external {
+        broken = b;
+    }
+
+    function arbBlockNumber() external view returns (uint256) {
+        return number;
+    }
+
+    function arbBlockHash(uint256 n) external view returns (bytes32) {
+        if (broken) revert("broken");
+        if (n >= number || n + 256 < number) revert InvalidBlockNumber(n, number);
+        return l2Hash(n);
+    }
+
+    function l2Hash(uint256 n) public pure returns (bytes32) {
+        return keccak256(abi.encode("L2 block", n));
     }
 }
 
@@ -1443,14 +1557,31 @@ contract MineWorldCraftersForkTest is Test {
         IOpenSeaRegistry(REGISTRY).applyListToCollection(address(crafters), 0); // (list 0: the default it has anyway)
     }
 
+    /// ArbSys is at 0x64 on Robinhood Chain (its marker code 0xfe), so the reveal counts in L2 blocks there, not in
+    /// `block.number`, which follows the parent chain (Forge's fork gives both, as the chain does). Forge doesn't run
+    /// ArbOS itself: its stand-in answers arbBlockNumber with the fork's block, fixed, and not arbBlockHash, so the
+    /// reveal below mocks the two calls. The real ArbSys was checked live (AUDIT.md section 9).
+    function test_Fork_ArbSysIsThere() public {
+        vm.skip(block.chainid != 4663);
+        assertEq(address(100).code, hex"fe");
+        assertEq(crafters.ARB_SYS(), address(100));
+        assertGt(crafters.chainBlock(), block.number, "the reveal counts in ArbSys's L2 blocks, not the parent chain's");
+    }
+
     /// The art renders on the real chain's EVM too (a view, as marketplaces call it).
     function test_Fork_TokenURIRendersOnChain() public {
         vm.skip(block.chainid != 4663);
         vm.prank(owner);
         crafters.setSaleOpen(false);
-        vm.roll(block.number + 1);
         vm.prank(owner);
         crafters.reveal(7);
+        uint256 e = crafters.entropyBlock();
+        assertEq(e, crafters.chainBlock() + 1);
+        // (See test_Fork_ArbSysIsThere: ArbSys answered as on chain once the entropy block is over.)
+        vm.mockCall(address(100), abi.encodeWithSignature("arbBlockNumber()"), abi.encode(e + 1));
+        vm.mockCall(address(100), abi.encodeWithSignature("arbBlockHash(uint256)", e), abi.encode(keccak256("L2 block")));
+        crafters.seal();
+        assertEq(crafters.seed(), uint256(keccak256(abi.encode(uint256(7), keccak256("L2 block")))));
         assertTrue(bytes(crafters.tokenURI(1)).length > 10_000);
     }
 }

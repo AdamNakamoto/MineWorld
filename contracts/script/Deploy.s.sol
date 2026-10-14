@@ -310,10 +310,10 @@ abstract contract MineDeployer is Script {
         _logCosts(levels);
         MineWorldCrafters crafters = MineWorldCrafters(address(levels.crafters()));
         if (crafters.attributesExtension() == address(levels)) {
-            console.log("  the Crafters show these levels (attributes extension set)");
+            console.log("  I'M DIO shows these levels (attributes extension set)");
             return;
         }
-        console.log("  The Crafters' owner must now point the collection at it, from", crafters.owner());
+        console.log("  I'M DIO's owner (contract MineWorldCrafters) must now point the collection at it, from", crafters.owner());
         console.log(
             string.concat(
                 '    cast send ',
@@ -353,7 +353,7 @@ abstract contract MineDeployer is Script {
         (a[3], n[3]) = (g.payments, "MinePayments");
         (a[4], n[4]) = (hook, "MineHook (renounced)");
         (a[5], n[5]) = (levels, "CrafterLevels");
-        (a[6], n[6]) = (crafters, "MineWorldCrafters");
+        (a[6], n[6]) = (crafters, "MineWorldCrafters (I'M DIO)");
     }
 }
 
@@ -421,7 +421,7 @@ contract Deploy is MineDeployer {
         vm.stopBroadcast();
         _log(l.game, l.hook);
         if (address(levels) != address(0)) _logLevels(levels, levelsImpl);
-        else console.log("CrafterLevels: not yet (set CRAFTERS once the Crafters exist; deploy-mainnet.sh levels)");
+        else console.log("CrafterLevels: not yet (set CRAFTERS once I'M DIO exists; deploy-mainnet.sh levels)");
         (address[] memory a, string[] memory n) = _gameOwners(l.game, l.hook, address(levels), crafters);
         _logOwners(a, n);
 
@@ -468,7 +468,7 @@ contract Deploy is MineDeployer {
         address[] memory a = new address[](2);
         string[] memory n = new string[](2);
         (a[0], n[0]) = (address(levels), "CrafterLevels");
-        (a[1], n[1]) = (crafters, "MineWorldCrafters");
+        (a[1], n[1]) = (crafters, "MineWorldCrafters (I'M DIO)");
         _logOwners(a, n);
 
         if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) || block.chainid != 4663 || vm.envOr("DEV_CHAIN", false)) return;

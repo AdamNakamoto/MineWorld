@@ -7,13 +7,13 @@ import {CrafterArt} from "../src/CrafterArt.sol";
 import {MineWorldCrafters} from "../src/MineWorldCrafters.sol";
 import {DevTransferValidator} from "./DevTransferValidator.sol";
 
-/// @notice MineWorld Crafters on Robinhood Chain: the on-chain art (CrafterArt), then 3,333 blind-minted Crafters
-///         drawn by it, with the 5% royalty enforced.
+/// @notice I'M DIO (contract MineWorldCrafters) on Robinhood Chain: the on-chain art (CrafterArt), then 3,333
+///         blind-minted DIOs drawn by it, with the 5% royalty enforced.
 ///
 ///   ./script/deploy-mainnet.sh crafters --broadcast --browser --browser-disable-open
 ///
 /// Env: SEED_COMMIT (keccak256(abi.encode(secret)); keep the secret until the reveal), TREASURY (mint money, if any,
-/// and royalties), CRAFTERS_PRICE (wei per Crafter, 0: free), CRAFTERS_WALLET_LIMIT (1-50, 10 by default),
+/// and royalties), CRAFTERS_PRICE (wei per DIO, 0: free), CRAFTERS_WALLET_LIMIT (1-50, 10 by default),
 /// CRAFTERS_VALIDATOR (OpenSea's creator fee enforcement registry), CRAFTERS_WEBSITE and CRAFTERS_SOCIAL (the
 /// collection's links) and CRAFTERS_IMAGE and CRAFTERS_BANNER (its picture and banner URLs), all four optional: the
 /// owner can set them any time with setLinks and setCollectionImages. OPEN_SALE (false: open it later with
@@ -58,7 +58,8 @@ contract DeployCrafters is Script {
         if (openSale) crafters.setSaleOpen(true);
         if (crafters.owner() != owner) crafters.transferOwnership(owner);
         vm.stopBroadcast();
-        console2.log("Crafters", address(crafters));
+        console2.log("MineWorldCrafters", address(crafters));
+        console2.log("  (the I'M DIO collection, symbol DIO)");
         console2.log("CrafterArt", address(art));
         console2.log("  validator", validator);
         console2.log("  owner", crafters.owner());
@@ -74,9 +75,10 @@ contract DeployCrafters is Script {
             console2.log("  - Royalty: nothing to register on OpenSea's registry (the collection gets its default list,");
             console2.log("    OpenSea's SignedZone). In OpenSea Studio, turn on creator earnings (5%).");
         }
-        console2.log("  - The reveal: setSaleOpen(false) fixes the reveal block (the block it lands in). From the next");
-        console2.log("    block, anyone calls seal() (the game's panel offers it): do it within 256 blocks, or close the");
-        console2.log("    sale again to fix a new block. Then reveal(secret) (it seals first if nobody has).");
+        console2.log("  - The reveal: setSaleOpen(false) (a pause until the reveal), then reveal(secret): the secret goes");
+        console2.log("    public and the seed waits for the next L2 block. Right after, anyone calls seal() (the game's");
+        console2.log("    panel offers it; or cast send <collection> \"seal()\"): within 256 L2 blocks, about 26 seconds");
+        console2.log("    on Robinhood Chain. Later than that, seal() moves the entropy block on: call it again.");
 
         // (dev.sh sets DEV_CHAIN: an Anvil fork of Robinhood Chain has its chain ID too, and must not touch the real record.)
         if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) || block.chainid != 4663 || vm.envOr("DEV_CHAIN", false)) return crafters;

@@ -153,7 +153,7 @@ contract CrafterArtTest is Test {
             string memory json = Json.decodeURI(crafters.tokenURI(v[i].id));
             string memory svg = art.render(v[i].traits);
             assertEq(keccak256(bytes(svg)), v[i].svg);
-            assertEq(vm.parseJsonString(json, ".name"), string.concat("MineWorld Crafter #", vm.toString(v[i].id)));
+            assertEq(vm.parseJsonString(json, ".name"), string.concat("I'M DIO #", vm.toString(v[i].id)));
             assertEq(vm.parseJsonString(json, ".image"), string.concat("data:image/svg+xml;base64,", vm.toBase64(svg)));
             assertTrue(bytes(vm.parseJsonString(json, ".description")).length > 0);
             uint8[8] memory index = [
@@ -177,7 +177,7 @@ contract CrafterArtTest is Test {
     function test_SealedTokenURI() public {
         crafters.mintId(makeAddr("holder"), 7);
         string memory json = Json.decodeURI(crafters.tokenURI(7));
-        assertEq(vm.parseJsonString(json, ".name"), "MineWorld Crafter #7");
+        assertEq(vm.parseJsonString(json, ".name"), "I'M DIO #7");
         assertEq(vm.parseJsonString(json, ".image"), string.concat("data:image/svg+xml;base64,", vm.toBase64(art.sealedSvg())));
         assertEq(vm.parseJsonString(json, ".attributes[0].trait_type"), "Status");
         assertEq(vm.parseJsonString(json, ".attributes[0].value"), "Sealed");

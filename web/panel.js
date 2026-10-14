@@ -1,5 +1,5 @@
 // The Mining Site panel: log in, sign in to earn (free), open a mining site (ETH) and upgrade it ($MINE), convert
-// earnings to $MINE, trade $MINE, mint or wear a MineWorld Crafter and level it up ($MINE), and see your NFT boosts
+// earnings to $MINE, trade $MINE, mint or wear an I'M DIO character and level it up ($MINE), and see your NFT boosts
 // (boosts.js). Everything about money happens here, in plain words. Every $MINE payment approves exactly what it
 // costs, then pays (chain.js payMine); part of it is burned and the rest goes to the project's treasury.
 
@@ -19,7 +19,7 @@ const mine = (wei) => Number(formatEther(wei)).toLocaleString("en-US", { maximum
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /// `game`: { chain, net, ledger() → { signedIn, wallet, today, total, cap, boost }, signIn(), toast(text, kind),
-/// wear(traits, id), leveled(tokenId, level) (a Crafter was just leveled up) }. The ledger's amounts are in units
+/// wear(traits, id), leveled(tokenId, level) (a DIO was just leveled up) }. The ledger's amounts are in units
 /// (rewards.js UNIT).
 export function createPanel(game) {
   const el = document.getElementById("panel");
@@ -110,19 +110,23 @@ export function createPanel(game) {
           game.toast(`Converted ${mine(got.earnings)} $MINE of earnings at ${Number(got.rateBps) / 100}%: you received ${mine(got.amount)} $MINE.`, "gold");
         }
       });
-      case "mint": return run(`Minting ${data.n} Crafter${data.n > 1 ? "s" : ""}`, () => chain.mintCrafters(Number(data.n), snap.crafters.price));
-      // Anyone can lock in the reveal's randomness once the block the mint closed in is over (MineWorldCrafters.seal).
-      case "seal": return run("Locking in the Crafters' reveal", async () => {
-        await chain.sealReveal();
-        return "Locked in: every Crafter's look is fixed for good. The owner reveals them next.";
+      case "mint": return run(`Minting ${data.n} DIO${data.n > 1 ? "s" : ""}`, () => chain.mintCrafters(Number(data.n), snap.crafters.price));
+      // Anyone can lock in the reveal once the owner has published the secret and the next block is over
+      // (MineWorldCrafters.seal). Too late, seal() picks a new block instead: then press again.
+      case "seal": return run("Locking in the I'M DIO reveal", async () => {
+        const revealed = await chain.sealReveal();
+        return revealed
+          ? "Locked in: every DIO's look is fixed for good, and shows now."
+          : "Nobody locked it in in time, so the reveal now waits for a new block. Press Lock in the reveal again in a moment.";
       }, "seal");
       case "upsite": {
-        // The cost shown is the cost approved, and the most the upgrade may charge (maxCost): if the owner changed it
-        // meanwhile, the upgrade fails rather than charge more.
+        // The cost shown is the cost approved and the most the upgrade may charge (maxCost), and the rate shown is the
+        // least it must buy (minRateBps): if the owner changed either meanwhile, the upgrade fails rather than charge
+        // for less.
         const up = snap?.siteUp;
         if (!up?.next) return;
         return run(`Upgrading your mining site to level ${up.next}`, async (step) => {
-          const level = (await chain.upgradeSite(up.cost, { step })) ?? up.next;
+          const level = (await chain.upgradeSite(up.cost, { step, minRateBps: up.nextRate })) ?? up.next;
           return `Your mining site is level ${level} now: it converts ${up.nextRate / 100}% of what you earn. Your next conversion pays at that rate.`;
         }, "site");
       }
@@ -132,12 +136,12 @@ export function createPanel(game) {
         const level = m?.level ?? null;
         if (!m || !lv || level === null || level >= lv.max) return;
         const cost = lv.costs[level - 1];
-        return run(`Leveling up Crafter #${id} to level ${level + 1}`, async (step) => {
+        return run(`Leveling up DIO #${id} to level ${level + 1}`, async (step) => {
           const now = (await chain.levelUp(id, cost, { step })) ?? level + 1;
           game.leveled?.(id, now);
           const r = m.traits ? rarityOf(m.traits) : null;
           const b = r === null ? "" : `: ${describe(itemBoost("crafter", r, now))}`;
-          return `Crafter #${id} is level ${now} now${b}.${worn === id ? " Your boost updates in a moment." : ""}`;
+          return `DIO #${id} is level ${now} now${b}.${worn === id ? " Your boost updates in a moment." : ""}`;
         }, `crafter:${id}`);
       }
       case "wear": {
@@ -158,7 +162,7 @@ export function createPanel(game) {
     if (!chain) {
       body.innerHTML = `
         <p>Earn <b class="gold">$MINE</b> by playing: breaking natural blocks (rarer ores pay more) and defeating monsters.</p>
-        <div class="box"><h3>Coming soon</h3><p class="note">The $MINE token, mining sites and the Miners collection aren't on-chain yet. You can already play, and once
+        <div class="box"><h3>Coming soon</h3><p class="note">The $MINE token, mining sites and the I'M DIO collection aren't on-chain yet. You can already play, and once
         you sign in, everything you earn is counted.</p></div>
         ${boostsBox(L)} ${economyBox()} ${ratesBox()}`;
       tradeEl.hidden = true;
@@ -259,7 +263,7 @@ export function createPanel(game) {
     const mine = M.mine ?? [];
     const price = M.price === 0n ? "Free (gas only)" : `${eth(M.price)} ETH`;
     return `<section class="box">
-      <h3>MineWorld Crafters</h3>
+      <h3>I'M DIO</h3>
       <p class="note">${M.max.toLocaleString()} characters, drawn and stored fully on-chain: every picture is made by the contract itself, and no two are
       alike (${HAIRS.length} hairs, ${OUTFITS.length} outfits, hats, skins, eyes, backgrounds). The one you wear is how your miner looks in the world.
       The one you wear also boosts your mining by its rarity and level (see Boosts). Minted sealed, revealed after the mint. Resales pay a 5%
@@ -283,26 +287,23 @@ export function createPanel(game) {
     </section>`;
   }
 
-  /// Where the reveal stands once the mint has closed (MineWorldCrafters.revealStatus), and the button anyone can
-  /// press to lock in its randomness: the hash of the block the mint closed in, which the chain only keeps for 256
-  /// blocks, so the sooner the better.
+  /// Where the reveal stands (MineWorldCrafters.revealStatus: 0 secret not out, 1 waiting, 2 sealable, 3 expired, 4
+  /// revealed), and the button anyone can press once the owner has published the secret: it locks the reveal in with
+  /// the next block's hash, which the chain only gives for 256 blocks (about 26 seconds), so the sooner the better.
   function revealBox(M, acct) {
     const st = M.revealStatus;
-    if (st === null || st === undefined || st === 0 || st === 5) return "";
-    if (st === 2) {
-      return `<p class="note">The mint has closed and the reveal's randomness is ready. Anyone can lock it in now (gas only): it fixes every
-        Crafter's look for good, and nobody, the owner included, can change it after. Then the owner reveals.</p>
-        <button class="btn gold wide" data-act="seal" ${!acct || busy ? "disabled" : ""}>Lock in the reveal</button>${statusAt("seal")}`;
-    }
+    if (st === null || st === undefined || st === 4) return "";
+    if (st === 0) return M.saleOpen || M.minted === 0 ? "" : `<p class="note">Reveal: the owner publishes the secret next; then anyone can lock the reveal in, here.</p>`;
+    const button = `<button class="btn gold wide" data-act="seal" ${!acct || busy || st === 1 ? "disabled" : ""}>Lock in the reveal</button>`;
     const note = {
-      1: "The mint has closed. In a few seconds the reveal's randomness is ready to lock in, here, by anyone.",
-      3: "Nobody locked in the reveal in time, so its randomness expired. The owner closes the mint again to fix a new one.",
-      4: "The reveal's randomness is locked in: every Crafter's look is fixed. The owner reveals them next.",
+      1: "The owner has published the reveal's secret. In a moment anyone can lock the reveal in (gas only); every DIO's look then shows, for everyone at once.",
+      2: "Ready: anyone can lock the reveal in now (gas only). Every DIO's look is fixed then and shows for everyone at once; nobody, the owner included, can change it.",
+      3: "Nobody locked the reveal in within its 256 blocks. Press the button to pick a new block (then press again a moment later).",
     }[st];
-    return note ? `<p class="note">${note}</p>${statusAt("seal")}` : "";
+    return `<p class="note">${note}</p>${button}${statusAt("seal")}`;
   }
 
-  /// Each Crafter you hold: its rarity, level and boost, and what the next level costs and adds (CrafterLevels).
+  /// Each DIO you hold: its rarity, level and boost, and what the next level costs and adds (CrafterLevels).
   function levelsList(M, s) {
     const lv = M.levels;
     if (!lv) return "";
@@ -327,11 +328,11 @@ export function createPanel(game) {
     }).join("");
     const burn = lv.burnBps / 100;
     return `<h3>Levels</h3><div class="crafter-rows">${rows}</div>
-      <p class="note">A level adds to the Crafter's boost while you wear it, and stays with the Crafter if it's sold. Paid in $MINE (approve
+      <p class="note">A level adds to the DIO's boost while you wear it, and stays with the DIO if it's sold. Paid in $MINE (approve
       exactly the cost, then pay): ${burn}% is burned for good and ${100 - burn}% goes to the project treasury.${chain.trade ? " Short of $MINE? The trade box is below." : ""}</p>`;
   }
 
-  /// Your boosts: the totals the world server last sent, what each slot adds, and the Crafters' table.
+  /// Your boosts: the totals the world server last sent, what each slot adds, and the DIOs' table.
   function boostsBox(L) {
     const b = L.boost ?? NO_BOOST;
     const lead = L.signedIn
@@ -354,9 +355,9 @@ export function createPanel(game) {
       <p class="note">One NFT a slot, and the slots add up. They only add to what you do: blocks break faster, every block, monster and boss share
       pays more, and your daily cap (${DAILY_EARN_CAP.toLocaleString("en-US")} $MINE) is higher. Nothing pays for holding. At most +${MAX.speed}%
       speed, +${MAX.earn}% $MINE and +${MAX.cap}% cap; everyone's ${WORLD_DAILY_CAP.toLocaleString("en-US")} $MINE a day still holds.</p>
-      <details><summary class="note">Crafter boosts (% speed / $MINE / daily cap): rarity and level add up</summary>${table}
-      <p class="note">Each of your Crafters shows its rarity and level below (Crafters, Levels); levels are bought there with $MINE, and stay
-      with the Crafter.</p></details>
+      <details><summary class="note">DIO boosts (% speed / $MINE / daily cap): rarity and level add up</summary>${table}
+      <p class="note">Each of your DIOs shows its rarity and level below (I'M DIO, Levels); levels are bought there with $MINE, and stay
+      with the DIO.</p></details>
     </section>`;
   }
 

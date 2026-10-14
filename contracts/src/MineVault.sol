@@ -7,9 +7,13 @@ import {Ownable, Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {MineToken} from "./MineToken.sol";
 
-/// @notice What the vault reads from a distributor before it takes over: who owns it.
-interface IOwned {
+/// @notice What the vault reads from a distributor before it takes over: who owns it, which vault it pays from, and
+///         which distributor it follows (whose books it carries over: MiningSites imports each player's site, settled
+///         and claimed from it).
+interface IDistributor {
     function owner() external view returns (address);
+    function vault() external view returns (address);
+    function predecessor() external view returns (address);
 }
 
 /// @title MineVault
@@ -22,20 +26,20 @@ interface IOwned {
 ///
 ///         The first distributor is named at deploy (MiningSites' proxy, deployed right after the vault). The owner
 ///         can only replace it in the open: `proposeDistributor`, then `acceptDistributor` at least
-///         DISTRIBUTOR_DELAY (2 days) later, so players see a change coming. Only a contract this vault's owner owns
-///         can take over, so a proxy left uninitialised (which anyone could set up as theirs) never can.
+///         DISTRIBUTOR_DELAY (2 days) later, so players see a change coming. Only a contract that names this vault's
+///         owner as its owner, this vault as its vault, and the current distributor as its predecessor can take over.
 ///
-///         Replacing MiningSites with a new proxy, step by step (it must never sit on chain uninitialised):
+///         Replacing MiningSites with a new proxy, step by step:
 ///         1. Deploy the new implementation (its constructor locks it).
 ///         2. `proposeDistributor(P)`, where P is the address the new ERC1967Proxy will get (for a wallet, its next
 ///            CREATE address: nothing need be there yet).
-///         3. Deploy the proxy at P with `initialize` in its constructor, naming this vault and this vault's owner:
-///            MiningSites.initialize accepts this vault's pending distributor as well as its distributor, and the
-///            proxy is never uninitialised, not even for a block.
-///         4. Two days later, `acceptDistributor()`: it checks P has code and that P's `owner()` is this vault's
-///            owner, and reverts otherwise (then propose again). A pending distributor can't mint: only `distributor`
-///            can. (Proposing a proxy that is already deployed but uninitialised lets anyone initialise it as theirs
-///            during the wait; it then can't be accepted, so the cost is two days, never $MINE.)
+///         3. Deploy the proxy at P with `initialize` in its constructor, naming this vault and this vault's owner.
+///            MiningSites.initialize accepts this vault's pending distributor as well as its distributor, but only in
+///            the proxy's own constructor or from this vault's owner, so nobody else can ever set a proxy up; it
+///            records the current distributor as its predecessor and imports each player's books from it.
+///         4. Two days later, `acceptDistributor()`: it checks P has code, and that P's `owner()` is this vault's
+///            owner, P's `vault()` this vault and P's `predecessor()` the current distributor, and reverts otherwise
+///            (then propose again). A pending distributor can't mint: only `distributor` can.
 /// @dev Not upgradeable and not a proxy, on purpose: this and the token are the parts that stay fixed. Trust, plainly:
 ///      the distributor decides who is paid (within the limits), so a bad distributor could mint up to 35,000 a day to
 ///      whomever it likes; that is no more than an owner who made itself MiningSites' signer could already take. The
@@ -77,6 +81,11 @@ contract MineVault is Ownable2Step, ReentrancyGuard {
     /// @notice The proposed distributor isn't owned by this vault's owner (or doesn't say who owns it): an
     ///         uninitialised or hijacked proxy, say. It can't take over.
     error NotOwnersDistributor();
+    /// @notice The proposed distributor pays from another vault, or doesn't say which.
+    error WrongVault();
+    /// @notice The proposed distributor doesn't follow the current one (its `predecessor()`), so it wouldn't carry
+    ///         the players' books over.
+    error NotASuccessor();
     /// @notice Only the distributor can have $MINE minted.
     error NotDistributor();
     /// @notice The mint would take today past DAILY_LIMIT.
@@ -157,22 +166,32 @@ contract MineVault is Ownable2Step, ReentrancyGuard {
         emit DistributorProposalCancelled(pending);
     }
 
-    /// @notice Make the proposed distributor the distributor, once its wait is over, if it is a contract owned by this
-    ///         vault's owner (`owner()`): an uninitialised proxy, or one a stranger initialised, is refused. The limits
-    ///         carry over: what the old one had minted today counts against the new one.
+    /// @notice Make the proposed distributor the distributor, once its wait is over, if it is a contract whose
+    ///         `owner()` is this vault's owner, whose `vault()` is this vault and whose `predecessor()` is the current
+    ///         distributor. An uninitialised proxy is refused, and none can be set up by anyone but this vault's owner
+    ///         (see MiningSites.initialize). The limits carry over: what the old one had minted today counts against
+    ///         the new one.
     function acceptDistributor() external onlyOwner {
         address pending = pendingDistributor;
         if (pending == address(0)) revert NoProposal();
         if (block.timestamp < pendingReadyAt) revert TooEarly();
         if (pending.code.length == 0) revert NotAContract();
-        (bool ok, bytes memory data) = pending.staticcall(abi.encodeCall(IOwned.owner, ()));
-        if (!ok || data.length != 32 || abi.decode(data, (uint256)) != uint256(uint160(owner()))) {
-            revert NotOwnersDistributor();
-        }
+        if (_read(pending, IDistributor.owner.selector) != owner()) revert NotOwnersDistributor();
+        if (_read(pending, IDistributor.vault.selector) != address(this)) revert WrongVault();
+        if (_read(pending, IDistributor.predecessor.selector) != distributor) revert NotASuccessor();
         emit DistributorSet(distributor, pending);
         distributor = pending;
         delete pendingDistributor;
         delete pendingReadyAt;
+    }
+
+    /// @dev An address `target` returns for the view `selector` (one word, an address); 0 if the call fails or
+    ///      answers anything else, which never matches what the vault expects.
+    function _read(address target, bytes4 selector) private view returns (address) {
+        (bool ok, bytes memory data) = target.staticcall(abi.encodePacked(selector));
+        if (!ok || data.length != 32) return address(0);
+        uint256 word = abi.decode(data, (uint256));
+        return word >> 160 == 0 ? address(uint160(word)) : address(0);
     }
 
     // ---------------------------------------------------------------- the owner

@@ -140,7 +140,7 @@ abstract contract SitesFixture is Test, MineDeployer {
         token.transfer(who, cost);
         vm.startPrank(who);
         token.approve(address(sites), cost);
-        sites.upgradeSite(cost);
+        sites.upgradeSite(cost, sites.levelRateBps(sites.siteLevel(who) + 1));
         vm.stopPrank();
     }
 }
@@ -525,7 +525,7 @@ contract MiningSitesTest is SitesFixture {
         vm.expectEmit(address(sites));
         emit MiningSites.SiteUpgraded(alice, 2, COST_2, 3_465e18);
         vm.prank(alice);
-        assertEq(sites.upgradeSite(COST_2), 2);
+        assertEq(sites.upgradeSite(COST_2, 0), 2);
         assertEq(sites.siteLevel(alice), 2);
         assertEq(sites.rateBps(alice), 6_000);
         assertEq(supply - token.totalSupply(), 3_465e18, "75% burned");
@@ -560,7 +560,7 @@ contract MiningSitesTest is SitesFixture {
         vm.startPrank(alice);
         token.approve(address(sites), type(uint256).max);
         vm.expectRevert(UpgradeCosts.MaxLevel.selector);
-        sites.upgradeSite(type(uint256).max);
+        sites.upgradeSite(type(uint256).max, 0);
         vm.stopPrank();
         assertEq(sites.levelRateBps(0), 0);
         assertEq(sites.levelRateBps(6), 0);
@@ -572,7 +572,7 @@ contract MiningSitesTest is SitesFixture {
         vm.startPrank(carol);
         token.approve(address(sites), COST_2);
         vm.expectRevert(MiningSites.NoSite.selector);
-        sites.upgradeSite(COST_2);
+        sites.upgradeSite(COST_2, 0);
         vm.stopPrank();
 
         // Not approved, too little approved, approved but not held.
@@ -582,17 +582,17 @@ contract MiningSitesTest is SitesFixture {
         vm.expectRevert(
             abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(sites), 0, COST_2 * 3 / 4)
         );
-        sites.upgradeSite(COST_2);
+        sites.upgradeSite(COST_2, 0);
         vm.prank(alice);
         token.approve(address(sites), COST_2 - 1);
         vm.prank(alice);
         vm.expectRevert();
-        sites.upgradeSite(COST_2);
+        sites.upgradeSite(COST_2, 0);
         vm.prank(bob);
         token.approve(address(sites), COST_2);
         vm.prank(bob);
         vm.expectRevert();
-        sites.upgradeSite(COST_2);
+        sites.upgradeSite(COST_2, 0);
         assertEq(sites.siteLevel(alice), 1);
         assertEq(sites.siteLevel(bob), 1);
     }
@@ -608,13 +608,13 @@ contract MiningSitesTest is SitesFixture {
         sites.setUpgradeCosts(_list(10_000e18, COST_3, COST_4, COST_5));
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(UpgradeCosts.CostAboveMax.selector, 10_000e18, COST_2));
-        sites.upgradeSite(COST_2);
+        sites.upgradeSite(COST_2, 0);
         assertEq(token.balanceOf(alice), 50_000e18);
         // Lowered, the same approval and maxCost cover it, and it charges the lower cost.
         vm.prank(owner);
         sites.setUpgradeCosts(_list(4_000e18, COST_3, COST_4, COST_5));
         vm.prank(alice);
-        sites.upgradeSite(COST_2);
+        sites.upgradeSite(COST_2, 0);
         assertEq(token.balanceOf(alice), 46_000e18);
     }
 
@@ -630,16 +630,56 @@ contract MiningSitesTest is SitesFixture {
         sites.setUpgradeCosts(_list(1_000_000e18, COST_3, COST_4, COST_5)); // mined first
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(UpgradeCosts.CostAboveMax.selector, 1_000_000e18, COST_2));
-        sites.upgradeSite(COST_2);
+        sites.upgradeSite(COST_2, 0);
         assertEq(token.balanceOf(alice), 1_000_000e18, "nothing taken");
         assertEq(sites.siteLevel(alice), 1);
         // One wei short of the cost is refused too; the cost itself, agreed to, goes through.
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(UpgradeCosts.CostAboveMax.selector, 1_000_000e18, 1_000_000e18 - 1));
-        sites.upgradeSite(1_000_000e18 - 1);
+        sites.upgradeSite(1_000_000e18 - 1, 0);
         vm.prank(alice);
-        assertEq(sites.upgradeSite(1_000_000e18), 2);
+        assertEq(sites.upgradeSite(1_000_000e18, 0), 2);
         assertEq(token.balanceOf(alice), 0);
+    }
+
+    /// Re-check 8c7ba957 #5: a rate cut mined just before the upgrade makes it revert (the player sent the rate it
+    /// was shown as minRateBps), instead of charging the full cost for a level that converts no more.
+    function test_RateCutMinedFirstRevertsTheUpgrade() public {
+        vm.prank(pool);
+        token.transfer(alice, COST_2);
+        vm.prank(alice);
+        token.approve(address(sites), COST_2);
+        assertEq(sites.levelRateBps(2), 6_000); // what alice was shown
+        vm.prank(owner);
+        sites.setRates(_list5(5_000, 5_000, 7_000, 8_500, 10_000)); // mined first
+        uint256 supply = token.totalSupply();
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(MiningSites.RateBelowMin.selector, 5_000, 6_000));
+        sites.upgradeSite(COST_2, 6_000);
+        assertEq(token.balanceOf(alice), COST_2, "nothing taken");
+        assertEq(token.totalSupply(), supply, "nothing burned");
+        assertEq(sites.siteLevel(alice), 1);
+        // Agreeing to the new rate, it goes through.
+        vm.prank(alice);
+        assertEq(sites.upgradeSite(COST_2, 5_000), 2);
+        assertEq(sites.rateBps(alice), 5_000);
+    }
+
+    /// Re-check 8c7ba957 #1: initialize runs only in the proxy's own constructor or from the vault's owner, even for
+    /// the proxy the vault names its distributor (a launch done in two steps by mistake).
+    function test_InitializeOnlyInTheConstructorOrByTheVaultsOwner() public {
+        MiningSites impl = new MiningSites();
+        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
+        MineVault v = new MineVault(token, owner, predicted);
+        address p = address(new ERC1967Proxy(address(impl), ""));
+        assertEq(p, predicted);
+        vm.prank(alice);
+        vm.expectRevert(MiningSites.InitializeOutsideConstructor.selector);
+        MiningSites(p).initialize(IERC20(address(token)), v, owner, treasury, alice, PRICE, WALLET_CAP, DAILY_CAP);
+        vm.prank(owner);
+        MiningSites(p).initialize(IERC20(address(token)), v, owner, treasury, signer, PRICE, WALLET_CAP, DAILY_CAP);
+        assertEq(MiningSites(p).signer(), signer);
+        assertEq(MiningSites(p).predecessor(), address(0), "the launch proxy follows nobody");
     }
 
     function test_UpgradeCostsAreTheOwnersWithinBounds() public {
@@ -1110,7 +1150,7 @@ contract MiningSitesTest is SitesFixture {
         token.approve(address(sites), type(uint256).max);
         vm.prank(alice);
         vm.expectRevert(UpgradeCosts.MaxLevel.selector);
-        sites.upgradeSite(type(uint256).max);
+        sites.upgradeSite(type(uint256).max, 0);
         // Costs and rates now have six levels' worth.
         vm.startPrank(owner);
         vm.expectRevert(UpgradeCosts.BadCosts.selector);
@@ -1378,28 +1418,39 @@ contract DistributorRaceTest is Test {
         fail("the vault minted 3,500 $MINE to whoever initialised the replacement distributor");
     }
 
-    /// The attack the other way round: the owner proposes a proxy that is already deployed but uninitialised, and a
-    /// stranger initialises it during the wait (it's the pending distributor, so initialize accepts it). The vault
-    /// then refuses it, and it never minted: the cost is two days, not $MINE.
-    function test_aStrangersPendingProxyIsNeverAccepted() public {
+    /// Re-check 8c7ba957 #1, the other way round: the owner proposes a proxy that is already deployed but
+    /// uninitialised. Nobody but the vault's owner can set it up during the wait (not with the attacker as owner, nor
+    /// naming the vault's owner while keeping the signer and treasury), and the owner itself can, safely.
+    function test_onlyTheOwnerSetsUpALateProxy() public {
         address replacement = address(new ERC1967Proxy(address(impl), ""));
         vm.prank(owner);
         vault.proposeDistributor(replacement);
         vm.prank(attacker);
+        vm.expectRevert(MiningSites.InitializeOutsideConstructor.selector);
         MiningSites(replacement)
             .initialize(IERC20(address(token)), vault, attacker, attacker, vm.addr(attackerKey), 1, 3_500e18, 35_000e18);
-        assertEq(MiningSites(replacement).owner(), attacker);
+        vm.prank(attacker);
+        vm.expectRevert(MiningSites.InitializeOutsideConstructor.selector);
+        MiningSites(replacement)
+            .initialize(IERC20(address(token)), vault, owner, attacker, vm.addr(attackerKey), 1, 3_500e18, 35_000e18);
         vm.warp(vm.getBlockTimestamp() + 2 days);
         vm.prank(owner);
         vm.expectRevert(MineVault.NotOwnersDistributor.selector);
+        vault.acceptDistributor(); // (still uninitialised)
+
+        vm.prank(owner);
+        MiningSites(replacement)
+            .initialize(IERC20(address(token)), vault, owner, treasury, owner, 1, 1_500e18, 35_000e18);
+        assertEq(MiningSites(replacement).predecessor(), vault.distributor());
+        vm.prank(owner);
         vault.acceptDistributor();
-        assertTrue(vault.distributor() != replacement);
+        assertEq(vault.distributor(), replacement);
         assertEq(token.totalMinted(), 0);
     }
 
     /// The replacement procedure in MineVault's notes, end to end: propose the proxy's predicted address (nothing there
     /// yet), deploy the proxy with initialize in its constructor, wait two days, accept. It's never uninitialised, it
-    /// can't mint while pending, and once accepted it pays and the old one can't.
+    /// sells and pays nothing while pending, and once accepted it pays and the old one is retired.
     function test_safeReplacementPath() public {
         address old = vault.distributor();
         MiningSites impl2 = new MiningSites();
@@ -1422,21 +1473,23 @@ contract DistributorRaceTest is Test {
         assertEq(address(next), predicted);
         assertEq(next.owner(), owner);
         assertEq(address(next.vault()), address(vault));
+        assertEq(next.predecessor(), old);
 
         // Already set up: a stranger can't initialise it again.
         vm.prank(attacker);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         next.initialize(IERC20(address(token)), vault, attacker, attacker, vm.addr(attackerKey), 1, 3_500e18, 35_000e18);
 
-        // While pending it can't mint: its claims revert in the vault.
+        // While pending it sells and pays nothing.
         address player = makeAddr("player");
         vm.deal(player, 1);
         vm.prank(player);
+        vm.expectRevert(MiningSites.NotActive.selector);
         next.openSite{value: 1}();
         uint64 deadline = uint64(vm.getBlockTimestamp() + 1 hours);
         bytes memory sig = _sign(next, signerKey, player, 1_000e18, deadline);
         vm.prank(player);
-        vm.expectRevert(MineVault.NotDistributor.selector);
+        vm.expectRevert(MiningSites.NotActive.selector);
         next.claim(1_000e18, deadline, sig);
 
         vm.warp(vm.getBlockTimestamp() + 2 days - 1);
@@ -1448,6 +1501,8 @@ contract DistributorRaceTest is Test {
         vault.acceptDistributor();
         assertEq(vault.distributor(), address(next));
 
+        vm.prank(player);
+        next.openSite{value: 1}();
         deadline = uint64(vm.getBlockTimestamp() + 1 hours);
         sig = _sign(next, signerKey, player, 1_000e18, deadline);
         vm.prank(player);
@@ -1456,6 +1511,10 @@ contract DistributorRaceTest is Test {
         vm.prank(old);
         vm.expectRevert(MineVault.NotDistributor.selector);
         vault.release(player, 1);
+        vm.deal(player, 1);
+        vm.prank(player);
+        vm.expectRevert(MiningSites.NotActive.selector);
+        MiningSites(old).openSite{value: 1}();
     }
 
     function _sign(MiningSites s, uint256 key, address player, uint256 total, uint64 deadline)
@@ -1467,5 +1526,394 @@ contract DistributorRaceTest is Test {
         (uint8 v, bytes32 r, bytes32 sg) =
             vm.sign(key, keccak256(abi.encodePacked("\x19\x01", s.domainSeparator(), structHash)));
         return abi.encodePacked(r, sg, v);
+    }
+}
+
+/// Re-check 8c7ba957 #1, the auditor's proof as submitted. MineVault.acceptDistributor promised that "an uninitialised
+/// proxy, or one a stranger initialised, is refused": it only checked `owner()`. A stranger who initialised the pending
+/// proxy naming the vault's owner as owner, but itself as signer and treasury, passed that check. Now nobody but the
+/// vault's owner can initialise a proxy outside its own constructor.
+contract HijackNamesOwnerTest is Test {
+    address owner = makeAddr("owner");
+    address treasury = makeAddr("treasury");
+    address attacker = makeAddr("attacker");
+    uint256 attackerKey = 0xA77AC;
+
+    MineToken token;
+    MiningSites impl;
+    MineVault vault;
+
+    function setUp() public {
+        token = new MineToken(address(this), address(0), 0);
+        impl = new MiningSites();
+        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
+        vault = new MineVault(token, owner, predicted);
+        address sites = address(
+            new ERC1967Proxy(
+                address(impl),
+                abi.encodeCall(
+                    MiningSites.initialize,
+                    (IERC20(address(token)), vault, owner, treasury, owner, 1, 1_500e18, 35_000e18)
+                )
+            )
+        );
+        assertEq(sites, predicted);
+        token.setMinter(address(vault));
+        token.renounceOwnership();
+    }
+
+    function test_HijackedProxyNamingTheOwnerIsAccepted() public {
+        // The state the original finding and the fix's NatSpec describe: a replacement proxy on chain, uninitialised,
+        // proposed by the owner.
+        address replacement = address(new ERC1967Proxy(address(impl), ""));
+        vm.prank(owner);
+        vault.proposeDistributor(replacement);
+
+        // A stranger initialises it during the wait: the vault's owner as owner (so acceptDistributor's check holds),
+        // itself as treasury and signer, a 1 wei site, the caps at their maximum.
+        address signer = vm.addr(attackerKey);
+        vm.prank(attacker);
+        (bool hijacked,) = replacement.call(
+            abi.encodeCall(
+                MiningSites.initialize,
+                (IERC20(address(token)), vault, owner, attacker, signer, 1, 3_500e18, 35_000e18)
+            )
+        );
+
+        vm.warp(vm.getBlockTimestamp() + 2 days);
+        vm.prank(owner);
+        (bool accepted,) = address(vault).call(abi.encodeCall(MineVault.acceptDistributor, ()));
+
+        if (hijacked && accepted) {
+            // Follow it through: the stranger signs its own voucher and the vault mints to it.
+            MiningSites s = MiningSites(replacement);
+            vm.deal(attacker, 1);
+            vm.prank(attacker);
+            s.openSite{value: 1}();
+            uint64 deadline = uint64(vm.getBlockTimestamp() + 1 hours);
+            bytes32 structHash = keccak256(abi.encode(s.EARNINGS_TYPEHASH(), attacker, uint256(1_000_000e18), deadline));
+            (uint8 v, bytes32 r, bytes32 sg) =
+                vm.sign(attackerKey, keccak256(abi.encodePacked("\x19\x01", s.domainSeparator(), structHash)));
+            vm.prank(attacker);
+            s.claim(1_000_000e18, deadline, abi.encodePacked(r, sg, v));
+        }
+
+        // What the fix claims: a proxy a stranger initialised is never accepted, and never mints.
+        assertTrue(vault.distributor() != replacement, "the vault accepted a distributor a stranger set up");
+        assertEq(token.balanceOf(attacker), 0, "the vault minted $MINE to the stranger");
+    }
+}
+
+/// Re-check 8c7ba957 #3, the auditor's proof, with two changes for the fix's behaviour: alice's site carried over, so
+/// opening it again on the replacement is a low-level call (it now reverts AlreadyOpen); and a claim that pays nothing
+/// reverts NothingToClaim (as it always has) rather than returning 0, so the second claim is a low-level call too,
+/// counted as 0 when it reverts with that error.
+contract ReplacementResetsSettledTest is Test {
+    uint256 constant KEY = 0xA11CE;
+    address signer = vm.addr(KEY);
+    address owner = makeAddr("owner");
+    address treasury = makeAddr("treasury");
+    address alice = makeAddr("alice");
+    MineToken token;
+    MineVault vault;
+    MiningSites impl;
+
+    function _proxy() internal returns (MiningSites) {
+        return MiningSites(address(new ERC1967Proxy(address(impl), abi.encodeCall(
+            MiningSites.initialize, (IERC20(address(token)), vault, owner, treasury, signer, 1, 1_500e18, 35_000e18)))));
+    }
+
+    function _sig(MiningSites s, uint256 total, uint64 dl) internal view returns (bytes memory) {
+        bytes32 sh = keccak256(abi.encode(keccak256("Earnings(address player,uint256 total,uint64 deadline)"), alice, total, dl));
+        bytes32 dom = keccak256(abi.encode(keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+            keccak256("MineWorldCraft Mining"), keccak256("1"), block.chainid, address(s)));
+        (uint8 v, bytes32 r, bytes32 x) = vm.sign(KEY, keccak256(abi.encodePacked("\x19\x01", dom, sh)));
+        return abi.encodePacked(r, x, v);
+    }
+
+    function test_ReplacementPaysLifetimeEarningsAgain() public {
+        vm.warp(20_000 days + 12 hours);
+        token = new MineToken(address(this), address(0), 0);
+        impl = new MiningSites();
+        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
+        vault = new MineVault(token, owner, predicted);
+        MiningSites oldSites = _proxy();
+        token.setMinter(address(vault));
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        oldSites.openSite{value: 1}();
+        // alice's lifetime earnings: 2,000; she converts them all on the old rules contract
+        uint64 dl = uint64(vm.getBlockTimestamp() + 1 hours);
+        vm.prank(alice);
+        uint256 first = oldSites.claim(2_000e18, dl, _sig(oldSites, 2_000e18, dl));
+        assertEq(oldSites.settled(alice), 2_000e18);
+
+        // the documented replacement: propose the predicted address, deploy initialised, accept after 2 days
+        address next = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.prank(owner);
+        vault.proposeDistributor(next);
+        MiningSites newSites = _proxy();
+        vm.warp(vm.getBlockTimestamp() + 2 days);
+        vm.prank(owner);
+        vault.acceptDistributor();
+        vm.prank(alice);
+        (bool opened,) = address(newSites).call{value: 1}(abi.encodeCall(MiningSites.openSite, ()));
+        opened; // (her site carried over: AlreadyOpen)
+
+        // the server keeps signing her lifetime total (2,000, nothing new earned)
+        dl = uint64(vm.getBlockTimestamp() + 1 hours);
+        vm.prank(alice);
+        (bool ok, bytes memory ret) =
+            address(newSites).call(abi.encodeCall(MiningSites.claim, (2_000e18, dl, _sig(newSites, 2_000e18, dl))));
+        if (!ok) assertEq(bytes4(ret), MiningSites.NothingToClaim.selector);
+        uint256 again = ok ? abi.decode(ret, (uint256)) : 0;
+        // expected: nothing to pay (already converted); actual: paid again
+        assertEq(again, 0, "earnings already converted were paid a second time");
+        assertEq(token.balanceOf(alice), first);
+    }
+}
+
+/// Re-check 8c7ba957 #3 and #4: a replacement carries each player's site and books over from its predecessor (through
+/// any chain of replacements), lazily, and the replaced one is retired: it sells and pays nothing.
+contract ReplacementTest is Test {
+    uint256 constant KEY = 0x5160;
+    address signer = vm.addr(KEY);
+    address owner = makeAddr("owner");
+    address treasury = makeAddr("treasury");
+    address alice = makeAddr("alice");
+    address bob = makeAddr("bob");
+    address carol = makeAddr("carol");
+
+    MineToken token;
+    MineVault vault;
+    MiningSites impl;
+    MiningSites first;
+
+    function setUp() public {
+        vm.warp(20_000 days + 12 hours);
+        token = new MineToken(address(this), address(this), 1_000_000e18); // a stand-in pool to buy upgrades from
+        impl = new MiningSites();
+        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
+        vault = new MineVault(token, owner, predicted);
+        first = _proxy();
+        token.setMinter(address(vault));
+        address[3] memory players = [alice, bob, carol];
+        for (uint256 i; i < 3; i++) {
+            vm.deal(players[i], 1 ether);
+            token.transfer(players[i], 300_000e18);
+        }
+    }
+
+    function _proxy() internal returns (MiningSites) {
+        return MiningSites(
+            address(
+                new ERC1967Proxy(
+                    address(impl),
+                    abi.encodeCall(
+                        MiningSites.initialize,
+                        (IERC20(address(token)), vault, owner, treasury, signer, 1, 1_500e18, 35_000e18)
+                    )
+                )
+            )
+        );
+    }
+
+    /// MineVault's documented steps: propose the predicted address, deploy it initialised, accept two days later.
+    function _replace() internal returns (MiningSites next) {
+        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.prank(owner);
+        vault.proposeDistributor(predicted);
+        next = _proxy();
+        vm.warp(vm.getBlockTimestamp() + 2 days);
+        vm.prank(owner);
+        vault.acceptDistributor();
+    }
+
+    function _voucher(MiningSites s, address who, uint256 total) internal view returns (uint64 dl, bytes memory sig) {
+        dl = uint64(vm.getBlockTimestamp() + 1 hours);
+        bytes32 sh = keccak256(abi.encode(s.EARNINGS_TYPEHASH(), who, total, dl));
+        (uint8 v, bytes32 r, bytes32 x) = vm.sign(KEY, keccak256(abi.encodePacked("\x19\x01", s.domainSeparator(), sh)));
+        sig = abi.encodePacked(r, x, v);
+    }
+
+    function _claim(MiningSites s, address who, uint256 total) internal returns (uint256) {
+        (uint64 dl, bytes memory sig) = _voucher(s, who, total);
+        vm.prank(who);
+        return s.claim(total, dl, sig);
+    }
+
+    function _upgrade(MiningSites s, address who) internal {
+        uint256 next = s.siteLevel(who) + 1;
+        uint256 cost = s.upgradeCost(next);
+        vm.startPrank(who);
+        token.approve(address(s), cost);
+        s.upgradeSite(cost, s.levelRateBps(next));
+        vm.stopPrank();
+    }
+
+    /// Sites, levels, settled and claimed carry over: the views read through until the player acts, then the books
+    /// are imported for good; lifetime vouchers pay only what's new; a player new to the replacement opens a site as
+    /// usual; and a third contract reads through the second to the first.
+    function test_TheBooksCarryOver() public {
+        vm.prank(alice);
+        first.openSite{value: 1}();
+        _upgrade(first, alice);
+        _upgrade(first, alice); // level 3: 70%
+        assertEq(_claim(first, alice, 2_000e18), 1_400e18);
+        vm.prank(carol);
+        first.openSite{value: 1}();
+        assertEq(_claim(first, carol, 1_000e18), 500e18);
+
+        MiningSites second = _replace();
+        assertEq(second.predecessor(), address(first));
+        // Read through, before alice acts here.
+        assertEq(second.siteLevel(alice), 3);
+        assertTrue(second.hasSite(alice));
+        assertEq(second.siteOf(alice), first.siteOf(alice));
+        assertEq(second.rateBps(alice), 7_000);
+        assertEq(second.settled(alice), 2_000e18);
+        assertEq(second.claimed(alice), 1_400e18);
+        assertEq(second.claimable(alice, 2_000e18), 0, "already converted");
+        assertEq(second.claimable(alice, 2_500e18), 350e18);
+        // Her first act imports them; the same lifetime total pays nothing, a higher one only what's new.
+        vm.prank(alice);
+        vm.expectRevert(MiningSites.AlreadyOpen.selector);
+        second.openSite{value: 1}();
+        (uint64 dl, bytes memory sig) = _voucher(second, alice, 2_500e18);
+        vm.expectEmit(address(second));
+        emit MiningSites.Imported(alice, 3, 2_000e18, 1_400e18);
+        vm.prank(alice);
+        assertEq(second.claim(2_500e18, dl, sig), 350e18);
+        assertEq(second.settled(alice), 2_500e18);
+        assertEq(second.claimed(alice), 1_750e18);
+        _upgrade(second, alice); // level 4 on the replacement
+        assertEq(second.siteLevel(alice), 4);
+        // Bob never had a site: he opens one here as usual.
+        assertFalse(second.hasSite(bob));
+        vm.prank(bob);
+        second.openSite{value: 1}();
+        assertEq(second.siteLevel(bob), 1);
+
+        // A third reads carol (who only ever used the first) through the second.
+        MiningSites third = _replace();
+        assertEq(third.predecessor(), address(second));
+        assertEq(third.settled(carol), 1_000e18);
+        assertEq(third.siteLevel(carol), 1);
+        assertEq(third.siteLevel(alice), 4);
+        assertEq(third.claimable(carol, 1_000e18), 0);
+        assertEq(_claim(third, carol, 1_400e18), 200e18);
+        vm.prank(carol);
+        vm.expectRevert(MiningSites.NotActive.selector);
+        first.openSite{value: 1}();
+    }
+
+    /// A level above the replacement's top is held at its top.
+    function test_ALevelAboveTheNewTopIsHeldAtTheTop() public {
+        vm.startPrank(owner);
+        first.addLevel(1_000e18, 10_000); // level 6 on the first
+        uint256[] memory cheap = new uint256[](5);
+        for (uint256 i; i < 5; i++) {
+            cheap[i] = 1e18;
+        }
+        first.setUpgradeCosts(cheap);
+        vm.stopPrank();
+        vm.prank(alice);
+        first.openSite{value: 1}();
+        for (uint256 i; i < 5; i++) {
+            _upgrade(first, alice);
+        }
+        assertEq(first.siteLevel(alice), 6);
+        MiningSites second = _replace();
+        assertEq(second.maxLevel(), 5);
+        assertEq(second.siteLevel(alice), 5);
+        _claim(second, alice, 100e18);
+        assertEq(second.siteLevel(alice), 5);
+        assertEq(second.rateBps(alice), 10_000);
+    }
+
+    /// The per-day counters restart at a replacement (documented); the vault's 35,000 a day still holds across it.
+    function test_PerDayCountersRestartButTheVaultsLimitHolds() public {
+        vm.prank(alice);
+        first.openSite{value: 1}();
+        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.prank(owner);
+        vault.proposeDistributor(predicted);
+        MiningSites second = _proxy();
+        vm.warp(vm.getBlockTimestamp() + 2 days);
+        // The day of the switch: alice fills her 1,500 on the first, then the switch, then claims on the second.
+        assertEq(_claim(first, alice, 3_000e18), 1_500e18);
+        vm.prank(owner);
+        vault.acceptDistributor();
+        assertEq(second.walletPaidToday(alice), 0);
+        assertEq(_claim(second, alice, 10_000e18), 1_500e18);
+        assertEq(vault.releasedToday(), 3_000e18);
+        assertLe(vault.releasedToday(), vault.DAILY_LIMIT());
+    }
+
+    /// Re-check 8c7ba957 #4: once replaced, the old contract sells no site or level and pays nothing, paused or not;
+    /// a replacement does neither before it is accepted.
+    function test_aRetiredDistributorSellsNothing() public {
+        vm.prank(alice);
+        first.openSite{value: 1}();
+        _claim(first, alice, 2_000e18);
+        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.prank(owner);
+        vault.proposeDistributor(predicted);
+        MiningSites second = _proxy();
+        vm.prank(bob);
+        vm.expectRevert(MiningSites.NotActive.selector);
+        second.openSite{value: 1}(); // not accepted yet
+        vm.warp(vm.getBlockTimestamp() + 2 days);
+        vm.prank(owner);
+        vault.acceptDistributor();
+        vm.prank(owner);
+        first.setPaused(true);
+
+        uint256 cost = first.upgradeCost(2);
+        uint256 before = token.balanceOf(alice);
+        vm.startPrank(alice);
+        token.approve(address(first), cost);
+        vm.expectRevert(MiningSites.NotActive.selector);
+        first.upgradeSite(cost, 0);
+        vm.stopPrank();
+        assertEq(token.balanceOf(alice), before, "nothing taken");
+        assertEq(first.siteLevel(alice), 1);
+        vm.prank(bob);
+        vm.expectRevert(MiningSites.NotActive.selector);
+        first.openSite{value: 1}();
+        vm.prank(owner);
+        first.setPaused(false);
+        (uint64 dl, bytes memory sig) = _voucher(first, alice, 3_000e18);
+        vm.prank(alice);
+        vm.expectRevert(MiningSites.NotActive.selector);
+        first.claim(3_000e18, dl, sig);
+        assertEq(first.claimable(alice, 3_000e18), 0);
+        // The replacement takes it from there.
+        _upgrade(second, alice);
+        assertEq(second.siteLevel(alice), 2);
+    }
+
+    /// A replacement must follow a distributor that answers `bookOf` (a MiningSites); anything else is refused.
+    function test_APredecessorMustKeepBooks() public {
+        MineToken other = new MineToken(address(this), address(0), 0);
+        MineVault odd = new MineVault(other, owner, address(other)); // its distributor: a contract with no books
+        ProxyMaker maker = new ProxyMaker();
+        address predicted = vm.computeCreateAddress(address(maker), 1);
+        vm.prank(owner);
+        odd.proposeDistributor(predicted);
+        vm.expectRevert(MiningSites.BadPredecessor.selector);
+        maker.make(
+            address(impl),
+            abi.encodeCall(
+                MiningSites.initialize, (IERC20(address(other)), odd, owner, treasury, signer, 1, 1_500e18, 35_000e18)
+            )
+        );
+    }
+}
+
+/// Deploys a proxy from a fresh nonce, so its address is known before.
+contract ProxyMaker {
+    function make(address implementation, bytes calldata data) external returns (address) {
+        return address(new ERC1967Proxy(implementation, data));
     }
 }
