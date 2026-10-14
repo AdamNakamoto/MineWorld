@@ -3,6 +3,13 @@ name = "mineworldcraft-mp"
 main = "src/index.js"
 compatibility_date = "2025-10-01"
 
+# Its addresses: mineworldcraft.fun (and www), a domain on this Cloudflare account, and the workers.dev address.
+workers_dev = true
+routes = [
+  { pattern = "mineworldcraft.fun", custom_domain = true },
+  { pattern = "www.mineworldcraft.fun", custom_domain = true },
+]
+
 [[durable_objects.bindings]]
 name = "WORLD"
 class_name = "World"
@@ -11,8 +18,15 @@ class_name = "World"
 tag = "v1"
 new_sqlite_classes = ["World"]
 
-# The chain, once the contracts are deployed (until then the room still runs the world and counts earnings, but
-# signs no vouchers). The voucher key is a secret: `npx wrangler secret put MINING_KEY` (its address is MiningSites'
+# The website (web/ as it is: no build) is served by this same Worker, so the game and its world server share one
+# address: a request for a file in web/ is answered from the static assets (free, and not counted against the
+# Worker's daily requests); anything else (/ws, /count) reaches the Worker. web/.assetsignore keeps local dev files
+# (chain.json) off the site.
+[assets]
+directory = "../web"
+
+# The chain, once the contracts are deployed. Until MINING_ADDRESS is set the room runs the world on a practice ledger
+# (players see what they'd earn; it's reset at launch and never paid), and trips and the shop are free. The voucher key is a secret: `npx wrangler secret put MINING_KEY` (its address is MiningSites'
 # signer). Locally, ./dev.sh writes all of these to .dev.vars.
 [vars]
 # CHAIN_ID = "4663"

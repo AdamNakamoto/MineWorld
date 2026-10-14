@@ -6,8 +6,8 @@
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { BLOCKS, AIR, WATER, TOOLS, HAND_DAMAGE, breakTime, itemName } from "./blocks.js";
 import { wrapDelta, SPAWN, REACH, ATTACK_MS, DAY_MS, TOWN, isNight, MOB_KINDS, UNDERGROUND_Y, CHUNK, wrap } from "./rules.js";
-import { ZONES, zoneOf, landing, spawnOf, protectedIn, calmAt, pvpAt, BOSS, PVP, ROCKET_REACH, PAD_R, TICKETS_FREE } from "./zones.js";
-import { createRocket, openCard, cardOpen, closeCard, drawCard } from "./rocket.js";
+import { ZONES, zoneOf, landing, spawnOf, protectedIn, calmAt, pvpAt, BOSS, PVP, ROCKET_REACH, PAD_R } from "./zones.js";
+import { createRocket, openCard, cardOpen, closeCard, drawCard, setTicketsFree, ticketsAreFree } from "./rocket.js";
 import { createBoss } from "./boss.js";
 import { createChests } from "./chests.js";
 import { OFFICE } from "./worldgen.js";
@@ -91,6 +91,7 @@ const HALF = 0.3, TALL = 1.8, EYE = 1.62;
 const VIEWS = ["First person", "Behind you", "Facing you"];
 let view = 0, myLook = null, me = null;
 let heldNow = 0; // the item in your hand (0: nothing), as your miner and everyone else show it
+let prelaunch = false; // the room says $MINE isn't live yet: practice earnings, free trips and shop
 try { myLook = unpackTraits(JSON.parse(localStorage.getItem("mwc:wornTraits"))); } catch {}
 const meHolder = new THREE.Group(); // stands your miner on the curved planet (planet.place); me.root turns within it
 scene.add(meHolder);
@@ -464,6 +465,7 @@ const ledger = { signedIn: false, wallet: null, name: null, today: 0, total: 0, 
 function drawLedger() {
   $("earnToday").textContent = fmtMine(ledger.today);
   $("earnWho").textContent = ledger.signedIn ? `${ledger.name ?? short(ledger.wallet)} · ${fmtMine(ledger.total)} earned in all` : "Guest: sign in to earn (M)";
+  $("earnPractice").hidden = !prelaunch;
   const b = ledger.boost, said = describe(b);
   $("earnBoost").hidden = !ledger.signedIn || !said;
   $("earnBoost").textContent = `⚡ ${[b.speed && `+${b.speed}% speed`, b.earn && `+${b.earn}% $MINE`, b.cap && `cap ${fmtMine(ledger.cap)}`, b.move && `+${b.move}% move`].filter(Boolean).join(", ")}`;
@@ -486,8 +488,12 @@ if (url) {
       if (!on) { mobs.clear(); dropBoost(); drawLedger(); }
       $("onlineN").hidden = !on;
     },
-    welcome(serverTime, count) {
+    welcome(serverTime, count, flags) {
       serverOffset = serverTime - Date.now();
+      // Before launch the room keeps a practice ledger (reset at launch), and trips and the shop are free.
+      prelaunch = !!flags.practice;
+      setTicketsFree(flags.ticketsFree, prelaunch);
+      drawLedger();
       $("onlineN").textContent = `● ${count} online`;
       if (ledger.wallet) tryResume(ledger.wallet);
       voice?.reconnected();
@@ -881,7 +887,7 @@ $("siteBtn").addEventListener("click", () => panel?.open());
 $("viewBtn").addEventListener("click", nextView);
 $("titleSite").addEventListener("click", () => panel?.open());
 $("invBtn").addEventListener("click", () => ($("inv").hidden ? openInventory() : closeInventory()));
-const shop = createShop({ inv, atlas, toast, release: releaseMouse, resume: () => { if (!touch && playing) lockMouse(); }, chain: () => chain });
+const shop = createShop({ inv, atlas, toast, release: releaseMouse, resume: () => { if (!touch && playing) lockMouse(); }, chain: () => chain, free: () => prelaunch });
 $("shopBtn").addEventListener("click", () => shop.open());
 $("chatBtn").addEventListener("click", openChat);
 $("menuBtn").addEventListener("click", openMenu);
@@ -1171,7 +1177,7 @@ function setUnconfirmed(w, list) {
   try { list.length ? localStorage.setItem(tixKey(w), JSON.stringify(list)) : localStorage.removeItem(tixKey(w)); } catch {}
 }
 /// Whether a trip to `to` needs a ticket you don't have.
-const needsTicket = (to) => !TICKETS_FREE && !!net && to !== "home" && to !== zone && zoneOf(to).ticket > 0 && !(tickets[to] > 0);
+const needsTicket = (to) => !ticketsAreFree() && !!net && to !== "home" && to !== zone && zoneOf(to).ticket > 0 && !(tickets[to] > 0);
 /// Hands the room payment `hash` (from `wallet`) for a ticket to `to`: resolves with your tickets there now, or throws
 /// why not. Tried again a couple of times while the room can't read the chain yet.
 async function claimTicket(wallet, hash, to) {
@@ -1211,7 +1217,7 @@ async function buyTicket(to, step) {
 }
 /// After signing in: payments for tickets the room never confirmed go to it again.
 function resendTickets(wallet) {
-  if (TICKETS_FREE) return;
+  if (ticketsAreFree()) return;
   const list = unconfirmed(wallet).filter((p) => Date.now() - p.at < 4 * 3600_000);
   setUnconfirmed(wallet, list);
   for (const p of list) {

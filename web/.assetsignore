@@ -1,0 +1,4 @@
+# Never published with the site (multiplayer/wrangler.toml [assets]): local dev files.
+chain.json
+.DS_Store
+.assetsignore

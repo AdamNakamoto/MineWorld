@@ -143,7 +143,16 @@ let card = null;
 
 /// Opens the card at the rocket: one entry per planet with its line (the current one marked "You're here"), its
 /// ticket, the PvP zone's warning, and whether the zone allows PvP. `pick(key)` is called with the chosen one.
-/// Unless tickets are free (zones.js TICKETS_FREE), a trip out needs a ticket, and `sales` sells them:
+/// Whether trips are free: zones.js TICKETS_FREE, or before launch (the room says so: there's no $MINE to pay with).
+let ticketsFree = TICKETS_FREE, prelaunch = false;
+export function setTicketsFree(free, beforeLaunch = false) {
+  ticketsFree = TICKETS_FREE || !!free;
+  prelaunch = !!beforeLaunch;
+}
+export const ticketsAreFree = () => ticketsFree;
+const freeNote = () => (TICKETS_FREE ? "free while testing" : prelaunch ? "free until $MINE launches" : "free");
+
+/// Unless tickets are free (ticketsAreFree), a trip out needs a ticket, and `sales` sells them:
 /// { tickets() → { zone: count } (the room's), signedIn() → whether the room counts a wallet (guests can't buy),
 ///   balance() → Promise of the wallet's $MINE in wei (or null), buy(zone, step) → Promise of the tickets there
 ///   after buying one (step(text) hears each stage; throws with the reason in words), signIn() → Promise,
@@ -175,7 +184,7 @@ function shut(closed) {
   if (closed) c?.close();
 }
 /// Whether a trip to `k` from here still needs a ticket the player doesn't have.
-const lacks = (k) => !TICKETS_FREE && !!card?.sales && k !== "home" && k !== card.current && zoneOf(k).ticket > 0
+const lacks = (k) => !ticketsFree && !!card?.sales && k !== "home" && k !== card.current && zoneOf(k).ticket > 0
   && !(card.sales.tickets()[k] > 0);
 function go(k) {
   if (lacks(k)) return say(`A trip to ${ZONES[k].name} needs a ticket: buy one below its name.`, "bad");
@@ -190,7 +199,7 @@ function say(text, kind = "") {
 }
 function updateBalance() {
   const c = card;
-  if (!c?.sales || TICKETS_FREE || !c.sales.signedIn()) return;
+  if (!c?.sales || ticketsFree || !c.sales.signedIn()) return;
   c.sales.balance().then((b) => { if (card === c) { c.balance = b; drawCard(); } }).catch(() => {});
 }
 async function buy(k) {
@@ -224,11 +233,11 @@ async function signIn() {
 export function drawCard() {
   if (!card) return;
   const { current, sales, status, busy, balance } = card;
-  const selling = !TICKETS_FREE && !!sales;
+  const selling = !ticketsFree && !!sales;
   const have = selling ? sales.tickets() : {};
   const signed = selling && sales.signedIn();
-  document.getElementById("rocketTicket").textContent = TICKETS_FREE
-    ? "One ticket per trip out: stay as long as you like. The way home is free. Tickets are free while testing."
+  document.getElementById("rocketTicket").textContent = ticketsFree
+    ? `One ticket per trip out: stay as long as you like. The way home is free. Tickets are ${freeNote()}.`
     : `One ticket per trip out, paid in $MINE to the treasury: stay as long as you like. The way home is free.${signed && balance !== null ? ` Your $MINE: ${mineText(balance)}.` : ""}`;
   const st = document.getElementById("rocketStatus");
   st.hidden = !status;
@@ -239,7 +248,7 @@ export function drawCard() {
     const wei = BigInt(Z.ticket) * 10n ** 18n, short = balance !== null && balance < wei;
     let ticket = "";
     if (!Z.ticket) ticket = here ? "" : `<span class="dest-ticket">The way home is free</span>`;
-    else if (TICKETS_FREE) ticket = `<span class="dest-ticket">Ticket: ${Z.ticket.toLocaleString()} $MINE (free while testing)</span>`;
+    else if (ticketsFree) ticket = `<span class="dest-ticket">Ticket: ${Z.ticket.toLocaleString()} $MINE (${freeNote()})</span>`;
     else if (n > 0) ticket = `<span class="dest-have">🎫 You have ${plural(n, "ticket")} to ${Z.name}</span>`;
     else ticket = `<span class="dest-ticket">Ticket: ${Z.ticket.toLocaleString()} $MINE</span>`;
     const buyRow = !need ? "" : !signed

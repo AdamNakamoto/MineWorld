@@ -239,6 +239,7 @@ h3 .status.closed { background: #6a2a2a; }
 .dest-line { color: var(--muted); font-size: 13px; }
 .dest-rule { color: var(--good); font-size: 12px; }
 .dest-ticket { color: var(--gold); font-size: 12px; }
+.practice-line { color: var(--muted); font-style: italic; }
 .dest-have { color: var(--good); font-size: 13px; }
 .dest-buy { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
 /* A purchase's progress, or why it didn't go through (the rocket card, the shop, the panel). */

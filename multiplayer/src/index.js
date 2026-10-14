@@ -81,6 +81,10 @@ const WORLD_CAP = toUnits(WORLD_DAILY_CAP);
 // UNIT). Before boosts they counted hundredths of a $MINE under "led:" and "worldday": those are read once, converted
 // (x100, so every total stays the same in wei and vouchers stay as they were), written under the new keys and deleted.
 const LEDGER = "led2:", WORLD_DAY = "worldday2";
+// Before launch (no MINING_ADDRESS: $MINE isn't on-chain yet) the room keeps a practice ledger under its own keys:
+// players see what they'd earn, but it's never paid. Setting MINING_ADDRESS at launch switches to the real ledger,
+// which starts empty, so practice earnings are reset (they're never converted, and can be deleted later).
+const PRACTICE_LEDGER = "prac:", PRACTICE_WORLD_DAY = "pracday";
 const OLD_LEDGER = "led:", OLD_WORLD_DAY = "worldday", FROM_CENTS = UNIT / 100;
 const BOOST_RECHECK_MS = 10 * 60_000; // what a player uses is checked again on-chain this often while they earn
 const BOOST_RETRY_MS = 60_000; // and this soon after a read failed
@@ -96,7 +100,7 @@ const TICKET_KIND = 1n; // MinePayments' kind for rocket tickets ("ticket": all 
 const RECHECKS = 2, RECHECK_EVERY_S = 15; // re-reads of a player's NFTs they may ask for at once, and one more this often
 
 // The game's homes: its own domain (to be decided: add it here), Vercel previews and local development.
-const ORIGINS = [/^https:\/\/(www\.)?mineworldcraft\.fun$/, /^https:\/\/[a-z0-9-]+\.vercel\.app$/, /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/];
+const ORIGINS = [/^https:\/\/(www\.)?mineworldcraft\.fun$/, /^https:\/\/mineworldcraft-mp\.[a-z0-9-]+\.workers\.dev$/, /^https:\/\/[a-z0-9-]+\.vercel\.app$/, /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/];
 
 const short = (a) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 const authMessage = (address, nonce) =>
@@ -147,6 +151,9 @@ export class World extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.env = env;
+    this.practice = !env.MINING_ADDRESS; // before launch: a practice ledger, never paid (PRACTICE_LEDGER)
+    this.ledgerKey = this.practice ? PRACTICE_LEDGER : LEDGER;
+    this.worldDayKey = this.practice ? PRACTICE_WORLD_DAY : WORLD_DAY;
     this.atts = new Map(); // ws -> attachment, as last saved
     this.edits = new Map(); // chunk key -> Map(index -> block)
     this.dirtyChunks = new Set();
@@ -302,13 +309,14 @@ export class World extends DurableObject {
   /// remembered here and it's put back there when it signs in (signedIn), tickets or not.
   async hello(ws, a, info) {
     if (a.ready) return;
-    const zone = isZone(info?.zone) && (info.zone === "home" || TICKETS_FREE) ? info.zone : "home";
+    const zone = isZone(info?.zone) && (info.zone === "home" || this.ticketsFree()) ? info.zone : "home";
     if (zone !== a.zone) this.arrive(a, zone, Date.now());
     a.ready = true;
     this.save(ws, a);
     const here = this.onZone(a.zone).filter(([w]) => w !== ws);
     const total = this.players().length;
-    this.send(ws, ["welcome", a.id, Date.now(), here.map(([, o]) => this.shown(o)), total, a.zone]);
+    this.send(ws, ["welcome", a.id, Date.now(), here.map(([, o]) => this.shown(o)), total, a.zone,
+      { practice: this.practice, ticketsFree: this.ticketsFree() }]);
     const voices = this.players().filter(([w, o]) => w !== ws && o.voice).map(([, o]) => o.id);
     if (voices.length) this.send(ws, ["voices", voices]);
     this.zoneCast(a.zone, ["join", ...this.shown(a)], ws);
@@ -574,12 +582,16 @@ export class World extends DurableObject {
     }
     await this.move(ws, a, zone, now);
   }
+  /// Trips are free while zones.js TICKETS_FREE says so, and before launch (no MinePayments to buy tickets with).
+  ticketsFree() {
+    return TICKETS_FREE || !this.env.PAYMENTS_ADDRESS;
+  }
   /// A ticket for player `a`'s trip out to `to`, used up on departure: true if they may go. While TICKETS_FREE
   /// (zones.js) every trip is free; otherwise it takes one of the signed-in wallet's tickets to `to` (bought with
   /// buyTicket; guests have none). A ticket has no time limit (a zone can be stayed in as long as you like), and the
   /// way home never needs one.
   async useTicket(ws, a, to) {
-    if (TICKETS_FREE) return true;
+    if (this.ticketsFree()) return true;
     if (!a.wallet) return false;
     const t = await this.ticketsOf(a.wallet);
     if (!(t[to] > 0)) return false;
@@ -604,7 +616,7 @@ export class World extends DurableObject {
       this.send(ws, ["ticketno", isZone(zone) ? zone : null, why, typeof hash === "string" ? hash : null, retry ? 1 : 0]);
     if (!a.ready) return;
     if (!isZone(zone) || !zoneOf(zone).ticket) return no("The rocket sells no tickets there.");
-    if (TICKETS_FREE) return no("Tickets are free right now: no need to buy one.");
+    if (this.ticketsFree()) return no("Tickets are free right now: no need to buy one.");
     if (!a.wallet) return no("Sign in to earn (M) first, so the world server knows your wallet.");
     if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash)) return no("That isn't a transaction.");
     if (!env.PAYMENTS_ADDRESS || !env.CHAIN_RPC) return no("Tickets can't be bought yet.");
@@ -954,8 +966,8 @@ export class World extends DurableObject {
     const s = wallet[2].toLowerCase();
     let sh = this.shards.get(s);
     if (!sh) {
-      let stored = await this.ctx.storage.get(`${LEDGER}${s}`), old = null;
-      if (stored === undefined) {
+      let stored = await this.ctx.storage.get(`${this.ledgerKey}${s}`), old = null;
+      if (stored === undefined && !this.practice) {
         old = await this.ctx.storage.get(`${OLD_LEDGER}${s}`);
         if (old) stored = Object.fromEntries(Object.entries(old).map(([w, l]) => [w, { ...l, total: l.total * FROM_CENTS, today: l.today * FROM_CENTS }]));
       }
@@ -983,8 +995,8 @@ export class World extends DurableObject {
   async worldToday() {
     const day = Math.floor(Date.now() / DAY_MS);
     if (!this.world) {
-      let w = await this.ctx.storage.get(WORLD_DAY);
-      if (w === undefined) {
+      let w = await this.ctx.storage.get(this.worldDayKey);
+      if (w === undefined && !this.practice) {
         const old = await this.ctx.storage.get(OLD_WORLD_DAY);
         if (old && !this.world) {
           w = { day: old.day, total: old.total * FROM_CENTS };
@@ -1049,8 +1061,8 @@ export class World extends DurableObject {
       for (const [i, b] of e) { raw[j++] = i & 255; raw[j++] = i >> 8; raw[j++] = b; }
       out[k] = raw;
     }
-    for (const s of shards) out[`${LEDGER}${s}`] = this.shards.get(s);
-    if (world) out[WORLD_DAY] = this.world;
+    for (const s of shards) out[`${this.ledgerKey}${s}`] = this.shards.get(s);
+    if (world) out[this.worldDayKey] = this.world;
     const old = [...this.oldKeys]; // (their converted copies are in this write)
     this.flushing = (async () => {
       try {
@@ -1125,7 +1137,7 @@ export class World extends DurableObject {
     this.rename(ws, a);
     const [, l] = await this.ledger(wallet);
     this.send(ws, ["signedin", wallet, token, l.today, l.total, dailyCap(0, a.zone), a.nick && nameShown(a.nick) ? a.nick : null]);
-    if (!TICKETS_FREE) this.send(ws, ["tickets", await this.ticketsOf(wallet)]);
+    if (!this.ticketsFree()) this.send(ws, ["tickets", await this.ticketsOf(wallet)]);
     // Back on the zone this wallet was on (its ticket has no time limit). A game in a zone already (a guest's free
     // trip, only possible while tickets are free) keeps its place, and that becomes the wallet's zone.
     const kept = (await this.ctx.storage.get(`zone:${wallet}`)) ?? "home";

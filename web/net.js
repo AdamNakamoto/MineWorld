@@ -138,7 +138,7 @@ export function createNet(url, scene, h) {
       case "welcome": {
         id = m[1];
         for (const p of m[3]) add(...p);
-        h.welcome?.(m[2], m[4] ?? others.size + 1);
+        h.welcome?.(m[2], m[4] ?? others.size + 1, m[6] ?? {});
         break;
       }
       case "zoned": {

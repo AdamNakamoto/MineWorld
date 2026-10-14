@@ -65,7 +65,9 @@ export function createShop(game) {
   let tab = "Tools", balance = null, burnBps = null, busy = false, status = null, settling = false;
   const chain = () => game.chain?.() ?? null;
   const account = () => chain()?.account ?? null;
-  const selling = () => !FREE_WHILE_TESTING && !!chain()?.hasPayments;
+  // Free while testing (FREE_WHILE_TESTING), and before launch (the room says $MINE isn't live yet: game.free()).
+  const free = () => FREE_WHILE_TESTING || !!game.free?.();
+  const selling = () => !free() && !!chain()?.hasPayments;
 
   function say(text, kind = "") {
     status = text ? { text, kind } : null;
@@ -79,8 +81,8 @@ export function createShop(game) {
     const acct = account(), sell = selling();
     const burn = (burnBps ?? 7500) / 100;
     const owed = acct ? stored(OWED + acct.toLowerCase(), []) : [];
-    noteEl.innerHTML = FREE_WHILE_TESTING
-      ? "Tools for mining, weapons and armor. Prices are in $MINE; <b>free while the game is being tested</b>."
+    noteEl.innerHTML = free()
+      ? `Tools for mining, weapons and armor. Prices are in $MINE; <b>free ${FREE_WHILE_TESTING ? "while the game is being tested" : "until $MINE launches"}</b>.`
       : !sell
         ? "Tools for mining, weapons and armor, priced in $MINE. The shop takes $MINE once it's live on-chain."
         : `Tools for mining, weapons and armor, paid in $MINE from your wallet (approve exactly the price, then pay): <b>${burn}% of
@@ -91,7 +93,7 @@ export function createShop(game) {
     grid.innerHTML = CATALOG[tab].map(([id, n, price], i) => {
       const owned = game.inv.count(id) + (ARMOR[id] && game.inv.worn(ARMOR[id].slot) === id ? 1 : 0);
       const why = !sell ? "" : !acct ? "Log in to buy" : balance !== null && balance < BigInt(price) * WEI ? "Not enough $MINE" : "";
-      const button = FREE_WHILE_TESTING
+      const button = free()
         ? `<button class="btn" data-buy="${i}">Get (free)</button>`
         : `<button class="btn gold" data-buy="${i}" ${!sell || busy || why ? "disabled" : ""} title="${why}">Buy</button>`;
       return `<div class="ware">
@@ -153,7 +155,7 @@ export function createShop(game) {
   }
 
   async function buy(i) {
-    if (FREE_WHILE_TESTING) return getFree(i);
+    if (free()) return getFree(i);
     const [id, n, price] = CATALOG[tab][i];
     const c = chain(), acct = account();
     if (busy) return;
