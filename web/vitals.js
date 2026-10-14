@@ -33,11 +33,25 @@ const BREAD = [
   "..kkkkk..",
   ".........",
 ];
+// A little chestplate for the armor row.
+const PLATE = [
+  "kkk...kkk",
+  "kAAkkkAAk",
+  "kAaAAAaAk",
+  ".kAAAAAk.",
+  ".kAAaAAk.",
+  ".kAAAAAk.",
+  ".kAAAAAk.",
+  ".kkkkkkk.",
+  ".........",
+];
+const AR = { k: "#1a1a22", A: "#c8ccd4", a: "#eef0f4", e: "#2a2c33" };
 const HP = { k: "#1a0a0a", R: "#e3352b", r: "#a8221c", w: "#ffb8b0", e: "#3a1a1a" };
 const FD = { k: "#24160a", L: "#e8b060", l: "#f8d898", B: "#b8742a", e: "#3a2a1a" };
 export const ICONS = {
   heart: icon(HEART, HP), heartHalf: icon(half(HEART), HP), heartEmpty: icon(empty(HEART), HP),
   food: icon(BREAD, FD), foodHalf: icon(half(BREAD), FD), foodEmpty: icon(empty(BREAD), FD),
+  armor: icon(PLATE, AR), armorHalf: icon(half(PLATE), AR), armorEmpty: icon(empty(PLATE), AR),
 };
 
 /// Ten icons for a value out of 20 (full, half or empty each).

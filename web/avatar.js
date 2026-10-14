@@ -4,6 +4,7 @@
 
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { pixels, HAIRS, HATS, OUTFITS, SKINS } from "./crafters.js";
+import { ARMOR_COLOURS } from "./textures.js";
 
 const PX = 1.8 / 32; // one "pixel" of the 32-pixel-tall figure, in metres
 
@@ -26,8 +27,9 @@ function box(w, h, d, color, emissive) {
   return new THREE.Mesh(new THREE.BoxGeometry(w * PX, h * PX, d * PX), m);
 }
 
-/// `traits`: a Crafter's traits (from the chain, via the world server), or null for the Rookie.
-export function createAvatar(traits) {
+/// `traits`: a Crafter's traits (from the chain, via the world server), or null for the Rookie. `gear`: the armor tier
+/// worn on head, chest, legs and feet (0 none, 1 Padded, 2 Iron, 3 Diamond, 4 Crystal).
+export function createAvatar(traits, gear = [0, 0, 0, 0]) {
   const t = traits ?? ROOKIE;
   const px = pixels(t);
   const bg = px[0];
@@ -111,15 +113,30 @@ export function createAvatar(traits) {
   if (hair.mask === "bob") add(8.8, 6, 8.8, hairMid, 0, 5.4, -0.3);
   if (hair.mask === "curly") add(9.6, 4.6, 9.6, hairMid, 0, 6.8, -0.2);
   if (hair.mask === "bun") { add(8.6, 3, 8.6, hairMid, 0, 7, -0.2); if (!hatDef.mask) add(3.4, 3.4, 3.4, hairMid, -2, 10, -2); }
-  // The hat.
-  const hcol = hatDef.colors ?? {};
-  if (hatDef.mask === "bucket") { add(9.2, 3.4, 9.2, hcol[4], 0, 9, 0); add(12.4, 0.8, 12.4, hcol[1], 0, 7.4, 0); }
-  if (hatDef.mask === "cap") { add(9, 3, 9, hcol[3], 0, 9.2, 0); add(8, 0.8, 4.6, hcol[1], 0, 7.8, 6); }
-  if (hatDef.mask === "hard") {
+  // The hat (a helmet takes its place).
+  const hcol = gear[0] ? {} : hatDef.colors ?? {};
+  if (!gear[0] && hatDef.mask === "bucket") { add(9.2, 3.4, 9.2, hcol[4], 0, 9, 0); add(12.4, 0.8, 12.4, hcol[1], 0, 7.4, 0); }
+  if (!gear[0] && hatDef.mask === "cap") { add(9, 3, 9, hcol[3], 0, 9.2, 0); add(8, 0.8, 4.6, hcol[1], 0, 7.8, 6); }
+  if (!gear[0] && hatDef.mask === "hard") {
     add(9.4, 3, 9.4, hcol[3], 0, 9.2, 0);
     add(11, 0.8, 11, hcol[2], 0, 7.8, 0);
     add(2.2, 1.8, 1, hcol.Q, 0, 9, 4.9, 0x888866);
   }
+
+  // Armor over the outfit, in its tier's colours (Crystal glows a little).
+  const plate = (tier, w, h, d, x, y, z, parent) => {
+    const [main] = ARMOR_COLOURS[tier - 1];
+    const m = box(w, h, d, main, tier === 4 ? 0x3a1050 : 0);
+    m.position.set(x * PX, y * PX, z * PX);
+    parent.add(m);
+  };
+  if (gear[0]) { plate(gear[0], 9, 4.4, 9, 0, 6.6, 0, head); plate(gear[0], 9, 1.2, 1.4, 0, 4.4, 4.2, head); }
+  if (gear[1]) {
+    plate(gear[1], 8.8, 9, 4.8, 0, 19.4, 0, body);
+    for (const a of arms) plate(gear[1], 4.8, 3.4, 4.8, 0, -0.6, 0, a);
+  }
+  if (gear[2]) for (const l of legs) plate(gear[2], 4.6, 6, 4.6, 0, -3, 0, l);
+  if (gear[3]) for (const l of legs) plate(gear[3], 4.8, 3.2, 5, 0, -10.6, 0.3, l);
 
   let phase = 0, swing = 0;
   return {

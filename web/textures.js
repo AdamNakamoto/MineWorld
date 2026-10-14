@@ -2,7 +2,7 @@
 // Block faces go into one 256 x 256 atlas (16 x 16 tiles of 16 x 16 pixels).
 
 import { BLOCKS, TORCH, STICK, COAL, IRON, GOLD, DIAMOND, CRYSTAL, TOOLS, WOOD_PICK, STONE_PICK, IRON_PICK, DIAMOND_PICK,
-  WOOD_SWORD, STONE_SWORD, IRON_SWORD, DIAMOND_SWORD, APPLE, BERRIES, MUSHROOM_STEW } from "./blocks.js";
+  WOOD_SWORD, STONE_SWORD, IRON_SWORD, DIAMOND_SWORD, APPLE, BERRIES, MUSHROOM_STEW, ARMOR, CRYSTAL_PICK, CRYSTAL_SWORD, WAR_HAMMER } from "./blocks.js";
 
 const T = 16;
 export const ATLAS_TILES = 16;
@@ -450,7 +450,13 @@ function drawItemIcon(g, id) {
     for (const [x, y] of pts) px(x, y + 2, (x + y) % 3 ? c1 : c2);
   };
   const tool = TOOLS[id];
-  const head = { 0: "#b88d55", 1: "#8a8a8a", 2: "#e4e4e4", 3: "#5fe8e0" };
+  const head = { 0: "#b88d55", 1: "#8a8a8a", 2: "#e4e4e4", 3: "#5fe8e0", 4: "#d25bff" };
+  if (ARMOR[id]) return drawArmor(px, ARMOR[id]);
+  if (id === WAR_HAMMER) {
+    for (let i = 0; i < 10; i++) px(3 + i, 14 - i, i % 2 ? "#6b4f2e" : "#7d5d36");
+    for (let y = 1; y <= 6; y++) for (let x = 9; x <= 14; x++) if (!(x === 9 && y === 1) && !(x === 14 && y === 6)) px(x, y, y === 1 || x === 9 ? "#c8ccd4" : "#8a8e96");
+    return;
+  }
   if (id === STICK) { for (let i = 0; i < 12; i++) px(3 + i, 13 - i, i % 2 ? "#6b4f2e" : "#7d5d36"); return; }
   if (id === COAL) return gem("#2a2a2a", "#4a4a4a");
   if (id === IRON) return gem("#d8d0c8", "#a89c90");
@@ -459,13 +465,13 @@ function drawItemIcon(g, id) {
   if (id === CRYSTAL) return gem("#d25bff", "#8f2fd0");
   if (id === APPLE || id === BERRIES || id === MUSHROOM_STEW) return pixelArt(px, FOOD_ART[id]);
   if (tool?.kind === "pick") {
-    const c = head[[WOOD_PICK, STONE_PICK, IRON_PICK, DIAMOND_PICK].indexOf(id)];
+    const c = head[[WOOD_PICK, STONE_PICK, IRON_PICK, DIAMOND_PICK, CRYSTAL_PICK].indexOf(id)];
     for (let i = 0; i < 10; i++) px(4 + i, 13 - i + 0, i % 2 ? "#6b4f2e" : "#7d5d36");
     for (const [x, y] of [[6, 2], [7, 2], [8, 2], [9, 2], [10, 2], [11, 3], [12, 3], [13, 4], [13, 5], [14, 6], [14, 7], [5, 3], [4, 3]]) px(x, y + 1, c);
     return;
   }
   if (tool?.kind === "sword") {
-    const c = head[[WOOD_SWORD, STONE_SWORD, IRON_SWORD, DIAMOND_SWORD].indexOf(id)];
+    const c = head[[WOOD_SWORD, STONE_SWORD, IRON_SWORD, DIAMOND_SWORD, CRYSTAL_SWORD].indexOf(id)];
     for (let i = 0; i < 9; i++) { px(6 + i, 9 - i, c); px(7 + i, 9 - i, c); }
     for (const [x, y] of [[3, 10], [4, 9], [5, 10], [6, 11], [4, 11]]) px(x, y, "#5a4a3a");
     px(3, 12, "#6b4f2e"); px(2, 13, "#7d5d36");
@@ -473,4 +479,24 @@ function drawItemIcon(g, id) {
   }
   g.fillStyle = "#f0f";
   g.fillRect(8, 8, 16, 16);
+}
+
+/// Armor colours by tier (Padded, Iron, Diamond, Crystal): main, shade, highlight.
+export const ARMOR_COLOURS = [
+  ["#a8784a", "#7a5232", "#c89a68"], ["#c8ccd4", "#8a8e96", "#eef0f4"], ["#5fe8e0", "#2fb0b0", "#b8fff8"], ["#c070f0", "#7a2fb8", "#f0c8ff"],
+];
+const ARMOR_ART = {
+  head: ["..xxxxxxxxxxxx..", ".xhhhhhhhhhhhhx.", ".xmmmmmmmmmmmmx.", ".xmmmmmmmmmmmmx.", ".xmms......smmx.", ".xms........smx.", ".xs..........sx.", "..x..........x.."],
+  chest: ["xxxx......xxxx..", "xhhxxxxxxxxhhx..", "xmmmhhhhhhmmmx..", ".xmmmmmmmmmmx...", "..xmmmmmmmmx....", "..xmmmssmmmx....", "..xmmmmmmmmx....", "..xmmmmmmmmx....", "..xsssssssss....", "..xxxxxxxxxx...."],
+  legs: ["xxxxxxxxxxxx", "xhhhhhhhhhhx", "xmmmmmmmmmmx", "xmmmmxxmmmmx", "xmmmx..xmmmx", "xmmmx..xmmmx", "xmmmx..xmmmx", "xmmsx..xsmmx", "xsssx..xsssx", "xxxxx..xxxxx"],
+  feet: ["............", "xxxx....xxxx", "xhmx....xmhx", "xmmx....xmmx", "xmmxx..xxmmx", "xmmmmx.xmmmmx", "xssssx.xssssx", "xxxxxx.xxxxxx"],
+};
+function drawArmor(px, a) {
+  const [m, sh, hi] = ARMOR_COLOURS[a.tier - 1];
+  const art = ARMOR_ART[a.slot];
+  const ox = Math.floor((16 - art[0].length) / 2), oy = Math.floor((16 - art.length) / 2);
+  art.forEach((row, y) => [...row].forEach((c, x) => {
+    if (c === ".") return;
+    px(ox + x, oy + y, c === "x" ? "#1a1a22" : c === "h" ? hi : c === "s" ? sh : m);
+  }));
 }

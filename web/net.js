@@ -86,15 +86,17 @@ export function createNet(url, scene, h) {
   /// `look`: the Crafter they wear, as packed traits (checked on-chain by the world server), or null.
   /// `pos` is where they are (flat, kept at the copy nearest you, so distances to it are the short way round);
   /// `holder` stands their avatar there on the curved planet (draw()).
-  function add(pid, name, look, x, y, z, yaw) {
+  /// `gear`: the armor tiers they wear (head, chest, legs, feet), as the room relays them.
+  function add(pid, name, look, x, y, z, yaw, gear) {
+    gear = Array.isArray(gear) && gear.length === 4 && gear.every((t) => Number.isInteger(t) && t >= 0 && t <= 4) ? gear : [0, 0, 0, 0];
     drop(pid);
-    const av = createAvatar(unpackTraits(look));
+    const av = createAvatar(unpackTraits(look), gear);
     const tag = nameTag(name);
     av.root.add(tag);
     const holder = new THREE.Group();
     holder.add(av.root);
     scene.add(holder);
-    others.set(pid, { av, tag, holder, name, look, pos: new THREE.Vector3(x, y, z), target: new THREE.Vector3(x, y, z), yaw, tyaw: yaw, act: false, speed: 0 });
+    others.set(pid, { av, tag, holder, name, look, gear, pos: new THREE.Vector3(x, y, z), target: new THREE.Vector3(x, y, z), yaw, tyaw: yaw, act: false, speed: 0 });
   }
   function drop(pid) {
     const o = others.get(pid);
@@ -118,7 +120,7 @@ export function createNet(url, scene, h) {
       case "join": {
         // A join for someone already here is a new name or look, not a new arrival.
         const known = others.has(m[1]);
-        add(m[1], m[2], m[3], m[4], m[5], m[6], m[7]);
+        add(m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
         if (!known) h.joined?.(m[1], m[2]);
         h.count?.(others.size + 1);
         break;
@@ -144,7 +146,12 @@ export function createNet(url, scene, h) {
       case "act": { const o = others.get(m[1]); if (o) o.act = !!m[2]; break; }
       case "look": {
         const o = others.get(m[1]);
-        if (o) add(m[1], o.name, m[2], o.target.x, o.target.y, o.target.z, o.tyaw);
+        if (o) add(m[1], o.name, m[2], o.target.x, o.target.y, o.target.z, o.tyaw, o.gear);
+        break;
+      }
+      case "gear": {
+        const o = others.get(m[1]);
+        if (o) add(m[1], o.name, o.look, o.target.x, o.target.y, o.target.z, o.tyaw, m[2]);
         break;
       }
       case "edits": h.edits?.(m[1], m[2]); break;
@@ -243,6 +250,8 @@ export function createNet(url, scene, h) {
     setName: (name) => send(["setname", name]),
     /// Wear Crafter `tokenId` (null for the Rookie): the room checks on-chain that it's yours.
     wear: (tokenId) => send(["wear", tokenId]),
+    /// The armor you have on (tiers for head, chest, legs, feet), for the others to see.
+    gear: (tiers) => send(["gear", tiers]),
     /// One free signature proves the wallet is yours; from then on the room counts your earnings for it.
     async signIn(address, sign) {
       const [, message] = await ask(["auth", address], "challenge");

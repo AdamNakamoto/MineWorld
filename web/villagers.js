@@ -68,6 +68,10 @@ export const VILLAGERS = [
     "Have you seen the giant trees? They're in the dark forest, far from town!",
     "I'm not allowed past the gates at night. Monsters!",
   ] },
+  // The shopkeeper stays at the Smithy's door, day and night: clicking him opens the shop (shop.js).
+  { name: "Garrick", job: "Armorer", stay: [14, -21, Math.PI], shop: true, look: T(28, 11, 3, 1, 3, 8), lines: [
+    "Tools, weapons and armor: have a look! Everything's free while the game is being tested.",
+  ] },
   { name: "Quill", job: "Mapmaker", home: "Barn", work: "orchard", look: T(8, 3, 3, 1, 4, 9), lines: [
     "The planet is 512 blocks around. Your position is in the top-left corner.",
     "From the clock tower you can see the horizon curve away. It really is a little planet.",
@@ -208,7 +212,7 @@ export function createVillagers(scene) {
     av.root.visible = false;
     scene.add(av.root);
     // `pos` is where they are on the flat map; draw() stands them on the curved planet.
-    return { ...v, i, av, loop: dayLoop(v, i), pos: new THREE.Vector3(), yaw: 0, said: 0, out: false };
+    return { ...v, i, av, loop: v.stay ? null : dayLoop(v, i), pos: new THREE.Vector3(), yaw: 0, said: 0, out: false };
   });
 
   /// Places everyone: their walk follows the clock `ms`; they're out from sunrise until a little before dusk (`dayMs`,
@@ -217,6 +221,15 @@ export function createVillagers(scene) {
     const day = dayTime(dayMs);
     const out = day < 0.5;
     for (const f of folk) {
+      if (f.stay) {
+        // Always at his post.
+        f.out = true;
+        f.av.root.visible = true;
+        f.pos.set(TOWN.x + f.stay[0] + 0.5, TOWN.y + 1, TOWN.z + f.stay[1] + 0.5);
+        f.yaw = f.stay[2];
+        f.av.animate(dt, 0, false);
+        continue;
+      }
       f.out = out;
       f.av.root.visible = out;
       if (!out) continue;

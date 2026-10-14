@@ -1,26 +1,59 @@
-// What the player carries: 36 slots, the first 9 are the hotbar. Kept in this browser (per wallet, or as a guest);
-// items are for playing with and are never on-chain. $MINE is earned on the room's ledger, not from items.
+// What the player carries: 36 slots, the first 9 are the hotbar, and the armor they wear (head, chest, legs, feet).
+// Kept in this browser (per wallet, or as a guest); items are for playing with and are never on-chain. $MINE is
+// earned on the room's ledger, not from items.
 
-import { RECIPES, stackSize, TOOLS } from "./blocks.js";
+import { RECIPES, stackSize, TOOLS, ARMOR, ARMOR_SLOTS } from "./blocks.js";
 
 export const SLOTS = 36;
 export const HOTBAR = 9;
 
 export function createInventory() {
   let slots = Array(SLOTS).fill(null);
+  let armor = { head: null, chest: null, legs: null, feet: null }; // item ids
   let key = "mwc:inv:guest";
   let onChange = () => {};
 
-  const save = () => { try { localStorage.setItem(key, JSON.stringify(slots)); } catch {} onChange(); };
+  const save = () => {
+    try {
+      localStorage.setItem(key, JSON.stringify(slots));
+      localStorage.setItem(`${key}:armor`, JSON.stringify(armor));
+    } catch {}
+    onChange();
+  };
   function load(who) {
     key = `mwc:inv:${who ?? "guest"}`;
-    let saved = null;
-    try { saved = JSON.parse(localStorage.getItem(key)); } catch {}
+    let saved = null, worn = null;
+    try { saved = JSON.parse(localStorage.getItem(key)); worn = JSON.parse(localStorage.getItem(`${key}:armor`)); } catch {}
     slots = Array.isArray(saved) && saved.length === SLOTS
       ? saved.map((s) => (s && Number.isInteger(s.id) && s.n > 0 ? { id: s.id, n: Math.min(s.n, stackSize(s.id)) } : null))
       : Array(SLOTS).fill(null);
+    armor = Object.fromEntries(ARMOR_SLOTS.map((slot) => [slot, ARMOR[worn?.[slot]]?.slot === slot ? worn[slot] : null]));
     onChange();
   }
+  /// Put on the armor in slot i (what was worn there goes back into that slot).
+  function equip(i) {
+    const s = slots[i], a = s && ARMOR[s.id];
+    if (!a) return false;
+    const old = armor[a.slot];
+    armor[a.slot] = s.id;
+    slots[i] = old ? { id: old, n: 1 } : null;
+    save();
+    return true;
+  }
+  /// Take off the armor worn in `slot` (if there's room for it).
+  function unequip(slot) {
+    const id = armor[slot];
+    if (!id) return false;
+    const free = slots.findIndex((s) => !s);
+    if (free < 0) return false;
+    slots[free] = { id, n: 1 };
+    armor[slot] = null;
+    save();
+    return true;
+  }
+  const armorPoints = () => ARMOR_SLOTS.reduce((t, slot) => t + (ARMOR[armor[slot]]?.points ?? 0), 0);
+  /// The tier worn in each slot (0 none, 1 Padded .. 4 Crystal), as the world server relays it to others.
+  const armorTiers = () => ARMOR_SLOTS.map((slot) => ARMOR[armor[slot]]?.tier ?? 0);
 
   function count(id) {
     return slots.reduce((t, s) => t + (s?.id === id ? s.n : 0), 0);
@@ -73,7 +106,8 @@ export function createInventory() {
   const toolIn = (i) => (slots[i] && TOOLS[slots[i].id] ? slots[i].id : null);
 
   return {
-    load, count, add, take, useSlot, canCraft, craft, swap, toolIn,
+    load, count, add, take, useSlot, canCraft, craft, swap, toolIn, equip, unequip, armorPoints, armorTiers,
+    worn: (slot) => armor[slot],
     slot: (i) => slots[i],
     recipes: RECIPES,
     set onChange(f) { onChange = f; },

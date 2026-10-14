@@ -13,6 +13,7 @@ import { moveBox, boxHitsBlock } from "./physics.js";
 import { createInventory, SLOTS, HOTBAR } from "./inventory.js";
 import { createMobs } from "./mobs.js";
 import { createVillagers } from "./villagers.js";
+import { createShop } from "./shop.js";
 import { createSky } from "./sky.js";
 import { createNet, short } from "./net.js";
 import { createAvatar } from "./avatar.js";
@@ -87,7 +88,7 @@ scene.add(meHolder);
 function dressMe(traits) {
   if (me) { meHolder.remove(me.root); me.dispose(); }
   myLook = traits ?? null;
-  me = createAvatar(myLook);
+  me = createAvatar(myLook, inv.armorTiers());
   me.root.visible = view > 0;
   meHolder.add(me.root);
 }
@@ -155,10 +156,15 @@ function showTarget(text, ms) {
   targetTimer = setTimeout(() => (t.hidden = true), ms);
 }
 
-// The inventory sheet: swap slots, craft.
+// The inventory sheet: swap slots, wear armor, craft.
 let picked = null;
+const SLOT_NAMES = { head: "Helmet", chest: "Chestplate", legs: "Leggings", feet: "Boots" };
 function drawInventory() {
   if ($("inv").hidden) return;
+  $("armorSlots").innerHTML = BLK.ARMOR_SLOTS.map((slot) => {
+    const id = inv.worn(slot);
+    return `<div class="slot ${id ? "" : "empty"}" data-armor="${slot}" title="${id ? `${itemName(id)}: click to take off` : `${SLOT_NAMES[slot]}: none`}">${id ? `<img src="${iconFor(id, atlas)}" alt="">` : SLOT_NAMES[slot][0]}</div>`;
+  }).join("");
   let html = "";
   for (let i = 0; i < SLOTS; i++) html += slotHtml(i, picked === i ? "picked" : "");
   $("invGrid").innerHTML = html;
@@ -168,12 +174,30 @@ function drawInventory() {
       <span>${r.n > 1 ? `${r.n} ` : ""}${itemName(r.out)}<span class="need">${need}</span></span></button>`;
   }).join("");
 }
-inv.onChange = () => { drawHotbar(); drawInventory(); };
+// When the armor worn changes: the armor row, your miner, and what the others see.
+let wornKey = "";
+inv.onChange = () => {
+  drawHotbar();
+  drawInventory();
+  const tiers = inv.armorTiers(), k = tiers.join();
+  if (k === wornKey) return;
+  wornKey = k;
+  drawArmor();
+  dressMe(myLook);
+  net?.gear(tiers);
+};
 $("inv").addEventListener("click", (e) => {
   if (e.target === $("inv") || e.target.closest("[data-close]")) return closeInventory();
+  const worn = e.target.closest("[data-armor]");
+  if (worn) {
+    if (inv.worn(worn.dataset.armor) && !inv.unequip(worn.dataset.armor)) toast("Make room in your inventory first.", "bad");
+    return drawInventory();
+  }
   const s = e.target.closest("[data-slot]");
   if (s) {
     const i = Number(s.dataset.slot);
+    // Clicking armor puts it on (whatever was worn there takes its place).
+    if (picked === null && BLK.ARMOR[inv.slot(i)?.id]) { inv.equip(i); return drawInventory(); }
     if (picked === null) picked = inv.slot(i) ? i : null;
     else { inv.swap(picked, i); picked = null; }
     return drawInventory();
@@ -305,13 +329,23 @@ let officeSign = null;
 // room frees its place for the next one.
 const confirmed = new Set();
 const villagers = createVillagers(scene);
+let biteLeft = 0;
+function drawArmor() {
+  const pts = Math.min(20, inv.armorPoints());
+  $("armorRow").hidden = pts === 0;
+  if (pts) drawRow($("armorRow"), pts, [ICONS.armor, ICONS.armorHalf, ICONS.armorEmpty]);
+}
 const mobs = createMobs(scene, world, {
   gone(id) { if (id > 0) net?.gone(id); },
   killed(id) {
     if (id > 0) setTimeout(() => { if (!confirmed.delete(id)) net?.gone(id); }, 2500);
   },
   bite(dmg, dx, dz) {
-    hurt(dmg);
+    // Armor takes its share of the hit; what's left over in fractions adds up to whole points.
+    biteLeft += dmg * (1 - BLK.armorShare(inv.armorPoints()));
+    const n = Math.floor(biteLeft);
+    biteLeft -= n;
+    if (n) hurt(n);
     player.vel.x += dx * 6; player.vel.z += dz * 6; player.vel.y = Math.max(player.vel.y, 4);
   },
 });
@@ -383,6 +417,7 @@ if (url) {
       $("onlineN").textContent = `● ${count} online`;
       if (ledger.wallet) tryResume(ledger.wallet);
       voice?.reconnected();
+      if (inv.armorPoints()) net.gear(inv.armorTiers());
     },
     joined(id, name) { sysLine(`${name} joined the game`); },
     left(id, name) { sysLine(`${name} left the game`); voice?.left(id); },
@@ -574,7 +609,7 @@ function lockMouse() {
 const keys = new Set();
 let mining = false, placing = false, placeAt = 0, attackAt = 0, playing = false;
 const anyOverlay = () => !$("inv").hidden || (panel?.isOpen ?? false) || !$("dead").hidden || !$("wallets").hidden || !$("chatForm").hidden
-  || !$("menu").hidden || !$("notice").hidden;
+  || !$("menu").hidden || !$("notice").hidden || !$("shop").hidden;
 function setMining(on) {
   if (mining === on) return;
   mining = on;
@@ -585,10 +620,11 @@ addEventListener("keydown", (e) => {
   if (!playing || e.target.tagName === "INPUT") return;
   keys.add(e.code);
   if (e.code === "KeyE") { $("inv").hidden ? openInventory() : closeInventory(); }
+  else if (e.code === "KeyH") { shop.isOpen ? shop.close() : shop.open(); }
   else if (e.code === "KeyM") { panel?.isOpen ? panel.close() : panel?.open(); }
   else if (e.code === "KeyV") nextView();
   else if (e.code === "Enter" || e.code === "KeyT") { e.preventDefault(); openChat(); }
-  else if (e.code === "Escape") { closeInventory(); panel?.close(); $("menu").hidden = true; $("notice").hidden = true; }
+  else if (e.code === "Escape") { closeInventory(); panel?.close(); shop.close(); $("menu").hidden = true; $("notice").hidden = true; }
   else if (e.code === "KeyB") voice?.toggle();
   else if (/^Digit[1-9]$/.test(e.code)) select(Number(e.code.slice(5)) - 1);
   if (e.code === "Space") e.preventDefault();
@@ -680,6 +716,8 @@ $("siteBtn").addEventListener("click", () => panel?.open());
 $("viewBtn").addEventListener("click", nextView);
 $("titleSite").addEventListener("click", () => panel?.open());
 $("invBtn").addEventListener("click", () => ($("inv").hidden ? openInventory() : closeInventory()));
+const shop = createShop({ inv, atlas, toast, release: releaseMouse, resume: () => { if (!touch && playing) lockMouse(); } });
+$("shopBtn").addEventListener("click", () => shop.open());
 $("chatBtn").addEventListener("click", openChat);
 $("menuBtn").addEventListener("click", openMenu);
 function openMenu() {
@@ -726,6 +764,7 @@ $("play").addEventListener("click", () => {
   drawHotbar();
   drawHearts();
   drawFood();
+  drawArmor();
   drawLedger();
   setTimeout(() => ($("help").hidden = true), 25_000); // (the controls are in the menu too)
 });
@@ -748,8 +787,12 @@ function interact(dt, now) {
     outline.visible = false;
     crack.visible = false;
     breaking = null;
-    showTarget(`${folk.v.name} · ${folk.v.job} · click to talk`, 300);
-    if (mining && !talkLatch) { talkLatch = true; sayHello(folk.v); }
+    showTarget(`${folk.v.name} · ${folk.v.job} · ${folk.v.shop ? "click for the shop" : "click to talk"}`, 300);
+    if (mining && !talkLatch) {
+      talkLatch = true;
+      sayHello(folk.v);
+      if (folk.v.shop) { setMining(false); shop.open(); }
+    }
     return;
   }
   // Online, a chunk can be changed only once the room has sent its edits (so nothing is undone when they arrive).
@@ -765,7 +808,7 @@ function interact(dt, now) {
     swingT += dt * 10;
     if (mobFirst) {
       breaking = null;
-      if (now - attackAt > ATTACK_MS) {
+      if (now - attackAt > (TOOLS[hand]?.swingMs ?? ATTACK_MS)) {
         attackAt = now;
         const tool = TOOLS[hand];
         const dmg = tool?.kind === "sword" ? tool.damage : HAND_DAMAGE + (tool?.kind === "pick" ? 1 : 0);

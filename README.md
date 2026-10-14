@@ -57,6 +57,13 @@ at night and underground. Food keeps you going: the hunger bar drains as you mov
 leaves, berries from bushes, and a red and a brown mushroom with a plank make stew. A full belly heals you, an empty one
 hurts, and you need food to sprint (`web/vitals.js`).
 
+The Smithy's shop (**H**, or Garrick the armorer at the Smithy's door; `web/shop.js`) sells tools for mining (up to the
+Crystal pickaxe, the fastest), weapons (up to the Crystal sword and the slow, heavy war hammer) and armor: helmet,
+chestplate, leggings and boots in Padded, Iron, Diamond and Crystal. Armor takes a share of monsters' hits (a full
+Diamond set, 20 points, takes two thirds), shows as a row over the hearts and on your miner for everyone to see; click
+a piece in the inventory to wear it. Prices are in $MINE but **nothing is charged while the game is being tested**
+(`FREE_WHILE_TESTING`); paying with the $MINE token on-chain comes later, at the same prices.
+
 ## The planet
 
 The world is a tiny planet, as in Courier World: 512 blocks round in every direction, with no edge (walk any way and

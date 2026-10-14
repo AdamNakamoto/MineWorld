@@ -11,7 +11,20 @@ export const AIR = 0, GRASS = 1, DIRT = 2, STONE = 3, COBBLE = 4, SAND = 5, GRAV
 export const STICK = 64, COAL = 65, IRON = 66, GOLD = 67, DIAMOND = 68, CRYSTAL = 69,
   APPLE = 70, BERRIES = 71, MUSHROOM_STEW = 72,
   WOOD_PICK = 80, STONE_PICK = 81, IRON_PICK = 82, DIAMOND_PICK = 83,
-  WOOD_SWORD = 90, STONE_SWORD = 91, IRON_SWORD = 92, DIAMOND_SWORD = 93;
+  WOOD_SWORD = 90, STONE_SWORD = 91, IRON_SWORD = 92, DIAMOND_SWORD = 93,
+  CRYSTAL_PICK = 84, CRYSTAL_SWORD = 94, WAR_HAMMER = 95;
+
+/// Armor, from the shop: four pieces (head, chest, legs, feet) in four tiers, ids 100-115.
+export const ARMOR_TIERS = ["Padded", "Iron", "Diamond", "Crystal"];
+export const ARMOR_SLOTS = ["head", "chest", "legs", "feet"];
+const PIECES = ["helmet", "chestplate", "leggings", "boots"];
+const POINTS = [[1, 2, 2, 1], [2, 6, 5, 2], [3, 8, 6, 3], [4, 9, 7, 4]]; // per tier: head, chest, legs, feet
+export const ARMOR = {};
+ARMOR_TIERS.forEach((tier, t) => PIECES.forEach((piece, s) => {
+  ARMOR[100 + t * 4 + s] = { slot: ARMOR_SLOTS[s], tier: t + 1, points: POINTS[t][s], name: `${tier} ${piece}` };
+}));
+/// How much of a monster's hit the armor takes, for this many armor points (a full Diamond set takes two thirds).
+export const armorShare = (points) => points / (points + 10);
 
 /// hardness: seconds-ish (see breakTime); tier: the pickaxe needed for a drop (0 hand, 1 wood, 2 stone, 3 iron);
 /// tex: atlas tile names (top, side, bottom); light: how much it glows (0..1); leaves: a leafy block (apples, sticks);
@@ -68,14 +81,18 @@ export const TOOLS = {
   [STONE_PICK]: { kind: "pick", tier: 2, speed: 4 },
   [IRON_PICK]: { kind: "pick", tier: 3, speed: 6 },
   [DIAMOND_PICK]: { kind: "pick", tier: 4, speed: 8 },
+  [CRYSTAL_PICK]: { kind: "pick", tier: 5, speed: 10 },
   [WOOD_SWORD]: { kind: "sword", damage: 4 },
   [STONE_SWORD]: { kind: "sword", damage: 5 },
   [IRON_SWORD]: { kind: "sword", damage: 6 },
   [DIAMOND_SWORD]: { kind: "sword", damage: 7 },
+  [CRYSTAL_SWORD]: { kind: "sword", damage: 8 },
+  [WAR_HAMMER]: { kind: "sword", damage: 9, swingMs: 900 }, // hits hardest, swings slowest
 };
 export const HAND_DAMAGE = 1;
-export const BEST_SPEED = 8; // the diamond pickaxe
-export const BEST_DAMAGE = 7; // the diamond sword
+/// The best there is (the world server checks breaks and hits against these, so nobody can beat them).
+export const BEST_SPEED = 10; // the crystal pickaxe
+export const BEST_DAMAGE = 9; // the war hammer
 
 /// Seconds to break `block` holding `item`, and whether it drops anything.
 export function breakTime(block, item) {
@@ -97,12 +114,15 @@ const ITEM_NAMES = {
   [APPLE]: "Apple", [BERRIES]: "Berries", [MUSHROOM_STEW]: "Mushroom stew",
   [WOOD_PICK]: "Wooden pickaxe", [STONE_PICK]: "Stone pickaxe", [IRON_PICK]: "Iron pickaxe", [DIAMOND_PICK]: "Diamond pickaxe",
   [WOOD_SWORD]: "Wooden sword", [STONE_SWORD]: "Stone sword", [IRON_SWORD]: "Iron sword", [DIAMOND_SWORD]: "Diamond sword",
+  [CRYSTAL_PICK]: "Crystal pickaxe", [CRYSTAL_SWORD]: "Crystal sword", [WAR_HAMMER]: "War hammer",
+  ...Object.fromEntries(Object.entries(ARMOR).map(([id, a]) => [id, a.name])),
 };
 export function itemName(id) {
   return id < 64 ? BLOCKS[id]?.name ?? "?" : ITEM_NAMES[id] ?? "?";
 }
 export const isTool = (id) => !!TOOLS[id];
-export const stackSize = (id) => (isTool(id) ? 1 : 64);
+export const isArmor = (id) => !!ARMOR[id];
+export const stackSize = (id) => (isTool(id) || isArmor(id) ? 1 : 64);
 
 /// Food: the hunger points (out of 20) each one gives back when eaten.
 export const FOODS = { [APPLE]: 4, [BERRIES]: 2, [MUSHROOM_STEW]: 8 };

@@ -145,6 +145,21 @@ kbd { font-family: var(--px); font-size: 11px; padding: 0 4px; border: 2px solid
 .row-form { display: flex; gap: 6px; }
 .row-form input { flex: 1; min-width: 0; font-family: var(--px); font-size: 15px; padding: 7px; background: #0f1518; color: #fff; border: 2px solid #46606c; outline: none; }
 
+/* ---------------------------------------------------------------- the shop and armor */
+.shop-sheet { width: min(640px, 100%); }
+.tabs button { font-size: 14px; }
+.wares { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.ware { display: flex; align-items: center; gap: 10px; background: rgba(0, 0, 0, 0.28); border: 2px solid #2c3a42; padding: 6px 8px; }
+.ware img { width: 36px; height: 36px; image-rendering: pixelated; }
+.ware-text { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ware-buy { display: flex; align-items: center; gap: 8px; }
+.ware .price { color: var(--gold); font-size: 14px; white-space: nowrap; }
+.ware .owned { color: var(--good); }
+.armor-slots { display: flex; gap: 0; justify-content: center; margin-bottom: 8px; }
+.armor-slots .slot { width: 46px; height: 46px; }
+.armor-slots .slot.empty { opacity: 0.45; }
+.armor-row { height: 16px; }
+
 /* ---------------------------------------------------------------- the mining site panel */
 .box { background: rgba(0, 0, 0, 0.25); border: 2px solid #2c3a42; padding: 12px; margin-top: 12px; }
 .box h3 { margin-top: 0; }
@@ -187,6 +202,7 @@ h3 .status.closed { background: #6a2a2a; }
   .earn .small { font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .topright { max-width: 54vw; }
   .hud-btn { font-size: 11px; padding: 4px 6px; }
-  #onlineN, #viewBtn kbd, #invBtn kbd, #siteBtn kbd, #chatBtn kbd, #voiceBtn kbd { display: none; }
+  #onlineN, #viewBtn kbd, #invBtn kbd, #siteBtn kbd, #chatBtn kbd, #voiceBtn kbd, #shopBtn kbd { display: none; }
+  .ware { flex-wrap: wrap; }
   .chat { bottom: 240px; width: 62vw; }
 }

@@ -182,6 +182,7 @@ export class World extends DurableObject {
         case "signout": a.wallet = null; a.nick = null; this.rename(ws, a); return;
         case "voucher": return await this.voucher(ws, a);
         case "wear": return await this.wear(ws, a, m[1]);
+        case "gear": return this.gear(ws, a, m[1]);
         case "setname": return await this.setName(ws, a, m[1]);
         case "voice": return this.voice(ws, a, m[1]);
         case "rtc": return this.rtc(ws, a, m[1], m[2]);
@@ -208,16 +209,16 @@ export class World extends DurableObject {
     if (a.ready) return;
     a.ready = true;
     this.save(ws, a);
-    const list = this.players().filter(([w]) => w !== ws).map(([, o]) => [o.id, o.name, o.look, o.x, o.y, o.z, o.yaw]);
+    const list = this.players().filter(([w]) => w !== ws).map(([, o]) => [o.id, o.name, o.look, o.x, o.y, o.z, o.yaw, o.gear ?? null]);
     this.send(ws, ["welcome", a.id, Date.now(), list, list.length + 1]);
     const voices = this.players().filter(([w, o]) => w !== ws && o.voice).map(([, o]) => o.id);
     if (voices.length) this.send(ws, ["voices", voices]);
-    this.everyone(["join", a.id, a.name, a.look, a.x, a.y, a.z, a.yaw], ws);
+    this.everyone(["join", a.id, a.name, a.look, a.x, a.y, a.z, a.yaw, a.gear ?? null], ws);
   }
   rename(ws, a) {
     a.name = a.wallet ? (a.nick && nameShown(a.nick) ? a.nick : short(a.wallet)) : `Guest-${a.id}`;
     this.save(ws, a);
-    if (a.ready) this.everyone(["join", a.id, a.name, a.look, a.x, a.y, a.z, a.yaw], ws);
+    if (a.ready) this.everyone(["join", a.id, a.name, a.look, a.x, a.y, a.z, a.yaw, a.gear ?? null], ws);
   }
 
   async position(ws, a, m) {
@@ -539,6 +540,15 @@ export class World extends DurableObject {
       message: { player: a.wallet, total, deadline },
     });
     this.send(ws, ["voucher", total.toString(), Number(deadline), signature]);
+  }
+
+  /// The armor a player shows (four tiers 0..4; cosmetic, so it's only checked for shape), at most a few times a second.
+  gear(ws, a, tiers) {
+    if (!a.ready || !Array.isArray(tiers) || tiers.length !== 4 || !tiers.every((t) => isInt(t, 0, 5))) return;
+    if (!bucket(a, "gears", 4, 1, 1, Date.now())) return;
+    a.gear = tiers;
+    this.save(ws, a);
+    this.everyone(["gear", a.id, tiers], ws);
   }
 
   // ---------------------------------------------------------------- names

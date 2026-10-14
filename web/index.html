@@ -40,6 +40,7 @@
       <span id="onlineN" class="card small" hidden></span>
       <button id="siteBtn" class="btn hud-btn" title="Mining Site (M)"><kbd>M</kbd> Mining Site</button>
       <button id="invBtn" class="btn hud-btn" title="Inventory and crafting (E)"><kbd>E</kbd> Inventory</button>
+      <button id="shopBtn" class="btn hud-btn" title="The Smithy's shop: tools, weapons, armor (H)"><kbd>H</kbd> Shop</button>
       <button id="chatBtn" class="btn hud-btn" title="Chat (T)"><kbd>T</kbd> Chat</button>
       <button id="viewBtn" class="btn hud-btn" title="See your miner (V)"><kbd>V</kbd> View</button>
     </div>
@@ -48,6 +49,7 @@
     <div id="eating" class="eating" hidden><div></div></div>
     <div id="talk" class="talk card" hidden><b id="talkWho"></b><span id="talkLine"></span><small class="muted">Click again for more</small></div>
     <div class="bottom">
+      <div id="armorRow" class="hearts armor-row" aria-label="Armor" hidden></div>
       <div class="vitals">
         <div id="hearts" class="hearts" aria-label="Health"></div>
         <div id="food" class="food" aria-label="Food"></div>
@@ -108,7 +110,7 @@
       <section class="box">
         <h3>Controls</h3>
         <p class="note">WASD move · Space jump · Shift sprint · mouse look · left click mine / attack · right click place, or hold to eat ·
-        1–9 or wheel pick · E inventory · M Mining Site · V view · B voice · T or Enter chat · Esc menu</p>
+        1–9 or wheel pick · E inventory (click armor to wear it) · H shop · M Mining Site · V view · B voice · T or Enter chat · Esc menu</p>
       </section>
       <section class="box">
         <h3>Commands</h3>
@@ -121,9 +123,23 @@
     <div class="sheet inv-sheet">
       <header><h2>Inventory</h2><button class="x" data-close aria-label="Close">✕</button></header>
       <p class="muted small">Tap two slots to swap them. The top row is your hotbar.</p>
+      <div id="armorSlots" class="armor-slots"></div>
       <div id="invGrid" class="inv-grid"></div>
       <h3>Crafting</h3>
       <div id="recipes" class="recipes"></div>
+    </div>
+  </div>
+
+  <div id="shop" class="overlay" hidden>
+    <div class="sheet shop-sheet">
+      <header><h2>⚒ The Smithy</h2><button class="x" data-close aria-label="Close">✕</button></header>
+      <p class="note">Tools for mining, weapons and armor. Prices are in $MINE; <b>free while the game is being tested</b>: paying
+      with the $MINE token comes later.</p>
+      <div class="seg tabs" role="tablist">
+        <button data-tab="Tools">Tools</button><button data-tab="Weapons">Weapons</button><button data-tab="Armor">Armor</button><button data-tab="Supplies">Supplies</button>
+      </div>
+      <div id="shopGrid" class="wares"></div>
+      <p class="note" id="shopArmor"></p>
     </div>
   </div>
 
