@@ -165,19 +165,23 @@ servers only, so players behind strict networks may not connect until a TURN rel
 | $MINE | 21,000,000 in all, the same as Courier World's $STAMP. ERC-20 with permit, no transfer tax |
 | Liquidity | 50% (10,500,000) locked forever, single-sided, in one $MINE/IMD Uniswap v4 pool at launch |
 | Mining vault | 50% (10,500,000), minted by `MineVault` only as players convert what they earn in the game: at most 35,000 a day, whatever the rules contract asks, so it lasts at least 300 days (longer still: earnings a site's rate doesn't convert are never minted) |
-| Trading fee | Every swap pays 4% of its IMD side to `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` (taken by the pool's hook; the hook is renounced at launch, so only that wallet can ever move its own fee) |
+| Trading fee | Every swap pays 4% of its IMD side to `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` (taken by the pool's hook; the hook is renounced at launch: after the renounce only the current fee recipient can move the fees; nobody else can) |
 | Mining site | Opened once per wallet with ETH (0.005 at launch), paid to the treasury. Needed to convert earnings to $MINE. A new site is level 1 and converts 50% of what it earns; upgrades raise it to 60%, 70%, 85% and 100% at levels 2 to 5, for 4,620, 18,942, 77,662 and 318,415 $MINE (about $1,000 for all four at a $50,000 market cap) |
 | Crafter levels | Every Crafter starts at level 1; its holder raises it to level 5 for 2,310, 9,471, 38,831 and 159,207 $MINE (half a site's). The level stays with the Crafter when it's sold, shows as its "Level" trait, and adds to its boost (below) |
 | Shop and tickets | Paid in $MINE through `MinePayments` at the game's prices (`web/shop.js` `CATALOG`, `web/zones.js` `ticket`): the shop's 75% burned and 25% to the treasury; rocket tickets (2,100 for Deepvein or Cinderfall, 210 for Red Mesa) all to the treasury |
 | Burns | Site upgrades and Crafter levels burn 75% of what they cost and send 25% to the treasury, as the shop does. The token counts every mint against its 21M cap, so a burn is for good: the supply only ever shrinks from what was minted |
-| Crafters NFT | 3,333 pixel-art characters, drawn and stored entirely on chain, no two alike. The one a player wears is how their miner looks, and boosts their mining by its rarity and level (below). Free blind mint (5 a transaction, 10 a wallet; the owner can set a price, paid straight to the treasury), revealed after the mint. 5% royalty, enforced |
-| Owner and treasury | `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` owns the vault, the three upgradeable contracts and the Crafters, and is the treasury (site sales, the unburned share of upgrades and payments, tickets, any mint price, the royalty) and the fee recipient. Ownership moves in two steps and can't be renounced; it can be handed to a multisig or a timelock |
+| Crafters NFT | 3,333 pixel-art characters, drawn and stored entirely on chain, no two alike. The one a player wears is how their miner looks, and boosts their mining by its rarity and level (below). Free blind mint (5 a transaction, 10 a wallet; the owner can set a price, paid straight to the treasury), revealed after the mint from a committed secret and the hash of the block the sale closed in, which anyone can lock in (`seal`), so nobody can pick looks. 5% royalty, enforced through the transfer validator the owner picks (it can relax that, in public) |
+| Owner and treasury | `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` owns the vault, the three upgradeable contracts and the Crafters, and is the treasury (site sales, the unburned share of upgrades and payments, tickets, any mint price, the royalty) and the fee recipient. Ownership moves in two steps and can't be renounced; it can be handed to a multisig or a timelock. A treasury must take ETH where ETH is sent to it (MiningSites and the Crafters refuse one that doesn't) |
 | No yield farming | Nothing pays for holding or waiting. $MINE comes only from playing; NFT boosts only add to what a player does |
 
 **What can change and what can't.** Fixed forever: the token (21M cap, no owner, no proxy, no pause, no blocklist, no
 transfer tax), the mining vault (35,000 a day and 10,500,000 in all, not upgradeable; its distributor can only be
-replaced in the open, two days after it's proposed), the pool's locked liquidity and its 4% fee to the fee recipient
-(the hook is renounced), and the Crafters' art, rarities and 5% royalty rate. Upgradeable by the owner (UUPS proxies, every site,
+replaced in the open, two days after it's proposed, and only by a contract the vault's owner owns), the pool's locked
+liquidity and its 4% fee (the hook is renounced: after the renounce only the current fee recipient can move the fees;
+nobody else can), and the Crafters' art, rarities and 5% royalty rate. The royalty's enforcement is only as strict as
+the transfer validator: the owner can relax it, plainly (point the collection at a validator that allows everything,
+or loosen the collection's policy on OpenSea's registry), and either change shows on chain.
+Upgradeable by the owner (UUPS proxies, every site,
 level and total kept across upgrades): `MiningSites` (site price, upgrade costs, rates, burn share, more levels up to
 20, the daily caps, the voucher key, pause), `CrafterLevels` (costs, burn share, more levels) and `MinePayments` (each
 kind's burn share, new kinds). Whatever runs in them, nobody can mint more than the vault allows: the most an owner or
@@ -216,26 +220,27 @@ the better rate. It pays within a per-wallet daily cap (1,500 $MINE at launch, a
 and what you'll receive. A leaked server key can take at most the daily caps until it's paused and replaced.
 
 **Upgrading.** The Mining Site panel (M) shows your site's level and rate, the next level's rate and cost, and an
-**Upgrade to level N** button: it approves exactly that cost for MiningSites, then calls `upgradeSite` (75% burned, 25%
-to the treasury), and the claim box shows the new rate at once. Under the Crafters, **Levels** lists each Crafter you
-hold with its rarity, level, boost, and the next level's cost and boost; **Level up** approves exactly the cost for
-CrafterLevels, then calls `upgrade(tokenId)`. If it's the Crafter you wear, the game asks the world server to read it
-again at once (`["recheck"]`), so the new boost counts within seconds. Every $MINE payment in the game approves exactly
-what it costs, never more, so a price raised meanwhile makes it fail instead of charging more. Short of $MINE? Buy some
-in the panel's trade box.
+**Upgrade to level N** button: it approves exactly that cost for MiningSites, then calls `upgradeSite(cost)` (75%
+burned, 25% to the treasury), and the claim box shows the new rate at once. Under the Crafters, **Levels** lists each
+Crafter you hold with its rarity, level, boost, and the next level's cost and boost; **Level up** approves exactly the
+cost for CrafterLevels, then calls `upgrade(tokenId, cost)`. If it's the Crafter you wear, the game asks the world
+server to read it again at once (`["recheck"]`), so the new boost counts within seconds. Every $MINE payment in the game
+approves exactly what it costs, never more, and every upgrade names the cost it was shown as the most it will pay
+(`maxCost`), so a price raised meanwhile makes it fail (`CostAboveMax`) instead of charging more, even from a wallet
+that approved more. Short of $MINE? Buy some in the panel's trade box.
 
 ## Contracts
 
 | | |
 |---|---|
 | `MineToken.sol` | $MINE: Courier World's $STAMP (StampToken) line for line. ERC-20 with permit and burn, 21M cap counting every mint (so burns are for good), 10.5M to the hook (pool) at launch, the rest minted only by its one minter, the vault (set once). Renounced at deploy: no owner, no proxy, no pause, no tax |
-| `MineVault.sol` | The mining vault, $MINE's minter: mints straight to players when its distributor (MiningSites) asks, never more than 35,000 in a UTC day nor 10,500,000 in all. Not upgradeable. The owner can replace the distributor only in the open (`proposeDistributor`, then `acceptDistributor` two days later) |
+| `MineVault.sol` | The mining vault, $MINE's minter: mints straight to players when its distributor (MiningSites) asks, never more than 35,000 in a UTC day nor 10,500,000 in all. Not upgradeable. The owner can replace the distributor only in the open (`proposeDistributor`, then `acceptDistributor` two days later), and only with a contract the vault's owner owns: propose the new proxy's predicted address, deploy it with `initialize` in its constructor, then accept (the steps are in its NatSpec); a proxy is never left uninitialised |
 | `MineHook.sol`, `MineRouter.sol`, `MineEthRouter.sol` | Courier's audited `StampHook` and routers for $MINE: one pool, locked launch liquidity, 4% fee on the IMD side, buy/sell with IMD or ETH. The one difference from StampHook: the lowest start tick is -300,000 (was -400,000, as CourierPad); everything else, the 21M launch limit and the market-cap maths included, is StampHook's |
-| `MiningSites.sol` | UUPS proxy, the rules for converting: mining sites (ETH, once per wallet) with levels 1 to 5 converting 50/60/70/85/100% (`upgradeSite`, paid in $MINE: `upgradeCost(level)`, 75% burned), and the claims the vault pays: EIP-712 vouchers from the world server, a daily cap per wallet (1,500, at most 3,500) and across everyone (35,000), pause. The owner tunes prices, rates, costs and caps, adds levels (up to 20) and can upgrade it |
-| `CrafterLevels.sol` | UUPS proxy: each Crafter's level (`levelOf`, 1 to `maxLevel`), raised by its holder with `upgrade(tokenId)` for `upgradeCost(level)` $MINE (75% burned). The Crafters show it as the "Level" trait once pointed at it (`setAttributesExtension`) |
+| `MiningSites.sol` | UUPS proxy, the rules for converting: mining sites (ETH, once per wallet) with levels 1 to 5 converting 50/60/70/85/100% (`upgradeSite(maxCost)`, paid in $MINE: `upgradeCost(level)`, 75% burned, never more than `maxCost`), and the claims the vault pays: EIP-712 vouchers from the world server, a daily cap per wallet (1,500, at most 3,500) and across everyone (35,000), pause. The owner tunes prices, rates, costs and caps, adds levels (up to 20) and can upgrade it |
+| `CrafterLevels.sol` | UUPS proxy: each Crafter's level (`levelOf`, 1 to `maxLevel`), raised by its holder with `upgrade(tokenId, maxCost)` for `upgradeCost(level)` $MINE (75% burned, never more than `maxCost`). The Crafters show it as the "Level" trait once pointed at it (`setAttributesExtension`) |
 | `MinePayments.sol` | UUPS proxy: `pay(kind, amount, ref)` takes $MINE from the player (with their exact approval), burns the kind's share, sends the rest to the treasury and emits `Paid(player, kind, amount, burned, ref)`, which the game checks. Kinds: 0 "shop" (75% burned), 1 "ticket" (nothing burned); the owner can change burn shares and add kinds. Prices live in the game, not here |
 | `MinePayer.sol`, `UpgradeCosts.sol`, `lib/OwnedUUPS.sol` | What the three proxies share: taking a payment (burned share burned from the payer's wallet, the rest to the treasury; nothing ever held), level costs, and two-step ownership that can't be renounced, with the owner alone upgrading. State in ERC-7201 namespaced storage |
-| `MineWorldCrafters.sol` | MineWorld Crafters (Courier Skins adapted): 3,333 Crafters, commit-reveal, traits from a keyed shuffle (each token a different hair, outfit, eyes and gaze) and weighted picks, fully on-chain metadata and pictures, enforced 5% royalty (ERC721-C, OpenSea's registry). The owner can update the website and social links (`setLinks`) and the collection's picture and banner (`setCollectionImages`) shown on OpenSea at any time |
+| `MineWorldCrafters.sol` | MineWorld Crafters (Courier Skins adapted): 3,333 Crafters, commit-reveal (the secret mixed with the hash of the block the sale closed in, which anyone can `seal`), traits from a keyed shuffle (each token a different hair, outfit, eyes and gaze) and weighted picks, fully on-chain metadata and pictures (the attributes extension gets a fixed 300,000 gas and only a well-formed string of at most 4 KB is used, so it can't break them), enforced 5% royalty (ERC721-C, OpenSea's registry; the owner picks the validator and so can relax enforcement). The owner can update the website and social links (`setLinks`) and the collection's picture and banner (`setCollectionImages`) shown on OpenSea at any time |
 | `CrafterArt.sol` | The Crafters' pictures as 24 x 24 SVGs, generated from `web/crafters-art.js` and `web/crafters.js` by `tools/gen-crafter-art.mjs`; never edit it by hand |
 
 ```bash
@@ -280,10 +285,17 @@ Settings are in `contracts/launch.env` (public values only). The real launch, st
    `ORIGINS`, then `npx wrangler deploy`.
 8. **The website:** `./script/export-web.sh` writes `web/deployments/robinhood.json`; put the Worker's address in
    `web/config.js` (`LIVE_ROOM`) and publish `web/` as it is (no build), e.g. on Vercel or IMD's site hosting.
-9. **The mint:** `setSaleOpen(true)`. When it's over, `setSaleOpen(false)`, wait for the next block, then
-   `reveal(secret)`.
-10. **OpenSea:** set the collection's links and pictures (or call `setLinks` and `setCollectionImages`) and turn on
-    creator earnings in OpenSea Studio.
+9. **The mint:** `setSaleOpen(true)`. When it's over, `setSaleOpen(false)`: the block it lands in is the reveal block,
+   and closing is for good once anyone seals (it isn't a pause).
+   From the next block anyone can call `seal()` (the panel shows a **Lock in the reveal** button, or
+   `cast send <crafters> "seal()"`), which records that block's hash for good. Seal promptly: the chain keeps a block
+   hash for 256 blocks (about 50 minutes on Robinhood Chain, whose `block.number` follows Ethereum's); if nobody seals
+   in time, `setSaleOpen(false)` again fixes a new reveal block, in public. Then `reveal(secret)` (it seals first if
+   nobody has). The looks depend only on the secret and that hash, never on when the reveal is sent; what's left to
+   trust is Robinhood Chain's sequencer, from whose blocks the chain derives `blockhash`.
+10. **OpenSea:** nothing to register on chain: a collection that never configured anything on OpenSea's registry gets
+    its default list (OpenSea's SignedZone as the one authorizer), checked on Robinhood Chain. Set the collection's
+    links and pictures (or call `setLinks` and `setCollectionImages`) and turn on creator earnings in OpenSea Studio.
 
 ## The world server
 

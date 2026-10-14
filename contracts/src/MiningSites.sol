@@ -44,8 +44,10 @@ import {MineVault} from "./MineVault.sol";
 ///        signer and the caps, can pause, and can upgrade this contract. So the owner, or someone with the owner's
 ///        key, could take what the vault mints: at most 35,000 $MINE a day, which the vault enforces whatever code
 ///        runs here. The owner can hand ownership to a multisig or a timelock (see OwnedUUPS). A cost raised just
-///        before an upgrade only charges a wallet that approved that much (the game approves exactly the cost it
-///        shows).
+///        before an upgrade can't charge more than the caller's `maxCost` (and the game also approves exactly the
+///        cost it shows). The treasury must accept ETH (checked when it's set): `openSite` pays it directly.
+///      - Replacing this contract as the vault's distributor (rather than upgrading it in place): see MineVault for
+///        the steps. The new proxy is initialised in its constructor, never left uninitialised.
 ///      - Upgrades keep every site, level and total: the state lives in ERC-7201 namespaced storage.
 contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
@@ -123,8 +125,11 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
     error BadCaps();
     /// @notice A rate is below 10% or above 100%, lower than the level below's, or there isn't one per level.
     error BadRates();
-    /// @notice The vault mints another token, or doesn't have this proxy as its distributor.
+    /// @notice The vault mints another token, or names this proxy neither its distributor nor its pending one.
     error BadVault();
+    /// @notice The treasury refused a plain call with no ETH (a contract with no receive or fallback, say), so it
+    ///         would refuse site payments too and every openSite would fail.
+    error TreasuryRefusesEth();
     error AlreadyOpen();
     error WrongPayment();
     error NoSite();
@@ -141,7 +146,10 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
     /// @notice Set up the proxy: the rules for `vault_`'s $MINE, with the launch's levels (costs 4,620, 18,942,
     ///         77,662 and 318,415 $MINE to reach levels 2 to 5, about $1,000 in all at a $50,000 market cap; rates 50%,
     ///         60%, 70%, 85% and 100%; 75% of each upgrade burned). The vault must already name this proxy its
-    ///         distributor.
+    ///         distributor (the launch: the vault was given the proxy's predicted address) or its pending distributor
+    ///         (a replacement: proposed at its predicted address first, see MineVault). Always call this in the
+    ///         proxy's constructor (ERC1967Proxy's data), never later: an uninitialised proxy is anyone's to set up.
+    ///         The vault only accepts a replacement whose `owner()` is its own owner.
     function initialize(
         IERC20 token_,
         MineVault vault_,
@@ -158,7 +166,8 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
         (costs[0], costs[1], costs[2], costs[3]) = (4_620e18, 18_942e18, 77_662e18, 318_415e18);
         __UpgradeCosts_init(costs, 7_500);
         if (address(vault_) == address(0) || signer_ == address(0)) revert ZeroAddress();
-        if (address(vault_.token()) != address(token_) || vault_.distributor() != address(this)) revert BadVault();
+        if (address(vault_.token()) != address(token_)) revert BadVault();
+        if (vault_.distributor() != address(this) && vault_.pendingDistributor() != address(this)) revert BadVault();
         if (sitePrice_ == 0) revert ZeroPrice();
         SitesStorage storage $ = _sites();
         $.vault = vault_;
@@ -182,6 +191,18 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
         return MAX_UPGRADE_COST;
     }
 
+    /// @dev `openSite` sends the treasury ETH in the same call, so a treasury that refused it would stop every new
+    ///      site: it must accept a plain call with no ETH (a wallet, or a contract with a receive or fallback
+    ///      function), at initialize and in setTreasury. (A contract whose fallback takes calls but not ETH would
+    ///      still pass; the owner is trusted not to choose one.)
+    function _checkTreasury(address treasury_) internal override {
+        bool ok;
+        assembly ("memory-safe") {
+            ok := call(gas(), treasury_, 0, 0, 0, 0, 0)
+        }
+        if (!ok) revert TreasuryRefusesEth();
+    }
+
     // ---------------------------------------------------------------- sites
 
     /// @notice Open your mining site, once, for exactly `sitePrice` in ETH (a price change mined first makes this
@@ -198,13 +219,15 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
     }
 
     /// @notice Raise your site one level (up to maxLevel()) for `upgradeCost(level)` $MINE from your wallet: the burn
-    ///         share burned, the rest to the treasury. Approve this contract for exactly that much first. Your next
-    ///         claim converts at the new level's rate, earnings you haven't claimed yet included.
-    function upgradeSite() external nonReentrant returns (uint256 level) {
+    ///         share burned, the rest to the treasury. Reverts `CostAboveMax` if that's more than `maxCost` (pass the
+    ///         cost you were shown: a cost raised meanwhile then fails instead of charging more, whatever you
+    ///         approved). Approve this contract for exactly that much first. Your next claim converts at the new
+    ///         level's rate, earnings you haven't claimed yet included.
+    function upgradeSite(uint256 maxCost) external nonReentrant returns (uint256 level) {
         Site storage site = _sites().sites[msg.sender];
         if (site.level == 0) revert NoSite();
         uint256 cost;
-        (level, cost) = _nextLevel(site.level);
+        (level, cost) = _nextLevel(site.level, maxCost);
         site.level = uint8(level);
         emit SiteUpgraded(msg.sender, level, cost, _burnShare(cost));
         _payUpgrade(msg.sender, cost);

@@ -111,8 +111,14 @@ export function createPanel(game) {
         }
       });
       case "mint": return run(`Minting ${data.n} Crafter${data.n > 1 ? "s" : ""}`, () => chain.mintCrafters(Number(data.n), snap.crafters.price));
+      // Anyone can lock in the reveal's randomness once the block the mint closed in is over (MineWorldCrafters.seal).
+      case "seal": return run("Locking in the Crafters' reveal", async () => {
+        await chain.sealReveal();
+        return "Locked in: every Crafter's look is fixed for good. The owner reveals them next.";
+      }, "seal");
       case "upsite": {
-        // The cost shown is the cost approved: if the owner changed it meanwhile, the upgrade fails rather than charge more.
+        // The cost shown is the cost approved, and the most the upgrade may charge (maxCost): if the owner changed it
+        // meanwhile, the upgrade fails rather than charge more.
         const up = snap?.siteUp;
         if (!up?.next) return;
         return run(`Upgrading your mining site to level ${up.next}`, async (step) => {
@@ -264,6 +270,7 @@ export function createPanel(game) {
       ${M.saleOpen && left > 0
         ? `<div class="row-btns">${[1, 3, 5].map((n) => `<button class="btn${n === 1 ? " gold" : ""}" data-act="mint" data-n="${n}" ${!acct || busy || n > left ? "disabled" : ""}>Mint ${n}</button>`).join("")}</div>`
         : `<p class="note">${left <= 0 ? "Sold out." : "The mint isn't open right now."}</p>`}
+      ${revealBox(M, acct)}
       ${mine.length ? `<h3>Yours</h3><div class="miners">
         <button class="miner ${worn === null ? "on" : ""}" data-act="wear" data-id="none"><img src="${pic(svg(ROOKIE))}" alt="">Rookie</button>
         ${mine.map((m) => {
@@ -274,6 +281,25 @@ export function createPanel(game) {
       </div><p class="note">${mine.some((m) => m.traits) ? "Tap one to wear it. Others see it once the world server has checked it's yours." : "Yours are sealed until the reveal."}</p>
       ${levelsList(M, s)}` : ""}
     </section>`;
+  }
+
+  /// Where the reveal stands once the mint has closed (MineWorldCrafters.revealStatus), and the button anyone can
+  /// press to lock in its randomness: the hash of the block the mint closed in, which the chain only keeps for 256
+  /// blocks, so the sooner the better.
+  function revealBox(M, acct) {
+    const st = M.revealStatus;
+    if (st === null || st === undefined || st === 0 || st === 5) return "";
+    if (st === 2) {
+      return `<p class="note">The mint has closed and the reveal's randomness is ready. Anyone can lock it in now (gas only): it fixes every
+        Crafter's look for good, and nobody, the owner included, can change it after. Then the owner reveals.</p>
+        <button class="btn gold wide" data-act="seal" ${!acct || busy ? "disabled" : ""}>Lock in the reveal</button>${statusAt("seal")}`;
+    }
+    const note = {
+      1: "The mint has closed. In a few seconds the reveal's randomness is ready to lock in, here, by anyone.",
+      3: "Nobody locked in the reveal in time, so its randomness expired. The owner closes the mint again to fix a new one.",
+      4: "The reveal's randomness is locked in: every Crafter's look is fixed. The owner reveals them next.",
+    }[st];
+    return note ? `<p class="note">${note}</p>${statusAt("seal")}` : "";
   }
 
   /// Each Crafter you hold: its rarity, level and boost, and what the next level costs and adds (CrafterLevels).

@@ -377,8 +377,9 @@ contract MineHook is IHooks, IUnlockCallback {
         pendingOwner = address(0);
     }
 
-    /// @notice Gives up ownership for good: the fee recipient can never change again. Only after `openPool`, so
-    ///         the launch can't be locked out by renouncing too early.
+    /// @notice Gives up ownership for good. After the renounce only the current fee recipient can move the fees (see
+    ///         `setFeeRecipient`); nobody else can. Only after `openPool`, so the launch can't be locked out by
+    ///         renouncing too early.
     function renounceOwnership() external onlyOwner {
         if (token == address(0)) revert NotLaunched();
         emit OwnershipTransferred(owner, address(0));

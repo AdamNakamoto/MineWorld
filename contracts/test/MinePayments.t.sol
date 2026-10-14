@@ -17,6 +17,9 @@ contract MinePaymentsV2 is MinePayments {
     }
 }
 
+/// A contract with no receive or fallback (it takes no ETH).
+contract NoEthHere {}
+
 contract MinePaymentsTest is Test {
     MineToken token;
     MinePayments payments;
@@ -135,6 +138,13 @@ contract MinePaymentsTest is Test {
         payments.setTreasury(next);
         _pay(0, 100e18, 0);
         assertEq(token.balanceOf(next), 25e18);
+        // Payments are $MINE only, so a treasury contract that takes no ETH is fine here (audit 0792975e #4's check
+        // is only where ETH is sent: MiningSites and the Crafters).
+        address noEth = address(new NoEthHere());
+        vm.prank(owner);
+        payments.setTreasury(noEth);
+        _pay(0, 100e18, 0);
+        assertEq(token.balanceOf(noEth), 25e18);
     }
 
     function test_UpgradeKeepsKindsAndOnlyTheOwnerUpgrades() public {

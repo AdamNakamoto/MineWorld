@@ -171,7 +171,7 @@ contract LaunchForkTest is Test, MineDeployer {
         deal(token, alice, cost);
         vm.startPrank(alice);
         mine.approve(l.game.sites, cost);
-        sites.upgradeSite();
+        sites.upgradeSite(cost);
         vm.stopPrank();
         assertEq(sites.rateBps(alice), 6_000);
         assertEq(mine.balanceOf(treasury), cost / 4);

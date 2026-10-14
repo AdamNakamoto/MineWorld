@@ -15,7 +15,7 @@ import {MinePayer} from "../src/MinePayer.sol";
 import {OwnedUUPS} from "../src/lib/OwnedUUPS.sol";
 import {CrafterArt} from "../src/CrafterArt.sol";
 import {MineWorldCrafters} from "../src/MineWorldCrafters.sol";
-import {StrictValidator, Json} from "./MineWorldCrafters.t.sol";
+import {StrictValidator, Json, NoEthTreasury} from "./MineWorldCrafters.t.sol";
 
 /// An attributes extension whose attributesOf always reverts (the Crafters must still show their metadata).
 contract BrokenExtension {
@@ -120,7 +120,7 @@ contract CrafterLevelsTest is Test {
         token.transfer(who, cost);
         vm.startPrank(who);
         token.approve(address(levels), cost);
-        levels.upgrade(id);
+        levels.upgrade(id, cost);
         vm.stopPrank();
     }
 
@@ -194,7 +194,7 @@ contract CrafterLevelsTest is Test {
         vm.expectEmit(address(crafters));
         emit MineWorldCrafters.MetadataUpdate(2);
         vm.prank(alice);
-        assertEq(levels.upgrade(2), 2);
+        assertEq(levels.upgrade(2, COST_2), 2);
         assertEq(levels.levelOf(2), 2);
         (uint256 level,) = _levelInURI(2);
         assertEq(level, 2);
@@ -224,7 +224,7 @@ contract CrafterLevelsTest is Test {
         vm.startPrank(alice);
         token.approve(address(levels), type(uint256).max);
         vm.expectRevert(UpgradeCosts.MaxLevel.selector);
-        levels.upgrade(3);
+        levels.upgrade(3, type(uint256).max);
         vm.stopPrank();
     }
 
@@ -261,18 +261,41 @@ contract CrafterLevelsTest is Test {
         token.approve(address(levels), COST_2);
         vm.prank(bob);
         vm.expectRevert(CrafterLevels.NotHolder.selector);
-        levels.upgrade(1); // alice's
+        levels.upgrade(1, COST_2); // alice's
         vm.prank(alice);
         crafters.setApprovalForAll(market, true);
         vm.prank(market);
         vm.expectRevert(CrafterLevels.NotHolder.selector);
-        levels.upgrade(1);
+        levels.upgrade(1, COST_2);
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(IERC721Errors.ERC721NonexistentToken.selector, 99));
-        levels.upgrade(99);
+        levels.upgrade(99, COST_2);
         vm.prank(bob);
-        levels.upgrade(4);
+        levels.upgrade(4, COST_2);
         assertEq(levels.levelOf(4), 2);
+    }
+
+    /// Audit 0792975e #5: a cost raise mined just before the upgrade can't charge more than the maxCost the holder
+    /// sent, even with an unlimited allowance; the holder who agrees to the new cost pays it.
+    function test_RaisedCostRevertsEvenWithAnUnlimitedApproval() public {
+        vm.prank(pool);
+        token.transfer(alice, 2_000_000e18);
+        vm.prank(alice);
+        token.approve(address(levels), type(uint256).max);
+        assertEq(levels.upgradeCost(2), COST_2); // what the holder was shown
+        vm.prank(owner);
+        levels.setUpgradeCosts(_list(2_000_000e18, COST_3, COST_4, COST_5)); // mined first
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(UpgradeCosts.CostAboveMax.selector, 2_000_000e18, COST_2));
+        levels.upgrade(1, COST_2);
+        assertEq(token.balanceOf(alice), 2_000_000e18, "nothing taken");
+        assertEq(levels.levelOf(1), 1);
+        // Lowered below what was shown: the lower cost is charged.
+        vm.prank(owner);
+        levels.setUpgradeCosts(_list(1_000e18, COST_3, COST_4, COST_5));
+        vm.prank(alice);
+        assertEq(levels.upgrade(1, COST_2), 2);
+        assertEq(token.balanceOf(alice), 2_000_000e18 - 1_000e18);
     }
 
     function test_UpgradeNeedsTheMineApproved() public {
@@ -280,12 +303,12 @@ contract CrafterLevelsTest is Test {
         token.transfer(alice, COST_2);
         vm.prank(alice);
         vm.expectRevert();
-        levels.upgrade(1);
+        levels.upgrade(1, COST_2);
         vm.prank(alice);
         token.approve(address(levels), COST_2 - 1);
         vm.prank(alice);
         vm.expectRevert();
-        levels.upgrade(1);
+        levels.upgrade(1, COST_2);
         assertEq(levels.levelOf(1), 1);
     }
 
@@ -312,7 +335,7 @@ contract CrafterLevelsTest is Test {
         token.approve(address(levels), COST_4);
         vm.prank(alice);
         vm.expectRevert(CrafterLevels.NotHolder.selector);
-        levels.upgrade(1);
+        levels.upgrade(1, COST_4);
         _upgrade(bob, 1);
         assertEq(levels.levelOf(1), 4);
     }
@@ -432,6 +455,13 @@ contract CrafterLevelsTest is Test {
         vm.stopPrank();
         _upgrade(alice, 1);
         assertEq(token.balanceOf(next), COST_2 / 4);
+        // Upgrades pay in $MINE only, so a treasury that takes no ETH is fine here (audit 0792975e #4 is MiningSites'
+        // and the Crafters').
+        address noEth = address(new NoEthTreasury());
+        vm.prank(owner);
+        levels.setTreasury(noEth);
+        _upgrade(alice, 1);
+        assertEq(token.balanceOf(noEth), COST_3 / 4);
     }
 
     /// An upgrade of the code keeps every Crafter's level and the settings; only the owner can make one.

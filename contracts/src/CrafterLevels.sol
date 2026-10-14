@@ -19,9 +19,9 @@ import {ICrafterAttributes, ICrafterMetadata} from "./ICrafterAttributes.sol";
 ///         upgrade the code; every Crafter's level carries across upgrades.
 /// @dev Trust: the owner sets the costs (1 wei to MAX_UPGRADE_COST each), the burn share and the treasury, adds levels
 ///      and upgrades the code (so it could change levels in a new version); it never holds anyone's $MINE (payments go
-///      straight from the holder's wallet). A cost raised just before an upgrade only charges a holder who approved
-///      that much (the game approves exactly the cost it shows). The owner can hand ownership to a multisig or a
-///      timelock (see OwnedUUPS).
+///      straight from the holder's wallet). A cost raised just before an upgrade can't charge more than the holder's
+///      `maxCost` (and the game also approves exactly the cost it shows). The owner can hand ownership to a multisig
+///      or a timelock (see OwnedUUPS).
 contract CrafterLevels is UpgradeCosts, ReentrancyGuardTransient, ICrafterAttributes {
     using Strings for uint256;
 
@@ -84,13 +84,14 @@ contract CrafterLevels is UpgradeCosts, ReentrancyGuardTransient, ICrafterAttrib
     }
 
     /// @notice Raise Crafter `tokenId`, which you hold, one level (up to maxLevel()) for `upgradeCost(level)` $MINE
-    ///         from your wallet: the burn share burned, the rest to the treasury. Approve this contract for exactly
-    ///         that much first.
-    function upgrade(uint256 tokenId) external nonReentrant returns (uint256 level) {
+    ///         from your wallet: the burn share burned, the rest to the treasury. Reverts `CostAboveMax` if that's
+    ///         more than `maxCost` (pass the cost you were shown: a cost raised meanwhile then fails instead of
+    ///         charging more, whatever you approved). Approve this contract for exactly that much first.
+    function upgrade(uint256 tokenId, uint256 maxCost) external nonReentrant returns (uint256 level) {
         LevelsStorage storage $ = _levelsStorage();
         if ($.crafters.ownerOf(tokenId) != msg.sender) revert NotHolder();
         uint256 cost;
-        (level, cost) = _nextLevel(levelOf(tokenId));
+        (level, cost) = _nextLevel(levelOf(tokenId), maxCost);
         $.levels[tokenId] = uint8(level);
         emit CrafterUpgraded(tokenId, msg.sender, level, cost, _burnShare(cost));
         _payUpgrade(msg.sender, cost);

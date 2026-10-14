@@ -10,9 +10,9 @@ import {MinePayer} from "./MinePayer.sol";
 ///
 ///         The owner tunes it from players' feedback: the costs (each 1 wei to MAX_UPGRADE_COST, fixed per
 ///         contract), the burn share (0% to 100%), and more levels on top (up to MAX_LEVELS, never fewer: a level
-///         once bought is never taken away). A cost change mined just before an upgrade charges the new cost only to
-///         a wallet that approved at least that much, so the game approves exactly the cost it shows: a raised cost
-///         then makes the upgrade revert instead of charging more.
+///         once bought is never taken away). Every upgrade names the most it will pay (`maxCost`): a cost raised by a
+///         change mined just before it makes it revert (`CostAboveMax`) instead of charging more, whatever the wallet
+///         approved. The game passes the cost it shows, and approves exactly that much too.
 /// @dev State in ERC-7201 namespaced storage.
 abstract contract UpgradeCosts is MinePayer {
     /// @notice The most levels there can ever be.
@@ -41,6 +41,8 @@ abstract contract UpgradeCosts is MinePayer {
     error MaxLevel();
     /// @notice MAX_LEVELS levels already.
     error TooManyLevels();
+    /// @notice The next level costs more than the most the caller agreed to pay (the cost changed meanwhile).
+    error CostAboveMax(uint256 cost, uint256 maxCost);
 
     function _costs() private pure returns (UpgradeCostsStorage storage $) {
         assembly {
@@ -118,11 +120,12 @@ abstract contract UpgradeCosts is MinePayer {
         emit LevelAdded(level, cost);
     }
 
-    /// @dev The level after `level`, and what reaching it costs (reverts at the top).
-    function _nextLevel(uint256 level) internal view returns (uint256 next, uint256 cost) {
+    /// @dev The level after `level`, and what reaching it costs (reverts at the top, and if that's above `maxCost`).
+    function _nextLevel(uint256 level, uint256 maxCost) internal view returns (uint256 next, uint256 cost) {
         next = level + 1;
         if (next > maxLevel()) revert MaxLevel();
         cost = _costs().costs[next - 2];
+        if (cost > maxCost) revert CostAboveMax(cost, maxCost);
     }
 
     /// @dev Takes `cost` from `payer`: the burn share burned, the rest to the treasury.

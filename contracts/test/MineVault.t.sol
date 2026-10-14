@@ -8,12 +8,19 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MineToken} from "../src/MineToken.sol";
 import {MineVault} from "../src/MineVault.sol";
 
-/// Stands in for MiningSites: asks the vault to mint.
+/// Stands in for MiningSites: asks the vault to mint. Owned by the vault's owner once wired (as a MiningSites proxy
+/// initialised for that vault is), or by whoever `setOwner` names.
 contract MockDistributor {
     MineVault public vault;
+    address public owner;
 
     function setVault(MineVault v) external {
         vault = v;
+        owner = v.owner();
+    }
+
+    function setOwner(address o) external {
+        owner = o;
     }
 
     function pay(address to, uint256 amount) external {
@@ -159,8 +166,6 @@ contract MineVaultTest is VaultFixture {
         vault.acceptDistributor();
         vm.expectRevert(MineVault.ZeroAddress.selector);
         vault.proposeDistributor(address(0));
-        vm.expectRevert(MineVault.NotAContract.selector);
-        vault.proposeDistributor(alice);
         vm.expectEmit(address(vault));
         emit MineVault.DistributorProposed(address(next), _now() + 2 days);
         vault.proposeDistributor(address(next));
@@ -189,6 +194,69 @@ contract MineVaultTest is VaultFixture {
         vm.expectRevert(MineVault.OverDailyLimit.selector);
         next.pay(alice, 5_000e18 + 1);
         next.pay(alice, 5_000e18);
+    }
+
+    /// Audit 0792975e #2: a distributor can be proposed before it exists (a proxy's predicted address), but only a
+    /// contract owned by the vault's owner can take over: never an empty address, an uninitialised proxy (no owner)
+    /// or one someone else set up.
+    function test_OnlyAContractTheOwnerOwnsTakesOver() public {
+        // Proposed before it exists: fine. Accepted while it still doesn't: refused.
+        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.prank(owner);
+        vault.proposeDistributor(predicted);
+        assertEq(vault.pendingDistributor(), predicted);
+        vm.warp(_now() + 2 days);
+        vm.prank(owner);
+        vm.expectRevert(MineVault.NotAContract.selector);
+        vault.acceptDistributor();
+
+        // Deployed there, but owned by nobody (as an uninitialised proxy is) or by a stranger: refused.
+        MockDistributor d = new MockDistributor();
+        assertEq(address(d), predicted);
+        vm.prank(owner);
+        vm.expectRevert(MineVault.NotOwnersDistributor.selector);
+        vault.acceptDistributor();
+        d.setOwner(alice);
+        vm.prank(owner);
+        vm.expectRevert(MineVault.NotOwnersDistributor.selector);
+        vault.acceptDistributor();
+        // A contract with no owner() at all: refused too.
+        Stray noOwner = new Stray(alice);
+        vm.startPrank(owner);
+        vault.proposeDistributor(address(noOwner));
+        vm.warp(_now() + 2 days);
+        vm.expectRevert(MineVault.NotOwnersDistributor.selector);
+        vault.acceptDistributor();
+        vm.stopPrank();
+
+        // The owner's own: accepted, and only it mints from then on.
+        d.setVault(vault);
+        assertEq(d.owner(), owner);
+        vm.startPrank(owner);
+        vault.proposeDistributor(address(d));
+        vm.warp(_now() + 2 days);
+        vault.acceptDistributor();
+        vm.stopPrank();
+        assertEq(vault.distributor(), address(d));
+        d.pay(alice, 1e18);
+        vm.expectRevert(MineVault.NotDistributor.selector);
+        sites.pay(alice, 1);
+
+        // If the vault changes hands, the next distributor must be the new owner's.
+        vm.prank(owner);
+        vault.transferOwnership(alice);
+        vm.prank(alice);
+        vault.acceptOwnership();
+        vm.prank(alice);
+        vault.proposeDistributor(address(next)); // still owned by `owner`
+        vm.warp(_now() + 2 days);
+        vm.prank(alice);
+        vm.expectRevert(MineVault.NotOwnersDistributor.selector);
+        vault.acceptDistributor();
+        next.setOwner(alice);
+        vm.prank(alice);
+        vault.acceptDistributor();
+        assertEq(vault.distributor(), address(next));
     }
 
     function test_ProposalsCanBeCancelledOrReplaced() public {

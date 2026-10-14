@@ -20,7 +20,12 @@ import {DevTransferValidator} from "./DevTransferValidator.sol";
 /// setSaleOpen). OWNER owns the collection (default: the wallet that broadcasts): set at deploy when nothing needs
 /// setting up afterwards, else handed over in two steps once it's set up, with the acceptOwnership call OWNER must
 /// then make printed (the reveal, later, is OWNER's too). On a bare local chain (../dev.sh without --fork) there's no
-/// registry, so it deploys DevTransferValidator instead.
+/// registry, so it deploys DevTransferValidator instead. TREASURY must take ETH (a wallet, or a contract with a receive
+/// function): the collection refuses one that doesn't.
+///
+/// OpenSea's registry needs nothing registered on chain: a collection that never configured anything there gets its
+/// default list, whose one authorizer is OpenSea's SignedZone (checked on Robinhood Chain; test_Fork_EnforcedWithout-
+/// Registering). The launch steps it prints: creator earnings on in OpenSea Studio, and how the reveal goes.
 contract DeployCrafters is Script {
     /// OpenSea's StrictAuthorizedTransferSecurityRegistry, the validator its creator fee enforcement uses.
     address constant OPENSEA_REGISTRY = 0xA000027A9B2802E1ddf7000061001e5c005A0000;
@@ -64,6 +69,14 @@ contract DeployCrafters is Script {
         console2.log("  treasury", crafters.treasury());
         console2.log("  price (wei)", crafters.price());
         console2.log("  wallet limit", crafters.walletLimit());
+        console2.log("Launch steps for the owner:");
+        if (validator == OPENSEA_REGISTRY) {
+            console2.log("  - Royalty: nothing to register on OpenSea's registry (the collection gets its default list,");
+            console2.log("    OpenSea's SignedZone). In OpenSea Studio, turn on creator earnings (5%).");
+        }
+        console2.log("  - The reveal: setSaleOpen(false) fixes the reveal block (the block it lands in). From the next");
+        console2.log("    block, anyone calls seal() (the game's panel offers it): do it within 256 blocks, or close the");
+        console2.log("    sale again to fix a new block. Then reveal(secret) (it seals first if nobody has).");
 
         // (dev.sh sets DEV_CHAIN: an Anvil fork of Robinhood Chain has its chain ID too, and must not touch the real record.)
         if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) || block.chainid != 4663 || vm.envOr("DEV_CHAIN", false)) return crafters;

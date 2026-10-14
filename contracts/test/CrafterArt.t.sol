@@ -8,10 +8,11 @@ import {CrafterVectors} from "./CrafterVectors.sol";
 import {FastBase64} from "../src/lib/FastBase64.sol";
 import {StrictValidator, Json} from "./MineWorldCrafters.t.sol";
 
-/// Exposes the traits for any seed, and sets the seed and mints any id directly (tests only).
+/// Exposes the traits for any seed, and sets the seed and mints any id directly (tests only). (Its treasury is a
+/// plain address: the test contract deploying it takes no ETH, so it couldn't be the treasury.)
 contract CraftersHarness is MineWorldCrafters {
     constructor(address validator, CrafterArt art_)
-        MineWorldCrafters(msg.sender, msg.sender, 0, bytes32(0), validator, art_)
+        MineWorldCrafters(msg.sender, address(0x7EA5), 0, bytes32(0), validator, art_)
     {}
 
     function setSeed(uint256 s) external {

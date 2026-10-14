@@ -7,6 +7,11 @@ import {Ownable, Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {MineToken} from "./MineToken.sol";
 
+/// @notice What the vault reads from a distributor before it takes over: who owns it.
+interface IOwned {
+    function owner() external view returns (address);
+}
+
 /// @title MineVault
 /// @notice The mining vault: $MINE's one minter (MineToken.setMinter, set once at deploy), kept apart from the game's
 ///         rules, which can change. It holds nothing: it mints $MINE straight to players as they claim what they
@@ -17,7 +22,20 @@ import {MineToken} from "./MineToken.sol";
 ///
 ///         The first distributor is named at deploy (MiningSites' proxy, deployed right after the vault). The owner
 ///         can only replace it in the open: `proposeDistributor`, then `acceptDistributor` at least
-///         DISTRIBUTOR_DELAY (2 days) later, so players see a change coming.
+///         DISTRIBUTOR_DELAY (2 days) later, so players see a change coming. Only a contract this vault's owner owns
+///         can take over, so a proxy left uninitialised (which anyone could set up as theirs) never can.
+///
+///         Replacing MiningSites with a new proxy, step by step (it must never sit on chain uninitialised):
+///         1. Deploy the new implementation (its constructor locks it).
+///         2. `proposeDistributor(P)`, where P is the address the new ERC1967Proxy will get (for a wallet, its next
+///            CREATE address: nothing need be there yet).
+///         3. Deploy the proxy at P with `initialize` in its constructor, naming this vault and this vault's owner:
+///            MiningSites.initialize accepts this vault's pending distributor as well as its distributor, and the
+///            proxy is never uninitialised, not even for a block.
+///         4. Two days later, `acceptDistributor()`: it checks P has code and that P's `owner()` is this vault's
+///            owner, and reverts otherwise (then propose again). A pending distributor can't mint: only `distributor`
+///            can. (Proposing a proxy that is already deployed but uninitialised lets anyone initialise it as theirs
+///            during the wait; it then can't be accepted, so the cost is two days, never $MINE.)
 /// @dev Not upgradeable and not a proxy, on purpose: this and the token are the parts that stay fixed. Trust, plainly:
 ///      the distributor decides who is paid (within the limits), so a bad distributor could mint up to 35,000 a day to
 ///      whomever it likes; that is no more than an owner who made itself MiningSites' signer could already take. The
@@ -56,6 +74,9 @@ contract MineVault is Ownable2Step, ReentrancyGuard {
 
     error ZeroAddress();
     error NotAContract();
+    /// @notice The proposed distributor isn't owned by this vault's owner (or doesn't say who owns it): an
+    ///         uninitialised or hijacked proxy, say. It can't take over.
+    error NotOwnersDistributor();
     /// @notice Only the distributor can have $MINE minted.
     error NotDistributor();
     /// @notice The mint would take today past DAILY_LIMIT.
@@ -119,10 +140,10 @@ contract MineVault is Ownable2Step, ReentrancyGuard {
     // ---------------------------------------------------------------- the distributor
 
     /// @notice Propose a new distributor (a new rules contract); it can take over DISTRIBUTOR_DELAY from now. A new
-    ///         proposal replaces the last one and restarts the wait.
+    ///         proposal replaces the last one and restarts the wait. It needn't exist yet: propose a proxy's predicted
+    ///         address, then deploy it initialised (see the steps above); `acceptDistributor` checks it.
     function proposeDistributor(address distributor_) external onlyOwner {
         if (distributor_ == address(0)) revert ZeroAddress();
-        if (distributor_.code.length == 0) revert NotAContract();
         pendingDistributor = distributor_;
         pendingReadyAt = block.timestamp + DISTRIBUTOR_DELAY;
         emit DistributorProposed(distributor_, pendingReadyAt);
@@ -136,12 +157,18 @@ contract MineVault is Ownable2Step, ReentrancyGuard {
         emit DistributorProposalCancelled(pending);
     }
 
-    /// @notice Make the proposed distributor the distributor, once its wait is over. The limits carry over: what the
-    ///         old one had minted today counts against the new one.
+    /// @notice Make the proposed distributor the distributor, once its wait is over, if it is a contract owned by this
+    ///         vault's owner (`owner()`): an uninitialised proxy, or one a stranger initialised, is refused. The limits
+    ///         carry over: what the old one had minted today counts against the new one.
     function acceptDistributor() external onlyOwner {
         address pending = pendingDistributor;
         if (pending == address(0)) revert NoProposal();
         if (block.timestamp < pendingReadyAt) revert TooEarly();
+        if (pending.code.length == 0) revert NotAContract();
+        (bool ok, bytes memory data) = pending.staticcall(abi.encodeCall(IOwned.owner, ()));
+        if (!ok || data.length != 32 || abi.decode(data, (uint256)) != uint256(uint160(owner()))) {
+            revert NotOwnersDistributor();
+        }
         emit DistributorSet(distributor, pending);
         distributor = pending;
         delete pendingDistributor;

@@ -10,8 +10,9 @@
 #   ./dev.sh --wallet        # log in with your own browser wallet (MetaMask...) as on mainnet. The chain gets its own
 #                            # ID, so nothing signed there works elsewhere. Combines with --fork.
 #   ./dev.sh --sale          # leave the Crafters' sale open and sealed, to try the mint and the reveal (the owner,
-#                            # account 0, reveals with chain.json's devSecret). Without it the players get Crafters at
-#                            # once and the collection is revealed.
+#                            # account 0, closes the sale; anyone locks in the reveal block's hash with seal(), e.g.
+#                            # the panel's button; the owner reveals with chain.json's devSecret). Without it the
+#                            # players get Crafters at once and the collection is revealed.
 #
 # Accounts: 0 deploys, and owns the vault, the proxies (MiningSites, MinePayments, CrafterLevels) and the Crafters; 1 is
 # the treasury and the fee recipient; 2-9 are players, each with some $MINE (1,000,000 from the stand-in on the empty
@@ -68,7 +69,7 @@ if [ "$FORK" = 1 ]; then
   # contracts that forward any ETH they receive. Clear them so the fork's dev accounts are plain wallets.
   for a in "${ACCOUNTS[@]}"; do cast rpc anvil_setCode "$a" 0x --rpc-url "$RPC" >/dev/null; done
 fi
-# The reveal mixes in the previous block's hash, so a fresh chain needs a block or two first.
+# The reveal mixes in the hash of the block the sale closed in; a block or two first, so the chain has some history.
 cast rpc anvil_mine 2 --rpc-url "$RPC" >/dev/null
 DEPLOYER=${ACCOUNTS[0]}
 PLAYER_LIST=("${ACCOUNTS[@]:2}")
@@ -133,8 +134,8 @@ if [ "$FORK" = 1 ]; then
 fi
 
 if [ "$SALE" = 0 ]; then
-  # Two Crafters for each player (as anyone mints them), then the sale closes and, a block later, the owner reveals
-  # with this chain's secret.
+  # Two Crafters for each player (as anyone mints them), then the sale closes (fixing the reveal block); a block
+  # later a player seals that block's hash (anyone can), and the owner reveals with this chain's secret.
   HASHES=()
   for p in "${PLAYER_LIST[@]}"; do
     HASHES+=($(cast send "$CRAFTERS" "mint(uint256)" 2 --value $((CRAFTERS_PRICE * 2)) \
@@ -143,6 +144,7 @@ if [ "$SALE" = 0 ]; then
   wait_ok "${HASHES[@]}"
   cast send "$CRAFTERS" "setSaleOpen(bool)" false --from "$DEPLOYER" --unlocked --rpc-url "$RPC" >/dev/null
   cast rpc anvil_mine 1 --rpc-url "$RPC" >/dev/null
+  cast send "$CRAFTERS" "seal()" --from "${PLAYER_LIST[0]}" --unlocked --rpc-url "$RPC" >/dev/null
   cast send "$CRAFTERS" "reveal(uint256)" "$SECRET" --from "$DEPLOYER" --unlocked --rpc-url "$RPC" >/dev/null
 fi
 

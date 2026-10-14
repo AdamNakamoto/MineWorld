@@ -59,9 +59,9 @@ the vault caps what can be minted at 35,000 a day.
 - `openSite()` payable: exactly `sitePrice`, once per wallet, ETH forwarded to `treasury`; the site opens at level 1.
   `siteOf(address) → uint64 openedAt` (0 = none), `hasSite(address) → bool`, `siteLevel(address) → level` (0 = none).
   Event `SiteOpened(address indexed owner, uint256 price)`.
-- `upgradeSite()`: raises the caller's site one level for `upgradeCost(level + 1)` $MINE, taken from the wallet with
-  its approval: `upgradeBurnBps` (75%) burned, the rest to the treasury. The game approves exactly the cost it shows.
-  Reverts `NoSite`, `MaxLevel`. Event `SiteUpgraded(address indexed owner, uint256 level, uint256 cost, uint256 burned)`.
+- `upgradeSite(uint256 maxCost)`: raises the caller's site one level for `upgradeCost(level + 1)` $MINE, taken from
+  the wallet with its approval: `upgradeBurnBps` (75%) burned, the rest to the treasury. The game passes the cost it
+  shows as `maxCost` and approves exactly that. Reverts `NoSite`, `MaxLevel`, `CostAboveMax(cost, maxCost)`. Event `SiteUpgraded(address indexed owner, uint256 level, uint256 cost, uint256 burned)`.
   `maxLevel()` (5 at launch), `upgradeCost(level)` (2 to maxLevel), `upgradeCosts()`, `upgradeBurnBps()`.
 - Rates: `rateBps(address)` (the wallet's, 0 without a site), `levelRateBps(level)`, `rates()`: 5,000, 6,000, 7,000,
   8,500 and 10,000 at launch.
@@ -75,7 +75,7 @@ the vault caps what can be minted at 35,000 a day.
 - `claimable(address player, uint256 total) view → uint256` (what a claim would pay now, 0 without a site or paused).
 - Views for the panel: `sitePrice`, `treasury`, `signer`, `paused`, `walletDailyCap`, `dailyCap`, `paidToday()`,
   `walletPaidToday(address)`, `claimed(address)`, `settled(address)`, `token`, `vault`, `vaultBalance()`.
-- Owner: `setSitePrice` (never 0), `setTreasury`, `setSigner`, `setPaused`, `setCaps(wallet, global)` within
+- Owner: `setSitePrice` (never 0), `setTreasury` (must take ETH: `TreasuryRefusesEth`), `setSigner`, `setPaused`, `setCaps(wallet, global)` within
   `MAX_WALLET_DAILY_CAP` (3,500 $MINE) and `MAX_DAILY_CAP()` (the vault's 35,000), `setUpgradeCosts` (each 1 wei to
   1,000,000 $MINE), `setRates` (each 10% to 100%, never lower for a higher level), `setUpgradeBurnBps` (0-100%),
   `addLevel(cost, rate)` (up to 20 levels, never fewer), `sweep(token, to)` for tokens sent by mistake, and upgrades.
@@ -83,10 +83,13 @@ the vault caps what can be minted at 35,000 a day.
 
 **MineVault** (not upgradeable): `release(to, amount)` only from `distributor` (MiningSites), at most `DAILY_LIMIT`
 (35,000) a UTC day and `TOTAL_LIMIT` (10,500,000) in all; `released`, `releasedToday()`, `remaining()`, `roomToday()`.
-Owner: `proposeDistributor`, `cancelDistributor`, `acceptDistributor` (after `DISTRIBUTOR_DELAY`, 2 days), `sweep`.
+Owner: `proposeDistributor` (an address, code or not: a proxy's predicted address), `cancelDistributor`,
+`acceptDistributor` (after `DISTRIBUTOR_DELAY`, 2 days, and only a contract whose `owner()` is the vault's owner),
+`sweep`. A replacement MiningSites proxy is deployed with `initialize` in its constructor (it accepts the vault's
+pending distributor), never left uninitialised.
 
-**CrafterLevels** (UUPS proxy): `levelOf(tokenId)` (1 until upgraded), `upgrade(tokenId)` by the token's holder for
-`upgradeCost(level + 1)` (75% burned; costs 2,310, 9,471, 38,831, 159,207 at launch, each at most 2,000,000), `maxLevel`,
+**CrafterLevels** (UUPS proxy): `levelOf(tokenId)` (1 until upgraded), `upgrade(tokenId, maxCost)` by the token's
+holder for `upgradeCost(level + 1)`, never more than `maxCost` (75% burned; costs 2,310, 9,471, 38,831, 159,207 at launch, each at most 2,000,000), `maxLevel`,
 `upgradeCosts`, `upgradeBurnBps`; event `CrafterUpgraded(uint256 indexed tokenId, address indexed holder, uint256 level,
 uint256 cost, uint256 burned)`. `attributesOf(tokenId)` is the Crafter's "Level" trait. Owner: costs, burn share,
 `addLevel(cost)`, treasury, upgrades.

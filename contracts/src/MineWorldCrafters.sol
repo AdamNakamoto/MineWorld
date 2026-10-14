@@ -41,15 +41,18 @@ interface ITransferValidator721 {
 ///         The 5% royalty is enforced. Every transfer is checked by a transfer validator (OpenSea's creator fee
 ///         enforcement registry at launch), so marketplaces can only move Crafters in sales that pay it. Holders can
 ///         always move their own Crafters between wallets. The validator can be replaced (if marketplaces move to a
-///         new one) but never removed, and the 5% rate is fixed.
+///         new one) but never set to nothing, and the 5% rate is fixed. Enforcement is only as strict as that
+///         validator, though, and the owner chooses it: see `setTransferValidator`.
 /// @dev Trust: the owner sets the price (0 allowed), the per-wallet mint limit, the treasury (mint money and the
 ///      royalty), the collection's website and social links, its picture and banner and its page (contractURI), the
 ///      attributes extension (its traits are added to every token's metadata as it writes them), and the transfer
 ///      validator, which decides which transfers between wallets go through: it can't move anyone's Crafters, but a
-///      bad one could hold transfers up (mints never touch it). The links, pictures and extension can be changed at
-///      any time, sold out or not. The art, the rarity and the 5% royalty can't be changed. The owner
-///      reveals with the committed secret and can't pick looks (see `reveal`). Ownership moves in two steps and can't
-///      be renounced, so the links can always be updated. Holders' Crafters and ETH are never within the owner's reach.
+///      bad one could hold transfers up (mints never touch it), and a lax one, or a looser policy for this collection
+///      on OpenSea's registry, relaxes the royalty's enforcement. The links, pictures and extension can be changed at
+///      any time, sold out or not. The art, the rarity and the 5% royalty rate can't be changed. The owner reveals
+///      with the committed secret and a block hash fixed when the sale closed, so it can't pick looks (see `reveal`).
+///      Ownership moves in two steps and can't be renounced, so the links can always be updated. Holders' Crafters
+///      and ETH are never within the owner's reach.
 contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICrafterMetadata {
     using Strings for uint256;
 
@@ -60,9 +63,27 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
     uint96 public constant ROYALTY_BPS = 500;
     /// @notice The longest website, social or picture link (bytes).
     uint256 public constant MAX_LINK = 256;
+    /// @notice The gas the attributes extension gets for each token's traits (plenty for CrafterLevels' few
+    ///         thousand), whatever gas tokenURI was given: a gas-hungry extension can't starve the picture.
+    uint256 public constant EXTENSION_GAS = 300_000;
+    /// @notice The longest traits the extension can add (bytes); longer ones are left out.
+    uint256 public constant MAX_EXTRA_ATTRIBUTES = 4_096;
 
     /// @dev validateTransfer(address,address,address,uint256)
     bytes4 private constant VALIDATE_TRANSFER = 0xcaee23ea;
+
+    /// @notice Where the reveal stands: `None` (the sale is open, or was never closed), `Waiting` (closed: the reveal
+    ///         block's hash doesn't exist yet), `Sealable` (it does: anyone can `seal` it now), `Expired` (nobody
+    ///         sealed it within 256 blocks: closing the sale again fixes a new reveal block), `Sealed` (the entropy is
+    ///         fixed for good: the owner can reveal), `Revealed`.
+    enum RevealStatus {
+        None,
+        Waiting,
+        Sealable,
+        Expired,
+        Sealed,
+        Revealed
+    }
 
     /// @notice Draws every Crafter (fixed for good).
     CrafterArt public immutable art;
@@ -73,8 +94,11 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
     /// @notice How many Crafters one wallet can mint in all.
     uint256 public walletLimit = 10;
     bool public saleOpen;
-    /// @notice The block the sale was last closed in; the reveal must come in a later one.
-    uint256 public saleClosedAt;
+    /// @notice The block whose hash the reveal mixes with the secret: the block the sale was last closed in (0 while
+    ///         the sale is open or was never closed). See `reveal`.
+    uint256 public revealBlock;
+    /// @notice blockhash(revealBlock), recorded for good by `seal` (0 until then).
+    bytes32 public sealedHash;
     uint256 public totalMinted;
     /// @notice How many Crafters each wallet has minted (transfers don't change it).
     mapping(address => uint256) public mintedBy;
@@ -97,6 +121,11 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
 
     event Revealed(uint256 seed);
     event SaleOpen(bool open);
+    /// @notice The sale closed in `revealBlock`: its hash, sealed once it exists, is the reveal's entropy. (On an
+    ///         Arbitrum chain a log's block number is the chain's own, not `block.number`: this says which it is.)
+    event RevealBlockSet(uint256 revealBlock);
+    /// @notice The reveal block's hash is recorded for good: the looks depend only on it and the committed secret.
+    event Sealed(uint256 revealBlock, bytes32 blockHash);
     event PriceSet(uint256 price);
     event WalletLimitSet(uint256 limit);
     event TreasurySet(address indexed treasury);
@@ -120,12 +149,26 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
     error NotRevealed();
     error AlreadyRevealed();
     error SaleStillOpen();
+    /// @notice The reveal block's hash doesn't exist yet: wait for a later block.
     error RevealTooSoon();
+    /// @notice The sale was never closed, so there's no reveal block yet (`setSaleOpen(false)` fixes one).
+    error NoRevealBlock();
+    /// @notice Nobody sealed the reveal block within 256 blocks, so its hash can't be read any more: closing the sale
+    ///         again (`setSaleOpen(false)`) fixes a new one.
+    error RevealBlockExpired();
+    /// @notice The reveal block's hash is already sealed: the entropy is fixed and the sale can't reopen.
+    error AlreadySealed();
+    /// @notice The reveal block's hash exists but isn't sealed yet: until someone seals it (anyone can, `seal`) or it
+    ///         expires, the sale can't be reopened or closed again, so the owner can't swap it for another one.
+    error SealPending();
     error BadSecret();
     error ZeroAddress();
     error NotAContract();
     /// @notice The treasury can't be this contract (it refuses ETH, so no paid mint could go through).
     error BadTreasury();
+    /// @notice The treasury refused a plain call with no ETH (a contract with no receive or fallback, say), so it
+    ///         would refuse mint money too and every paid mint would fail.
+    error TreasuryRefusesEth();
     /// @notice A link is too long, or has a character that would break the collection's JSON (", \ or a control).
     error BadLink();
     /// @notice Ownership can only be handed over (two-step), never renounced: the links must stay updatable.
@@ -141,8 +184,7 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
         address validator_,
         CrafterArt art_
     ) ERC721("MineWorld Crafters", "CRAFTER") Ownable(owner_) {
-        if (treasury_ == address(0)) revert ZeroAddress();
-        if (treasury_ == address(this)) revert BadTreasury();
+        _checkTreasury(treasury_);
         if (address(art_).code.length == 0) revert NotAContract();
         treasury = treasury_;
         price = price_;
@@ -175,20 +217,60 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
 
     // ---------------------------------------------------------------- reveal
 
-    /// @notice Fix every Crafter's look, and end the sale for good. The committed secret is mixed with the previous
-    ///         block's hash, and the sale must have been closed in an earlier block than this one: that hash didn't
-    ///         exist yet while anyone could mint, so nobody (the owner included) could mint knowing a look. On
-    ///         Robinhood Chain, an Arbitrum chain, `block.number` follows the parent chain, so "an earlier block"
-    ///         means waiting for the next parent-chain block (about 12 seconds) after closing.
+    /// @notice Fix every Crafter's look, and end the sale for good: seed = keccak256(abi.encode(secret, sealedHash)).
+    ///         The secret was committed at deploy (`seedCommit`); `sealedHash` is the hash of `revealBlock`, the block
+    ///         the sale closed in, recorded by `seal` (this seals it first if nobody has). Neither depends on when the
+    ///         owner reveals, so the owner can't wait for a block it likes: one closed sale and one secret give one
+    ///         seed. That hash didn't exist while anyone could mint, so nobody (the owner included) could mint knowing
+    ///         a look; and once it exists the sale can't reopen or close again until it's sealed (and never after),
+    ///         so it can't be swapped for another.
+    ///
+    ///         Anyone should call `seal` as soon as the hash exists (a bot, a player, the game's panel): the chain only
+    ///         keeps a block hash for 256 blocks. If nobody seals it in time, closing the sale again fixes a new reveal
+    ///         block, which everyone sees (`RevealBlockSet`). Letting the hash expire unsealed is the only way to get
+    ///         a different one, so withholding is public, and anyone can stop it by sealing.
+    ///
+    ///         The trust left: on Robinhood Chain (an Arbitrum Orbit chain) `block.number` follows the parent chain,
+    ///         and `blockhash` is a pseudo-random value the chain derives from its own blocks, which its sequencer
+    ///         produces. The owner can't steer it; the sequencer, in principle, could.
     function reveal(uint256 secret) external onlyOwner {
         if (seed != 0) revert AlreadyRevealed();
-        if (saleOpen) revert SaleStillOpen();
-        if (block.number <= saleClosedAt) revert RevealTooSoon();
+        bytes32 h = sealedHash;
+        if (h == 0) h = _seal();
         if (keccak256(abi.encode(secret)) != seedCommit) revert BadSecret();
-        uint256 s = uint256(keccak256(abi.encode(secret, blockhash(block.number - 1))));
+        uint256 s = uint256(keccak256(abi.encode(secret, h)));
         seed = s == 0 ? 1 : s;
         emit Revealed(seed);
         if (totalMinted != 0) emit BatchMetadataUpdate(1, totalMinted);
+    }
+
+    /// @notice Record the reveal block's hash for good, once that block is over (and within the 256 blocks the chain
+    ///         keeps it): from then on the looks depend only on it and the committed secret, and the sale can never
+    ///         reopen. Anyone can call it, and should, promptly (see `reveal`).
+    function seal() external returns (bytes32) {
+        if (sealedHash != 0) revert AlreadySealed();
+        return _seal();
+    }
+
+    function _seal() private returns (bytes32 h) {
+        if (saleOpen) revert SaleStillOpen();
+        uint256 b = revealBlock;
+        if (b == 0) revert NoRevealBlock();
+        if (block.number <= b) revert RevealTooSoon();
+        h = blockhash(b);
+        if (h == 0) revert RevealBlockExpired();
+        sealedHash = h;
+        emit Sealed(b, h);
+    }
+
+    /// @notice Where the reveal stands (see `RevealStatus`): what a bot or the game's panel checks before sealing.
+    function revealStatus() public view returns (RevealStatus) {
+        if (seed != 0) return RevealStatus.Revealed;
+        if (sealedHash != 0) return RevealStatus.Sealed;
+        uint256 b = revealBlock;
+        if (b == 0) return RevealStatus.None;
+        if (block.number <= b) return RevealStatus.Waiting;
+        return blockhash(b) != 0 ? RevealStatus.Sealable : RevealStatus.Expired;
     }
 
     /// @notice A Crafter's traits once revealed: indexes into the tables of web/crafters-art.js (names from
@@ -208,15 +290,40 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
         return CrafterRules.rarity(t.background, t.hat);
     }
 
-    /// @notice The extra traits the attributes extension gives `tokenId`, as JSON objects separated by commas ("" with
-    ///         no extension, or if its call reverts; the owner picks the extension, which must return a string cheaply).
+    /// @notice The extra traits the attributes extension gives `tokenId`, as JSON objects separated by commas. "" with
+    ///         no extension, or if its answer can't be used: the call reverts or runs out of its EXTENSION_GAS, or
+    ///         returns anything but one well-formed ABI string of at most MAX_EXTRA_ATTRIBUTES bytes. So whatever the
+    ///         extension does, the metadata never breaks for it: at worst it shows no extra traits.
     function extraAttributes(uint256 tokenId) public view returns (string memory extra) {
         _requireOwned(tokenId);
         address x = attributesExtension;
         if (x == address(0)) return "";
-        try ICrafterAttributes(x).attributesOf(tokenId) returns (string memory a) {
-            extra = a;
-        } catch {}
+        bytes4 selector = ICrafterAttributes.attributesOf.selector;
+        uint256 gasStipend = EXTENSION_GAS;
+        uint256 maxLength = MAX_EXTRA_ATTRIBUTES;
+        assembly ("memory-safe") {
+            let m := mload(0x40)
+            mstore(m, selector)
+            mstore(add(m, 0x04), tokenId)
+            // A fixed stipend, and nothing copied back yet: only the parts read below are.
+            let ok := staticcall(gasStipend, x, m, 0x24, 0, 0)
+            let size := returndatasize()
+            // abi.encode(string): the offset 0x20, the length, then the bytes. Anything else is left out.
+            if and(ok, iszero(lt(size, 0x40))) {
+                returndatacopy(m, 0, 0x40)
+                let offset := mload(m)
+                let length := mload(add(m, 0x20))
+                if and(eq(offset, 0x20), and(iszero(gt(length, maxLength)), iszero(gt(add(0x40, length), size)))) {
+                    // The string at m: its length, then its bytes (the last word zeroed first, so no stray bytes
+                    // follow them), and the free memory pointer past it.
+                    mstore(m, length)
+                    mstore(add(add(m, 0x20), and(length, not(31))), 0)
+                    returndatacopy(add(m, 0x20), 0x40, length)
+                    mstore(0x40, add(add(m, 0x20), and(add(length, 31), not(31))))
+                    extra := m
+                }
+            }
+        }
     }
 
     /// @dev traitsOf in web/crafters.js. The token's place in the shuffled run gives a combination of hair, outfit,
@@ -347,7 +454,12 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
     }
 
     /// @notice Point the collection at a new validator, e.g. if marketplaces move to a new registry. It must be a
-    ///         contract: enforcement can be moved, never switched off.
+    ///         contract, so the collection always names one; but the owner can relax enforcement, plainly: a validator
+    ///         whose `validateTransfer` allows everything lets marketplaces skip the royalty, and on OpenSea's
+    ///         registry (the launch validator) the collection's owner can also change the collection's own policy
+    ///         (its list of authorizers, its security level). Any change shows on chain (`TransferValidatorUpdated`
+    ///         here; the registry's own events there). The 5% rate itself never changes. (No ERC-165 check: OpenSea's
+    ///         registry and Limit Break's validators, both on Robinhood Chain, share no interface id to require.)
     function setTransferValidator(address validator) external onlyOwner {
         _setValidator(validator);
     }
@@ -369,11 +481,22 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
 
     // ---------------------------------------------------------------- admin
 
+    /// @notice Open or close the mint. Closing fixes the reveal block: this one (`revealBlock`, see `reveal`).
+    ///         Opening clears it. Neither works once that block's hash exists and until it's sealed or expired
+    ///         (`SealPending`: anyone can seal it), nor ever after it's sealed or revealed. So closing ends the sale:
+    ///         from the next block anyone can seal, after which it never reopens. (It is not a pause.)
     function setSaleOpen(bool open) external onlyOwner {
         if (seed != 0) revert AlreadyRevealed();
+        if (sealedHash != 0) revert AlreadySealed();
+        if (revealStatus() == RevealStatus.Sealable) revert SealPending();
         saleOpen = open;
-        if (!open) saleClosedAt = block.number;
         emit SaleOpen(open);
+        if (open) {
+            revealBlock = 0;
+        } else {
+            revealBlock = block.number;
+            emit RevealBlockSet(block.number);
+        }
     }
 
     /// @notice The price of one Crafter in wei; 0 makes the mint free.
@@ -390,13 +513,27 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
         emit WalletLimitSet(limit);
     }
 
-    /// @notice Moves mint payments and the royalty together. The 5% rate never changes.
+    /// @notice Moves mint payments and the royalty together. The 5% rate never changes. The new treasury must take
+    ///         ETH: it is sent a plain call with no ETH first, and refused if that fails.
     function setTreasury(address treasury_) external onlyOwner {
-        if (treasury_ == address(0)) revert ZeroAddress();
-        if (treasury_ == address(this)) revert BadTreasury();
+        _checkTreasury(treasury_);
         treasury = treasury_;
         _setDefaultRoyalty(treasury_, ROYALTY_BPS);
         emit TreasurySet(treasury_);
+    }
+
+    /// @dev Never 0, never this contract, and it must accept a plain call with no ETH (a wallet, or a contract with a
+    ///      receive or fallback function): `mint` sends it ETH in the same call, so one that refused would stop every
+    ///      paid mint. (A contract whose fallback takes calls but not ETH would still pass; the owner is trusted not to
+    ///      choose one.)
+    function _checkTreasury(address treasury_) private {
+        if (treasury_ == address(0)) revert ZeroAddress();
+        if (treasury_ == address(this)) revert BadTreasury();
+        bool ok;
+        assembly ("memory-safe") {
+            ok := call(gas(), treasury_, 0, 0, 0, 0, 0)
+        }
+        if (!ok) revert TreasuryRefusesEth();
     }
 
     /// @notice The project's website (the collection's link on marketplaces) and a social link (in its description),

@@ -117,13 +117,21 @@ contract MineWorldCraftersTest is Test {
         crafters.setPrice(p);
     }
 
-    /// Close the sale, wait a block, reveal: the order the contract requires.
+    /// Close the sale (if it's open), wait a block, reveal: the order the contract requires.
     function _reveal() internal {
-        vm.prank(owner);
-        crafters.setSaleOpen(false);
-        vm.roll(block.number + 1);
+        if (crafters.saleOpen()) {
+            vm.prank(owner);
+            crafters.setSaleOpen(false);
+        }
+        vm.roll(vm.getBlockNumber() + 1);
         vm.prank(owner);
         crafters.reveal(SECRET);
+    }
+
+    /// blockhash(n) now, read in its own call (via-IR may otherwise move a blockhash or block.number read across a
+    /// vm.roll).
+    function hashOf(uint256 n) external view returns (bytes32) {
+        return blockhash(n);
     }
 
     // ---------------------------------------------------------------- mint
@@ -335,29 +343,34 @@ contract MineWorldCraftersTest is Test {
         crafters.traitsOf(3);
     }
 
-    /// Audit 25e6a0b3 #1: the reveal's entropy must not exist while anyone can still mint.
+    /// Audit 25e6a0b3 #1: the reveal's entropy must not exist while anyone can still mint. Closing fixes the reveal
+    /// block (this one); its hash only exists from the next block on.
     function test_RevealNeedsTheSaleClosedInAnEarlierBlock() public {
         _mint(alice, 2);
-        uint256 b = block.number + 3; // explicit numbers: via-IR may reuse one read of block.number
+        uint256 b = vm.getBlockNumber() + 3; // (a cheatcode: via-IR may reuse one read of block.number across a roll)
         vm.roll(b);
         vm.startPrank(owner);
         vm.expectRevert(MineWorldCrafters.SaleStillOpen.selector);
         crafters.reveal(SECRET);
+        vm.expectEmit(address(crafters));
+        emit MineWorldCrafters.RevealBlockSet(b);
         crafters.setSaleOpen(false);
-        assertEq(crafters.saleClosedAt(), b);
+        assertEq(crafters.revealBlock(), b);
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Waiting));
         vm.expectRevert(MineWorldCrafters.RevealTooSoon.selector);
         crafters.reveal(SECRET);
-        // Reopening and closing again moves the reveal to after the new close.
-        vm.roll(b + 1);
+        // Within that block its hash doesn't exist yet, so the sale can still reopen (clearing the reveal block) and
+        // close again.
         crafters.setSaleOpen(true);
+        assertEq(crafters.revealBlock(), 0);
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.None));
         crafters.setSaleOpen(false);
-        assertEq(crafters.saleClosedAt(), b + 1);
-        vm.expectRevert(MineWorldCrafters.RevealTooSoon.selector);
-        crafters.reveal(SECRET);
-        vm.roll(b + 2);
+        assertEq(crafters.revealBlock(), b);
+        vm.roll(b + 1);
         crafters.reveal(SECRET);
         vm.stopPrank();
         assertTrue(crafters.seed() != 0);
+        assertEq(crafters.sealedHash(), this.hashOf(b));
     }
 
     /// The audit's proof: the owner computes the seed from the secret and the current block, mints the next
@@ -375,18 +388,191 @@ contract MineWorldCraftersTest is Test {
         vm.stopPrank();
     }
 
-    /// The seed is the secret mixed with the previous block's hash, and never 0.
+    /// The seed is the secret mixed with the hash of the block the sale closed in (sealed by the reveal if nobody
+    /// sealed it before), however much later the reveal comes, and never 0.
     function test_SeedComesFromTheSecretAndTheBlock() public {
         _mint(alice, 1);
+        uint256 closed = vm.getBlockNumber();
         vm.prank(owner);
         crafters.setSaleOpen(false);
-        vm.roll(block.number + 5);
-        uint256 expected = uint256(keccak256(abi.encode(SECRET, blockhash(block.number - 1))));
+        vm.roll(closed + 5);
+        bytes32 h = this.hashOf(closed);
+        assertTrue(h != 0);
+        uint256 expected = uint256(keccak256(abi.encode(SECRET, h)));
+        vm.expectEmit(address(crafters));
+        emit MineWorldCrafters.Sealed(closed, h);
         vm.expectEmit(address(crafters));
         emit MineWorldCrafters.Revealed(expected);
         vm.prank(owner);
         crafters.reveal(SECRET);
         assertEq(crafters.seed(), expected);
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Revealed));
+    }
+
+    /// Audit 0792975e #1: anyone can seal the reveal block's hash once it exists, and the reveal then uses exactly
+    /// that, whoever reveals and whenever.
+    function test_AStrangerSealsTheRevealBlock() public {
+        _mint(alice, 3);
+        uint256 closed = vm.getBlockNumber() + 2;
+        vm.roll(closed);
+        // Nothing to seal while the sale is open, or before the reveal block is over.
+        vm.prank(bob);
+        vm.expectRevert(MineWorldCrafters.SaleStillOpen.selector);
+        crafters.seal();
+        vm.prank(owner);
+        crafters.setSaleOpen(false);
+        vm.prank(bob);
+        vm.expectRevert(MineWorldCrafters.RevealTooSoon.selector);
+        crafters.seal();
+
+        vm.roll(closed + 1);
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Sealable));
+        bytes32 h = this.hashOf(closed);
+        assertTrue(h != 0);
+        vm.expectEmit(address(crafters));
+        emit MineWorldCrafters.Sealed(closed, h);
+        vm.prank(bob);
+        assertEq(crafters.seal(), h);
+        assertEq(crafters.sealedHash(), h);
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Sealed));
+        vm.prank(alice);
+        vm.expectRevert(MineWorldCrafters.AlreadySealed.selector);
+        crafters.seal();
+
+        // Long after (past the 256 blocks the chain keeps a hash), the reveal still uses the sealed hash. Revealing
+        // stays the owner's alone (it needs the secret).
+        vm.roll(closed + 1_000);
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, bob));
+        crafters.reveal(SECRET);
+        vm.prank(owner);
+        crafters.reveal(SECRET);
+        assertEq(crafters.seed(), uint256(keccak256(abi.encode(SECRET, h))));
+        assertEq(this.hashOf(closed), 0, "(the chain itself no longer has it)");
+        vm.prank(bob);
+        vm.expectRevert(MineWorldCrafters.AlreadySealed.selector);
+        crafters.seal();
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Revealed));
+    }
+
+    /// A collection whose sale was never closed has no reveal block: nothing to seal or reveal yet.
+    function test_NoRevealBlockUntilTheSaleCloses() public {
+        MineWorldCrafters fresh =
+            new MineWorldCrafters(owner, treasury, 0, keccak256(abi.encode(SECRET)), address(validator), art);
+        assertFalse(fresh.saleOpen());
+        assertEq(fresh.revealBlock(), 0);
+        assertEq(uint8(fresh.revealStatus()), uint8(MineWorldCrafters.RevealStatus.None));
+        vm.roll(vm.getBlockNumber() + 3);
+        vm.expectRevert(MineWorldCrafters.NoRevealBlock.selector);
+        fresh.seal();
+        vm.prank(owner);
+        vm.expectRevert(MineWorldCrafters.NoRevealBlock.selector);
+        fresh.reveal(SECRET);
+        // Closing the (already closed) sale fixes one.
+        uint256 b = vm.getBlockNumber();
+        vm.prank(owner);
+        fresh.setSaleOpen(false);
+        assertEq(fresh.revealBlock(), b);
+    }
+
+    /// Once sealed, the sale never reopens and the entropy never changes: closing again can't re-arm it.
+    function test_NoReopeningAfterASeal() public {
+        _mint(alice, 2);
+        uint256 closed = vm.getBlockNumber();
+        vm.prank(owner);
+        crafters.setSaleOpen(false);
+        vm.roll(closed + 1);
+        crafters.seal(); // (this test contract: anyone)
+        bytes32 h = crafters.sealedHash();
+        vm.roll(closed + 300); // the reveal block's hash has expired by now: it doesn't matter, it's sealed
+        vm.startPrank(owner);
+        vm.expectRevert(MineWorldCrafters.AlreadySealed.selector);
+        crafters.setSaleOpen(true);
+        vm.expectRevert(MineWorldCrafters.AlreadySealed.selector);
+        crafters.setSaleOpen(false);
+        vm.stopPrank();
+        assertFalse(crafters.saleOpen());
+        assertEq(crafters.revealBlock(), closed);
+        assertEq(crafters.sealedHash(), h);
+        vm.prank(bob);
+        vm.expectRevert(MineWorldCrafters.SaleClosed.selector);
+        crafters.mint(1);
+        vm.prank(owner);
+        crafters.reveal(SECRET);
+        assertEq(crafters.seed(), uint256(keccak256(abi.encode(SECRET, h))));
+    }
+
+    /// Once the reveal block's hash exists, the owner can't swap it for another by reopening or closing again: only
+    /// sealing it (anyone) or letting it expire unsealed (in public, for 256 blocks) moves things on.
+    function test_TheHashCantBeSwappedOnceItExists() public {
+        _mint(alice, 2);
+        uint256 closed = vm.getBlockNumber();
+        vm.prank(owner);
+        crafters.setSaleOpen(false);
+        for (uint256 later = 1; later <= 256; later += 51) {
+            vm.roll(closed + later);
+            assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Sealable));
+            vm.startPrank(owner);
+            vm.expectRevert(MineWorldCrafters.SealPending.selector);
+            crafters.setSaleOpen(true);
+            vm.expectRevert(MineWorldCrafters.SealPending.selector);
+            crafters.setSaleOpen(false);
+            vm.stopPrank();
+        }
+        vm.roll(closed + 256); // the last block it can be sealed in
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Sealable));
+        assertEq(crafters.revealBlock(), closed);
+    }
+
+    /// Audit 0792975e #1: if nobody seals within 256 blocks, the hash can't be read any more, so neither the seal nor
+    /// the reveal works; closing the sale again (in public: RevealBlockSet) fixes a new reveal block.
+    function test_AnExpiredRevealBlockIsReArmedByClosingAgain() public {
+        _mint(alice, 2);
+        uint256 closed = vm.getBlockNumber();
+        vm.prank(owner);
+        crafters.setSaleOpen(false);
+        vm.roll(closed + 257);
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Expired));
+        vm.expectRevert(MineWorldCrafters.RevealBlockExpired.selector);
+        crafters.seal();
+        vm.prank(owner);
+        vm.expectRevert(MineWorldCrafters.RevealBlockExpired.selector);
+        crafters.reveal(SECRET);
+
+        uint256 again = closed + 257;
+        vm.expectEmit(address(crafters));
+        emit MineWorldCrafters.RevealBlockSet(again);
+        vm.prank(owner);
+        crafters.setSaleOpen(false);
+        assertEq(crafters.revealBlock(), again);
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Waiting));
+        vm.roll(again + 1);
+        vm.prank(bob);
+        crafters.seal();
+        bytes32 h = this.hashOf(again);
+        assertTrue(h != 0);
+        assertEq(crafters.sealedHash(), h);
+        vm.prank(owner);
+        crafters.reveal(SECRET);
+        assertEq(crafters.seed(), uint256(keccak256(abi.encode(SECRET, h))));
+
+        // An expired reveal block also lets the sale reopen (and the mint carry on) before closing again.
+        MineWorldCrafters other =
+            new MineWorldCrafters(owner, treasury, 0, keccak256(abi.encode(SECRET)), address(validator), art);
+        uint256 b = vm.getBlockNumber();
+        vm.prank(owner);
+        other.setSaleOpen(false);
+        vm.roll(b + 300);
+        vm.prank(owner);
+        other.setSaleOpen(true);
+        assertEq(other.revealBlock(), 0);
+        _mintFrom(other, bob, 1);
+        assertEq(other.totalMinted(), 1);
+    }
+
+    function _mintFrom(MineWorldCrafters c, address who, uint256 n) internal {
+        vm.prank(who);
+        c.mint(n);
     }
 
     function testFuzz_DifferentSeedsGiveValidTraits(uint256 secret) public {
@@ -826,6 +1012,161 @@ contract MineWorldCraftersTest is Test {
         this.newCrafters(address(0), address(validator), address(art));
     }
 
+    /// Audit 0792975e #4: a treasury that refuses ETH would stop every paid mint (and a free one, once ETH is forced
+    /// in), so it's refused up front, at deploy and in setTreasury. A wallet or a contract that takes ETH is fine.
+    function test_TreasuryMustTakeEth() public {
+        NoEthTreasury no = new NoEthTreasury();
+        vm.prank(owner);
+        vm.expectRevert(MineWorldCrafters.TreasuryRefusesEth.selector);
+        crafters.setTreasury(address(no));
+        vm.expectRevert(MineWorldCrafters.TreasuryRefusesEth.selector);
+        this.newCrafters(address(no), address(validator), address(art));
+        assertEq(crafters.treasury(), treasury);
+
+        EthTreasury yes = new EthTreasury();
+        vm.prank(owner);
+        crafters.setTreasury(address(yes));
+        _setPrice(PRICE);
+        _mint(alice, 2);
+        assertEq(address(yes).balance, 2 * PRICE);
+        (address to,) = crafters.royaltyInfo(1, 1 ether);
+        assertEq(to, address(yes));
+        address wallet = makeAddr("wallet");
+        vm.prank(owner);
+        crafters.setTreasury(wallet);
+        _mint(bob, 1);
+        assertEq(wallet.balance, PRICE);
+        this.newCrafters(address(yes), address(validator), address(art));
+        this.newCrafters(wallet, address(validator), address(art));
+    }
+
+    /// Audit 0792975e #6, a trust assumption stated plainly: the owner can relax enforcement by pointing the
+    /// collection at a validator that allows everything. It shows on chain; the 5% rate itself never changes.
+    function test_OwnerCanRelaxEnforcementInTheOpen() public {
+        _mint(alice, 1);
+        vm.prank(alice);
+        crafters.setApprovalForAll(market, true);
+        vm.prank(market);
+        vm.expectRevert(StrictValidator.UnauthorizedTransfer.selector);
+        crafters.transferFrom(alice, bob, 1);
+        PassValidator lax = new PassValidator();
+        vm.expectEmit(address(crafters));
+        emit ICreatorToken.TransferValidatorUpdated(address(validator), address(lax));
+        vm.prank(owner);
+        crafters.setTransferValidator(address(lax));
+        vm.prank(market);
+        crafters.transferFrom(alice, bob, 1);
+        assertEq(crafters.ownerOf(1), bob);
+        (, uint256 royalty) = crafters.royaltyInfo(1, 1 ether);
+        assertEq(royalty, 0.05 ether);
+    }
+
+    // ---------------------------------------------------------------- the attributes extension (audit 0792975e #3)
+
+    /// tokenURI(id) read the way a marketplace's eth_call reads it, with `gas`: whether it worked, and its JSON.
+    function _readURI(uint256 id, uint256 gas) internal view returns (bool ok, string memory json) {
+        bytes memory ret;
+        (ok, ret) = address(crafters).staticcall{gas: gas}(abi.encodeCall(MineWorldCrafters.tokenURI, (id)));
+        if (ok) json = Json.decodeURI(abi.decode(ret, (string)));
+    }
+
+    function _useExtension(address x) internal {
+        vm.prank(owner);
+        crafters.setAttributesExtension(x);
+    }
+
+    /// The eight traits and the rarity, and nothing from the extension after them.
+    function _assertNoExtra(string memory json) internal view {
+        assertEq(vm.parseJsonString(json, ".attributes[8].trait_type"), "Rarity");
+        assertFalse(vm.keyExistsJson(json, ".attributes[9]"), "the extension's answer should have been left out");
+    }
+
+    /// An extension stuck in a loop gets EXTENSION_GAS, not all the gas: tokenURI still renders, sealed or revealed,
+    /// under an RPC's usual eth_call budgets (10M and 30M), with no extra traits.
+    function test_GasHungryExtensionCantBreakTokenURI() public {
+        _mint(alice, 1);
+        _useExtension(address(new GasHogExtension()));
+        (bool ok, string memory json) = _readURI(1, 10_000_000);
+        assertTrue(ok, "sealed: tokenURI ran out of gas");
+        assertEq(vm.parseJsonString(json, ".attributes[0].value"), "Sealed");
+        assertFalse(vm.keyExistsJson(json, ".attributes[1]"));
+        _reveal();
+        assertEq(crafters.extraAttributes(1), "");
+        uint256[2] memory budgets = [uint256(10_000_000), 30_000_000];
+        for (uint256 i; i < budgets.length; i++) {
+            (ok, json) = _readURI(1, budgets[i]);
+            assertTrue(ok, "revealed: tokenURI ran out of gas");
+            _assertNoExtra(json);
+        }
+        assertEq(crafters.EXTENSION_GAS(), 300_000);
+    }
+
+    /// An extension that reverts, or returns nothing at all, adds nothing.
+    function test_RevertingOrSilentExtensionAddsNothing() public {
+        _mint(alice, 1);
+        _reveal();
+        address[2] memory xs = [address(new RevertingExtension()), address(new SilentExtension())];
+        for (uint256 i; i < xs.length; i++) {
+            _useExtension(xs[i]);
+            assertEq(crafters.extraAttributes(1), "");
+            (bool ok, string memory json) = _readURI(1, 10_000_000);
+            assertTrue(ok);
+            _assertNoExtra(json);
+        }
+    }
+
+    /// Only one well-formed ABI string is used: the offset 0x20, a length the data holds, at most
+    /// MAX_EXTRA_ATTRIBUTES bytes. Anything else (a short answer, another offset, a length past the data or a huge
+    /// one, an answer too long, a return bomb) is left out; a string of exactly the maximum shows.
+    function test_MalformedOrOversizedExtensionAddsNothing() public {
+        _mint(alice, 1);
+        _reveal();
+        RawExtension raw = new RawExtension();
+        _useExtension(address(raw));
+        string memory trait = '{"trait_type":"Mood","value":"Calm"}';
+        raw.set(abi.encode(trait));
+        assertEq(crafters.extraAttributes(1), trait, "a well-formed answer shows");
+
+        bytes[6] memory bad = [
+            abi.encodePacked(uint256(0x20)), // shorter than an offset and a length
+            abi.encode(uint256(0x40), uint256(0), trait), // a string, but not at 0x20
+            abi.encodePacked(uint256(0x20), uint256(100), bytes32("too short for 100")),
+            abi.encodePacked(uint256(0x20), type(uint256).max, bytes32("huge")),
+            abi.encodePacked(uint256(0x20), type(uint256).max - 0x1f), // a length that wraps past the data
+            abi.encode(_trait(crafters.MAX_EXTRA_ATTRIBUTES() + 1)) // one byte too long
+        ];
+        for (uint256 i; i < bad.length; i++) {
+            raw.set(bad[i]);
+            assertEq(crafters.extraAttributes(1), "", "a malformed answer was used");
+            (bool ok, string memory json) = _readURI(1, 10_000_000);
+            assertTrue(ok);
+            _assertNoExtra(json);
+        }
+
+        string memory longest = _trait(crafters.MAX_EXTRA_ATTRIBUTES());
+        raw.set(abi.encode(longest));
+        assertEq(crafters.extraAttributes(1), longest);
+        string memory full = Json.decodeURI(crafters.tokenURI(1));
+        assertEq(vm.parseJsonString(full, ".attributes[9].trait_type"), "Note");
+
+        _useExtension(address(new BombExtension()));
+        assertEq(crafters.extraAttributes(1), "");
+        (bool ok2, string memory json2) = _readURI(1, 30_000_000);
+        assertTrue(ok2);
+        _assertNoExtra(json2);
+    }
+
+    /// One JSON trait exactly `size` bytes long.
+    function _trait(uint256 size) internal pure returns (string memory) {
+        bytes memory pad = new bytes(size - 32);
+        for (uint256 i; i < pad.length; i++) {
+            pad[i] = "a";
+        }
+        string memory t = string.concat('{"trait_type":"Note","value":"', string(pad), '"}');
+        assert(bytes(t).length == size);
+        return t;
+    }
+
     function test_OwnerOnly() public {
         vm.startPrank(alice);
         bytes memory notOwner = abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice);
@@ -860,6 +1201,125 @@ contract RefuseAll {
     }
 }
 
+/// A validator that allows every transfer: what relaxing enforcement looks like.
+contract PassValidator {
+    function validateTransfer(address, address, address, uint256) external pure {}
+}
+
+/// A treasury with no receive or fallback: it refuses ETH (audit 0792975e #4).
+contract NoEthTreasury {}
+
+/// A treasury contract that takes ETH.
+contract EthTreasury {
+    receive() external payable {}
+}
+
+/// Attributes extensions that misbehave (audit 0792975e #3); none of them may break tokenURI.
+contract GasHogExtension {
+    function attributesOf(uint256) external pure returns (string memory) {
+        assembly {
+            for {} 1 {} {}
+        }
+        return "";
+    }
+}
+
+contract RevertingExtension {
+    function attributesOf(uint256) external pure returns (string memory) {
+        revert("no traits");
+    }
+}
+
+/// attributesOf exists but returns nothing.
+contract SilentExtension {
+    function attributesOf(uint256) external pure {}
+}
+
+/// Answers attributesOf (any call) with whatever bytes it was given.
+contract RawExtension {
+    bytes internal reply;
+
+    function set(bytes calldata r) external {
+        reply = r;
+    }
+
+    fallback() external {
+        bytes memory r = reply;
+        assembly {
+            return(add(r, 0x20), mload(r))
+        }
+    }
+}
+
+/// Answers with a megabyte: more memory than its gas can pay for.
+contract BombExtension {
+    fallback() external {
+        assembly {
+            return(0, 1000000)
+        }
+    }
+}
+
+/// Audit 0792975e #1, the auditor's proof as submitted.
+contract OkValidator {
+    function validateTransfer(address, address, address, uint256) external view {}
+}
+
+/// Fails on the current code: the revealed seed depends on which block the owner chooses to reveal in, so the owner
+/// can wait for a block whose seed gives chosen tokens the traits they want. Passes once the entropy is bound to a
+/// block fixed when the sale closes (or the reveal is otherwise made timing-independent).
+contract RevealSeedTest is Test {
+    address owner = makeAddr("owner");
+    address alice = makeAddr("alice");
+    uint256 secret = 12345;
+
+    function _collection() internal returns (MineWorldCrafters c) {
+        CrafterArt art = new CrafterArt();
+        OkValidator v = new OkValidator();
+        c = new MineWorldCrafters(owner, owner, 0, keccak256(abi.encode(secret)), address(v), art);
+        vm.prank(owner);
+        c.setSaleOpen(true);
+        vm.prank(alice);
+        c.mint(5);
+        vm.prank(owner);
+        c.setSaleOpen(false);
+    }
+
+    /// The same closed sale, revealed one block later or seven blocks later, must give every Crafter the same look.
+    function test_SeedDoesNotDependOnTheRevealBlock() public {
+        MineWorldCrafters c = _collection();
+        uint256 closed = block.number;
+        uint256 snap = vm.snapshotState();
+        vm.roll(closed + 1);
+        vm.prank(owner);
+        c.reveal(secret);
+        uint256 seedA = c.seed();
+        vm.revertToState(snap);
+        vm.roll(closed + 7);
+        vm.prank(owner);
+        c.reveal(secret);
+        uint256 seedB = c.seed();
+        assertEq(seedA, seedB, "the owner can pick among seeds by choosing the reveal block");
+    }
+
+    /// The specialists' version, re-run: however long the owner looks for a block that makes its own Crafter #1
+    /// Legendary, every reveal block gives the same seed (and so the same rarity).
+    function test_OwnerCantGrindItsOwnCrafterToLegendary() public {
+        MineWorldCrafters c = _collection();
+        uint256 closed = vm.getBlockNumber();
+        uint256 first;
+        for (uint256 later = 1; later <= 256; later += 5) {
+            uint256 snap = vm.snapshotState();
+            vm.roll(closed + later);
+            vm.prank(owner);
+            c.reveal(secret);
+            if (later == 1) first = c.seed();
+            assertEq(c.seed(), first, "a later reveal block gave another seed");
+            vm.revertToState(snap);
+        }
+    }
+}
+
 /// The registry's side of OpenSea's fee-checked sales, called by the SignedZone around a transfer.
 interface IAuthorizer {
     function beforeAuthorizedTransfer(address token, uint256 tokenId) external;
@@ -880,6 +1340,12 @@ contract MarketMove {
     function move(address token, address from, address to, uint256 id) external {
         IERC721(token).transferFrom(from, to, id);
     }
+}
+
+/// OpenSea's registry: the collection's policy there.
+interface IOpenSeaRegistry {
+    function getAuthorizerAccountsByCollection(address collection) external view returns (address[] memory);
+    function applyListToCollection(address collection, uint120 id) external;
 }
 
 /// @notice Against OpenSea's real creator fee enforcement registry on Robinhood Chain.
@@ -960,6 +1426,21 @@ contract MineWorldCraftersForkTest is Test {
         vm.expectRevert(UNAUTHORIZED);
         crafters.transferFrom(alice, bob, 2);
         assertEq(crafters.ownerOf(2), alice);
+    }
+
+    /// Audit 0792975e #6: nothing to register after deploy. A collection that never configured anything on OpenSea's
+    /// registry gets its default list, whose one authorizer is OpenSea's SignedZone, so the fee is enforced as the
+    /// tests above show. Only the collection's owner can change its policy there (the trust the docs state).
+    function test_Fork_EnforcedWithoutRegistering() public {
+        vm.skip(block.chainid != 4663);
+        address[] memory authorizers = IOpenSeaRegistry(REGISTRY).getAuthorizerAccountsByCollection(address(crafters));
+        assertEq(authorizers.length, 1);
+        assertEq(authorizers[0], SIGNED_ZONE);
+        vm.prank(alice);
+        vm.expectRevert();
+        IOpenSeaRegistry(REGISTRY).applyListToCollection(address(crafters), 0);
+        vm.prank(owner);
+        IOpenSeaRegistry(REGISTRY).applyListToCollection(address(crafters), 0); // (list 0: the default it has anyway)
     }
 
     /// The art renders on the real chain's EVM too (a view, as marketplaces call it).

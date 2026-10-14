@@ -27,6 +27,13 @@ const ERROR_TEXT = {
   BadQuantity: "Mint between 1 and 5 at a time.",
   WalletLimit: "That's as many Crafters as one wallet can mint.",
   NotRevealed: "Still sealed: the Crafters are revealed after the mint.",
+  SaleStillOpen: "The Crafters mint is still open.",
+  NoRevealBlock: "The Crafters mint hasn't closed yet.",
+  RevealTooSoon: "Not yet: the block the mint closed in isn't over. Try again in a few seconds.",
+  RevealBlockExpired: "Too late for this one: nobody locked in the reveal in time. The owner closes the mint again to fix a new reveal block.",
+  AlreadySealed: "Already locked in: every Crafter's look is fixed.",
+  SealPending: "The reveal's randomness is ready: lock it in first (anyone can).",
+  CostAboveMax: "The price just changed. Check the new price and try again.",
   Slippage: "The price moved past your slippage limit. Try again, or allow more slippage.",
   PartialFill: "The pool can't fill that much right now. Try a smaller amount.",
   DustSwap: "That amount is too small to trade.",
@@ -166,6 +173,8 @@ export async function connectChain() {
   const hash = { keccak256, encodeAbiParameters };
   const crafterTraits = new Map(); // token id -> traits, once revealed (they never change)
   const has = (c, fn) => c.abi.some((i) => i.type === "function" && i.name === fn);
+  /// How many arguments `fn` takes in this chain's ABI (upgrades name the most they'll pay since audit 0792975e).
+  const arity = (c, fn) => c.abi.find((i) => i.type === "function" && i.name === fn)?.inputs?.length ?? 0;
   async function snapshot() {
     const [sitePrice, paused, walletCap, dailyCap, paidToday, vault] = await Promise.all([
       read(C.sites, "sitePrice"), read(C.sites, "paused"), read(C.sites, "walletDailyCap"), read(C.sites, "dailyCap"),
@@ -174,11 +183,14 @@ export async function connectChain() {
     const s = { account, accounts, local: !!dep.local, devAccounts: !browserWallet, explorer: dep.explorer, sitePrice, paused, walletCap, dailyCap, paidToday, vault, trading: !!T };
     if (C.crafters) {
       const K = C.crafters;
-      const [price, saleOpen, minted, seed, max, limit] = await Promise.all([
+      const [price, saleOpen, minted, seed, max, limit, revealStatus] = await Promise.all([
         read(K, "price"), read(K, "saleOpen"), read(K, "totalMinted"), read(K, "seed"), read(K, "MAX_SUPPLY"),
         has(K, "walletLimit") ? read(K, "walletLimit") : null,
+        // MineWorldCrafters.RevealStatus: 0 none, 1 waiting, 2 sealable (anyone can lock it in), 3 expired, 4 sealed,
+        // 5 revealed.
+        has(K, "revealStatus") ? read(K, "revealStatus").then(Number) : null,
       ]);
-      s.crafters = { price, saleOpen, minted: Number(minted), seed, max: Number(max), limit: limit === null ? null : Number(limit), mine: [] };
+      s.crafters = { price, saleOpen, minted: Number(minted), seed, max: Number(max), limit: limit === null ? null : Number(limit), revealStatus, mine: [] };
     }
     if (!account) return s;
     const [eth, mine, siteAt, claimed, walletPaid, imd] = await Promise.all([
@@ -389,19 +401,25 @@ export async function connectChain() {
     },
     claimable: (total) => read(C.sites, "claimable", [account, total]),
     mintCrafters: (n, price) => send(C.crafters, "mint", [BigInt(n)], price * BigInt(n)),
+    /// Lock in the Crafters' reveal (MineWorldCrafters.seal): once the block the mint closed in is over, anyone can
+    /// record its hash for good, which fixes every Crafter's look (the owner then reveals). It should happen promptly.
+    sealReveal: () => send(C.crafters, "seal"),
     /// The logged-in wallet's $MINE (wei), or null when logged out.
     mineBalance: () => (account ? read(C.mine, "balanceOf", [account]) : Promise.resolve(null)),
     /// Raise your mining site one level for `cost` $MINE (MiningSites.upgradeCost of the next level, as shown):
-    /// approve exactly that, then upgradeSite. Resolves with the new level.
+    /// approve exactly that, then upgradeSite(cost): `cost` is also the most it may charge, so a price raised
+    /// meanwhile makes it fail (CostAboveMax) instead of charging more. Resolves with the new level.
     async upgradeSite(cost, opts = {}) {
-      const receipt = await payMine(C.sites, cost, "upgradeSite", [], { ...opts, what: " for the upgrade" });
+      const args = arity(C.sites, "upgradeSite") === 1 ? [cost] : [];
+      const receipt = await payMine(C.sites, cost, "upgradeSite", args, { ...opts, what: " for the upgrade" });
       return Number(event(C.sites, receipt, "SiteUpgraded")?.level ?? 0) || null;
     },
     /// Raise Crafter `id` one level for `cost` $MINE (CrafterLevels.upgradeCost of its next level, as shown): approve
-    /// exactly that, then upgrade(id). Resolves with its new level.
+    /// exactly that, then upgrade(id, cost), `cost` being the most it may charge. Resolves with its new level.
     async levelUp(id, cost, opts = {}) {
       if (!C.levels) throw new Error("Crafter levels aren't on this chain yet.");
-      const receipt = await payMine(C.levels, cost, "upgrade", [BigInt(id)], { ...opts, what: ` for Crafter #${id}` });
+      const args = arity(C.levels, "upgrade") === 2 ? [BigInt(id), cost] : [BigInt(id)];
+      const receipt = await payMine(C.levels, cost, "upgrade", args, { ...opts, what: ` for Crafter #${id}` });
       return Number(event(C.levels, receipt, "CrafterUpgraded")?.level ?? 0) || null;
     },
     newRef,

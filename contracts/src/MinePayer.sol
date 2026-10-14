@@ -60,6 +60,8 @@ abstract contract MinePayer is OwnedUUPS {
         return _payer().treasury;
     }
 
+    /// @notice Where what isn't burned goes from now on: never 0 nor this contract (and, where it is also paid ETH,
+    ///         an address that takes ETH: see MiningSites).
     function setTreasury(address treasury_) external onlyOwner {
         _setTreasury(treasury_);
     }
@@ -67,9 +69,14 @@ abstract contract MinePayer is OwnedUUPS {
     function _setTreasury(address treasury_) private {
         if (treasury_ == address(0)) revert ZeroAddress();
         if (treasury_ == address(this)) revert BadTreasury();
+        _checkTreasury(treasury_);
         _payer().treasury = treasury_;
         emit TreasurySet(treasury_);
     }
+
+    /// @dev Any further check on a new treasury (at initialize and in setTreasury), for a contract that also sends it
+    ///      ETH (MiningSites: the site price). None here: $MINE payments need nothing more.
+    function _checkTreasury(address) internal virtual {}
 
     function _checkBurn(uint256 burnBps) internal pure {
         if (burnBps > BPS) revert BadBurn();

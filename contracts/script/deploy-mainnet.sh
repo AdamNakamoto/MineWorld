@@ -35,6 +35,10 @@
 # SECRET_FILE (default ~/mineworldcraft-crafters-reveal-secret.txt, readable only by you; if it exists, the secret in
 # it is reused, so a retry keeps the same commit). It is never printed. Keep it in a password manager too: the Crafters
 # can only be revealed with it (reveal(secret)). A dry run uses a throwaway secret and saves nothing.
+#
+# The reveal, after the mint: setSaleOpen(false) fixes the reveal block (the block it lands in); from the next block
+# anyone calls seal() (cast send <crafters> "seal()", or the game's panel), within 256 blocks; then OWNER calls
+# reveal(secret). The looks depend only on the secret and that block's hash, never on when the reveal is sent.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.foundry/bin:$PATH"

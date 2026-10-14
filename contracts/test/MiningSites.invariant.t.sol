@@ -127,7 +127,7 @@ contract SitesHandler is SitesFixture {
         funded[p] += cost;
         vm.startPrank(p);
         token.approve(address(sites), cost);
-        sites.upgradeSite();
+        sites.upgradeSite(cost);
         vm.stopPrank();
         spent[p] += cost;
         burned += burn;
