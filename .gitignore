@@ -1,0 +1,10 @@
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+web/chain.json
+multiplayer/.dev.vars
+node_modules/
+.DS_Store
+.vercel
+.claude/
+multiplayer/.wrangler/

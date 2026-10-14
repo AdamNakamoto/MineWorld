@@ -1,0 +1,15 @@
+{
+  "name": "mineworldcraft-mp",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8790",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.149.0"
+  },
+  "dependencies": {
+    "viem": "^2.57.4"
+  }
+}

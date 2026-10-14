@@ -1,0 +1,21 @@
+# MineWorldCraft's shared world: a Worker in front of one Durable Object (src/index.js).
+name = "mineworldcraft-mp"
+main = "src/index.js"
+compatibility_date = "2025-10-01"
+
+[[durable_objects.bindings]]
+name = "WORLD"
+class_name = "World"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["World"]
+
+# The chain, once the contracts are deployed (until then the room still runs the world and counts earnings, but
+# signs no vouchers). The voucher key is a secret: `npx wrangler secret put MINING_KEY` (its address is MiningSites'
+# signer). Locally, ./dev.sh writes all of these to .dev.vars.
+[vars]
+# CHAIN_ID = "4663"
+# CHAIN_RPC = "https://robinhood-rpc.publicnode.com"
+# MINING_ADDRESS = "0x..."
+# MINERS_ADDRESS = "0x..."
