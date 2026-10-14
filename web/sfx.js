@@ -46,6 +46,11 @@ export const sfx = {
   hurt: () => tone(220, 0.25, 0.12, "sawtooth", 0.5),
   coin: () => { tone(988, 0.08, 0.06); setTimeout(() => tone(1319, 0.16, 0.06), 70); },
   win: () => [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => tone(f, 0.15, 0.06), i * 80)),
+  /// The rocket's engines: a long roar rising in pitch.
+  rocket: () => { noise(2.6, 160, 0.9, 0.5); setTimeout(() => noise(2.2, 260, 0.6, 0.5), 700); tone(70, 2.8, 0.05, "sawtooth", 3); },
+  /// A heavy blow on the ground (the boss's slam, a rock landing).
+  boom: (k = 1) => { noise(0.5, 90, 0.9 * k, 0.6); tone(55, 0.4, 0.12 * k, "sine", 0.5); },
+  chest: () => [392, 523, 659].forEach((f, i) => setTimeout(() => tone(f, 0.12, 0.06), i * 70)),
   get muted() { return muted; },
   toggle() { muted = !muted; try { localStorage.setItem("mwc:muted", muted ? "1" : "0"); } catch {} return muted; },
   unlock() { if (!muted) ac().resume?.(); },

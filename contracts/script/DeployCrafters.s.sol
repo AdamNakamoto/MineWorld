@@ -17,8 +17,10 @@ import {DevTransferValidator} from "./DevTransferValidator.sol";
 /// CRAFTERS_VALIDATOR (OpenSea's creator fee enforcement registry), CRAFTERS_WEBSITE and CRAFTERS_SOCIAL (the
 /// collection's links) and CRAFTERS_IMAGE and CRAFTERS_BANNER (its picture and banner URLs), all four optional: the
 /// owner can set them any time with setLinks and setCollectionImages. OPEN_SALE (false: open it later with
-/// setSaleOpen). The wallet that broadcasts owns the collection. On a bare local chain (../dev.sh without --fork)
-/// there's no registry, so it deploys DevTransferValidator instead.
+/// setSaleOpen). OWNER owns the collection (default: the wallet that broadcasts): set at deploy when nothing needs
+/// setting up afterwards, else handed over in two steps once it's set up, with the acceptOwnership call OWNER must
+/// then make printed (the reveal, later, is OWNER's too). On a bare local chain (../dev.sh without --fork) there's no
+/// registry, so it deploys DevTransferValidator instead.
 contract DeployCrafters is Script {
     /// OpenSea's StrictAuthorizedTransferSecurityRegistry, the validator its creator fee enforcement uses.
     address constant OPENSEA_REGISTRY = 0xA000027A9B2802E1ddf7000061001e5c005A0000;
@@ -34,20 +36,31 @@ contract DeployCrafters is Script {
         string memory image = vm.envOr("CRAFTERS_IMAGE", string(""));
         string memory banner = vm.envOr("CRAFTERS_BANNER", string(""));
 
+        bool openSale = vm.envOr("OPEN_SALE", false);
+        // Settings only the owner can make after the deploy (the wallet limit starts at 10).
+        bool setUp = walletLimit != 10 || bytes(website).length != 0 || bytes(social).length != 0
+            || bytes(image).length != 0 || bytes(banner).length != 0 || openSale;
+
         vm.startBroadcast();
         (, address deployer,) = vm.readCallers();
+        address owner = vm.envOr("OWNER", deployer);
         if (validator.code.length == 0 && block.chainid != 4663) validator = address(new DevTransferValidator());
         CrafterArt art = new CrafterArt();
-        crafters = new MineWorldCrafters(deployer, treasury, price, commit, validator, art);
+        crafters = new MineWorldCrafters(setUp ? deployer : owner, treasury, price, commit, validator, art);
         if (walletLimit != crafters.walletLimit()) crafters.setWalletLimit(walletLimit);
         if (bytes(website).length != 0 || bytes(social).length != 0) crafters.setLinks(website, social);
         if (bytes(image).length != 0 || bytes(banner).length != 0) crafters.setCollectionImages(image, banner);
-        if (vm.envOr("OPEN_SALE", false)) crafters.setSaleOpen(true);
+        if (openSale) crafters.setSaleOpen(true);
+        if (crafters.owner() != owner) crafters.transferOwnership(owner);
         vm.stopBroadcast();
         console2.log("Crafters", address(crafters));
         console2.log("CrafterArt", address(art));
         console2.log("  validator", validator);
         console2.log("  owner", crafters.owner());
+        if (crafters.pendingOwner() != address(0)) {
+            console2.log("  pending owner (it must accept)", crafters.pendingOwner());
+            console2.log(string.concat('    cast send ', vm.toString(address(crafters)), ' "acceptOwnership()"'));
+        }
         console2.log("  treasury", crafters.treasury());
         console2.log("  price (wei)", crafters.price());
         console2.log("  wallet limit", crafters.walletLimit());

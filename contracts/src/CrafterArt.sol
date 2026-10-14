@@ -62,6 +62,18 @@ library CrafterRules {
         return _pick(x, 0x0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0028_003c, 2, 100);
     }
 
+    /// @notice rarityOf() in web/crafters.js: 0 Common 68.8%, 1 Rare 25.2%, 2 Legendary 6% (by the weights). It
+    ///         depends on the background and the hat alone, so it's kept as a table of the two: 2 bits each, at 2 *
+    ///         (background * 10 + hat).
+    uint256 internal constant RARITIES = 3;
+
+    /// @notice The rarity (0 Common, 1 Rare, 2 Legendary) of a Crafter with background `bg` and hat `hatIndex`.
+    ///         Indexes past their tables give nonsense: callers check them first.
+    function rarity(uint256 bg, uint256 hatIndex) internal pure returns (uint8) {
+        // (64 hex digits: 40 would make an address literal)
+        return uint8((0x000000000000000000000000aaaaa55555540005400054000540005400054000 >> (2 * (bg * 10 + hatIndex))) & 3);
+    }
+
     /// @dev pick() in web/crafters.js: `x % total`, walked through the weights (16 bits each, first option lowest).
     function _pick(uint256 x, uint256 weights, uint256 n, uint256 total) private pure returns (uint8) {
         uint256 r = x % total;
@@ -78,7 +90,7 @@ library CrafterRules {
 /// @notice MineWorld Crafters' pictures, drawn on chain: every Crafter as a 24 x 24 pixel-art SVG, painted layer by
 ///         layer from the masks and palettes of web/crafters-art.js (outfit, face, ink, eyes, blush, hair, hat) and
 ///         written exactly as svgOf() in web/crafters.js writes it. Also the sealed picture shown before the reveal,
-///         and the trait names marketplaces list. Holds no state and has no owner.
+///         the trait names marketplaces list, and each Crafter's rarity. Holds no state and has no owner.
 contract CrafterArt {
     /// @notice A trait index past the end of its table.
     error BadTraits();
@@ -255,7 +267,7 @@ contract CrafterArt {
         hex"313031370e003261326133340f00386538653961110037613761383612006432356266661600663563383332";
 
     /// @dev The trait names, back to back (Background from 0, Skin from 8, Eyes from 13, Gaze from 19, Blush from 21,
-    ///      Hair from 23, Hat from 59, Outfit from 69), and where each one ends (uint16).
+    ///      Hair from 23, Hat from 59, Outfit from 69, Rarity from 85), and where each one ends (uint16).
     bytes private constant NAMES =
         "SkyMintPeachLavenderButterStoneNightGoldFairLightTanBrownDeepBlueTealGreyBrownGreenVioletLeftRight"
         "RosySoftLong BrownLong BlackLong BlondeLong GingerLong PurpleLong GreenLong PinkLong Blue"
@@ -265,12 +277,12 @@ contract CrafterArt {
         "Bucket PinkBucket MintBucket SkyCap BlackCap RedCap GreenHard Hat YellowHard Hat Orange"
         "Hard Hat WhiteJacket CoralJacket TealJacket MustardJacket DenimHoodie CharcoalHoodie Red"
         "Hoodie ForestHoodie CreamOveralls PlumOveralls DenimOveralls GreenOveralls BrownSuit PurpleSuit Navy"
-        "Suit GreySuit Maroon";
+        "Suit GreySuit MaroonCommonRareLegendary";
     bytes private constant NAME_ENDS =
         hex"00030007000c0014001a001f00240028002c003100340039003d004100450049004e00530059005d00620066006a0074"
         hex"007e00890094009f00a900b200bb00c700d000d900e300ed00f701000108011001190122012b0135013f01490152015a"
         hex"0162016b01760181018d019901a501b001ba01c401cf01d301de01e901f301fc0203020c021b022a02380244024f025d"
-        hex"026902780282028f029b02a802b602c402d202dd02e602ef02fa";
+        hex"026902780282028f029b02a802b602c402d202dd02e602ef02fa03000304030d";
 
     /// @notice The Crafter's picture: an SVG of 24 x 24 pixels, the same bytes as svg(traits) in web/crafters.js.
     function render(Traits calldata t) external pure returns (string memory) {
@@ -301,7 +313,7 @@ contract CrafterArt {
     }
 
     /// @notice The traits as marketplaces list them: a JSON array of {"trait_type", "value"} in the order of
-    ///         attributes() in web/crafters.js (Background, Skin, Eyes, Gaze, Blush, Hair, Hat, Outfit).
+    ///         attributes() in web/crafters.js (Background, Skin, Eyes, Gaze, Blush, Hair, Hat, Outfit, Rarity).
     function attributes(Traits calldata t) external pure returns (string memory) {
         _check(t);
         bytes memory names = NAMES;
@@ -323,15 +335,23 @@ contract CrafterArt {
             _name(names, ends, 59 + uint256(t.hat)),
             '"},{"trait_type":"Outfit","value":"',
             _name(names, ends, 69 + uint256(t.outfit)),
+            '"},{"trait_type":"Rarity","value":"',
+            _name(names, ends, 85 + uint256(CrafterRules.rarity(t.background, t.hat))),
             '"}]'
         );
     }
 
-    /// @notice A trait's name: `kind` in the attributes' order (0 Background, 1 Skin, 2 Eyes, 3 Gaze, 4 Blush, 5 Hair, 6 Hat, 7 Outfit).
+    /// @notice A Crafter's rarity: 0 Common, 1 Rare, 2 Legendary (rarityOf() in web/crafters.js).
+    function rarityOf(Traits calldata t) external pure returns (uint8) {
+        _check(t);
+        return CrafterRules.rarity(t.background, t.hat);
+    }
+
+    /// @notice A trait's name: `kind` in the attributes' order (0 Background, 1 Skin, 2 Eyes, 3 Gaze, 4 Blush, 5 Hair, 6 Hat, 7 Outfit, 8 Rarity).
     function traitName(uint256 kind, uint256 index) external pure returns (string memory) {
-        if (kind >= 8) revert BadTraits();
-        uint256 first = (0x0045_003b_0017_0015_0013_000d_0008_0000 >> (16 * kind)) & 0xffff;
-        uint256 count = (0x0010_000a_0024_0002_0002_0006_0005_0008 >> (16 * kind)) & 0xffff;
+        if (kind >= 9) revert BadTraits();
+        uint256 first = (0x0055_0045_003b_0017_0015_0013_000d_0008_0000 >> (16 * kind)) & 0xffff;
+        uint256 count = (0x0003_0010_000a_0024_0002_0002_0006_0005_0008 >> (16 * kind)) & 0xffff;
         if (index >= count) revert BadTraits();
         return _name(NAMES, NAME_ENDS, first + index);
     }

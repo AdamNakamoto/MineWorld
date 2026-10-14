@@ -6,10 +6,16 @@
 // degrees), and z runs north to south by the Mercator projection, which keeps shapes true everywhere (the town is
 // round, not squashed) and fits a square world exactly between 85 degrees north and south. What's left, round the
 // poles, comes back transparent for the globe to cover with ice.
+//
+// The rocket's zones (zonegen.js) are drawn the same way, from each column's top block.
 
 import { column, townBlock, TOWN_R, PLAINS, FOREST, DESERT, SNOWY, PEAKS, MEADOW, DARK_FOREST, TAIGA, BEACH, rand } from "./worldgen.js";
-import { AIR, GRASS, DIRT, STONE, COBBLE, SAND, GRAVEL, LOG, LEAVES, PLANKS, WATER, GLASS, BRICKS, LAMP, ROOF, SNOW } from "./blocks.js";
+import {
+  AIR, GRASS, DIRT, STONE, COBBLE, SAND, GRAVEL, LOG, LEAVES, PLANKS, WATER, GLASS, BRICKS, LAMP, ROOF, SNOW, SANDSTONE,
+  BASALT, EMBER, ASH, RED_SAND, RED_CLAY, PALE_CLAY, DEEP_ROCK, PAD_PLATE,
+} from "./blocks.js";
 import { WORLD, SEA, TOWN, wrapDelta } from "./rules.js";
+import { zoneSurface } from "./zonegen.js";
 
 const hex = (c) => [(c >> 16) & 255, (c >> 8) & 255, c & 255];
 const BIOME = [];
@@ -23,10 +29,14 @@ const TOWN_COLOUR = { [ROOF]: hex(0xb4463a), [PLANKS]: hex(0xb08a55), [LOG]: hex
   [GRAVEL]: hex(0x8f8a84), [WATER]: hex(0x3f8fd0), [GLASS]: hex(0xcfe8f0), [LAMP]: hex(0xffe9a0), [LEAVES]: hex(0x3f8a36),
   [SNOW]: hex(0xf2f6f8) };
 const SHALLOW = hex(0x3d93d4), DEEP = hex(0x163f7c);
+const ZONE_COLOUR = { ...TOWN_COLOUR, [GRASS]: hex(0x6aa04a), [DEEP_ROCK]: hex(0x4a4c54), [BASALT]: hex(0x3e3e46),
+  [ASH]: hex(0x707074), [EMBER]: hex(0xff8a2a), [RED_SAND]: hex(0xc66a36), [RED_CLAY]: hex(0xa34a2e),
+  [PALE_CLAY]: hex(0xdcbfa0), [SANDSTONE]: hex(0xd6cb95), [PAD_PLATE]: hex(0x9aa0aa) };
 
 /// The planet as w x h RGBA pixels, w across the 360 degrees of longitude (x) and h down the 180 degrees of latitude,
-/// north first: z by Mercator, rows past the world's edge (near the poles) transparent.
-export function planetMap(w, h) {
+/// north first: z by Mercator, rows past the world's edge (near the poles) transparent. `zone`: which planet.
+export function planetMap(w, h, zone = "home") {
+  if (zone !== "home") return zoneMap(w, h, zone);
   const out = new Uint8Array(w * h * 4);
   const H = new Float32Array(w * h);
   const sx = WORLD / w;
@@ -71,6 +81,50 @@ export function planetMap(w, h) {
         shade = 1 + ((l - r) / (2 * sx) + (u - d) / sz) * 0.12;
         shade = Math.max(0.7, Math.min(1.25, shade)) + Math.max(0, c.h - 70) * 0.004;
         if (rand(x, 3, z, 91) < (TREES[c.biome] ?? 0)) shade *= 0.72;
+      }
+      out[k * 4] = Math.min(255, rgb[0] * shade);
+      out[k * 4 + 1] = Math.min(255, rgb[1] * shade);
+      out[k * 4 + 2] = Math.min(255, rgb[2] * shade);
+      out[k * 4 + 3] = 255;
+    }
+  }
+  return out;
+}
+
+/// A zone's picture, as planetMap: each column's top block, shaded by the slope and a little paler up high.
+function zoneMap(w, h, zone) {
+  const out = new Uint8Array(w * h * 4);
+  const sx = WORLD / w;
+  const zOf = new Float64Array(h);
+  for (let j = 0; j < h; j++) {
+    const lat = ((90 - ((j + 0.5) / h) * 180) * Math.PI) / 180;
+    zOf[j] = WORLD / 2 - (Math.log(Math.tan(Math.PI / 4 + lat / 2)) / (2 * Math.PI)) * WORLD;
+  }
+  const inside = (j) => zOf[j] >= 0 && zOf[j] < WORLD;
+  const tops = new Array(w * h), H = new Float32Array(w * h);
+  for (let j = 0; j < h; j++) {
+    if (!inside(j)) continue;
+    for (let i = 0; i < w; i++) {
+      const t = zoneSurface(zone, Math.floor((i + 0.5) * sx), Math.floor(zOf[j]));
+      tops[j * w + i] = t;
+      H[j * w + i] = t.h;
+    }
+  }
+  for (let j = 0; j < h; j++) {
+    if (!inside(j)) continue;
+    const up = inside(j - 1) ? j - 1 : j, down = inside(j + 1) ? j + 1 : j;
+    const sz = Math.max(1, zOf[down] - zOf[up]);
+    for (let i = 0; i < w; i++) {
+      const k = j * w + i, t = tops[k];
+      let rgb = ZONE_COLOUR[t.b] ?? hex(0x8a8a8a), shade = 1;
+      if (t.b === WATER) {
+        const d = Math.min(1, (t.depth ?? 0) / 22);
+        rgb = [0, 1, 2].map((n) => SHALLOW[n] + (DEEP[n] - SHALLOW[n]) * d);
+      } else if (t.b !== EMBER) {
+        const l = H[j * w + ((i + w - 1) % w)], r = H[j * w + ((i + 1) % w)];
+        shade = 1 + ((l - r) / (2 * sx) + (H[up * w + i] - H[down * w + i]) / sz) * 0.12;
+        shade = Math.max(0.7, Math.min(1.25, shade)) + Math.max(0, t.h - 70) * 0.004;
+        if (t.cave) shade *= 0.62;
       }
       out[k * 4] = Math.min(255, rgb[0] * shade);
       out[k * 4 + 1] = Math.min(255, rgb[1] * shade);

@@ -7,6 +7,7 @@ import {MineHook} from "../src/MineHook.sol";
 import {MineToken} from "../src/MineToken.sol";
 import {MineEthRouter} from "../src/MineEthRouter.sol";
 import {MiningSites} from "../src/MiningSites.sol";
+import {MineVault} from "../src/MineVault.sol";
 import {DeployLib} from "../script/DeployLib.sol";
 import {RobinhoodConfig, MineDeployer} from "../script/Deploy.s.sol";
 
@@ -20,7 +21,7 @@ interface IImdAdmin {
 ///         World's StampHook fork tests).
 ///   forge test --match-contract MineHookForkTest --fork-url robinhood
 /// Skipped when not forked.
-contract MineHookForkTest is Test {
+contract MineHookForkTest is Test, MineDeployer {
     MineHook hook;
     MineToken mine;
     MiningSites sites;
@@ -34,7 +35,7 @@ contract MineHookForkTest is Test {
             type(MineHook).creationCode,
             abi.encode(
                 RobinhoodConfig.POOL_MANAGER, RobinhoodConfig.IMD, address(this), feeRecipient,
-                DeployLib.startTickForMarketCap(5_000e18, 1_000_000_000e18), uint256(500_000_000e18),
+                DeployLib.startTickForMarketCap(5_000e18, 21_000_000e18), uint256(10_500_000e18),
                 MineHook.ImdEthPool(RobinhoodConfig.IMD_ETH_FEE, RobinhoodConfig.IMD_ETH_SPACING, address(0))
             )
         );
@@ -46,10 +47,11 @@ contract MineHookForkTest is Test {
         require(deployed == expected, "hook address");
         hook = MineHook(deployed);
         ethRouter = MineEthRouter(payable(hook.ethRouter()));
-        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
-        sites = new MiningSites(IERC20(predicted), address(this), feeRecipient, makeAddr("signer"), 0.005 ether, 5_000e18, 1_000_000e18);
-        mine = new MineToken(address(hook), address(sites));
-        require(address(mine) == predicted, "predicted token");
+        Game memory g = _deployGame(
+            address(this), address(this), address(hook), Sites(feeRecipient, makeAddr("signer"), 0.005 ether, 1_500e18, 35_000e18)
+        );
+        mine = MineToken(g.token);
+        sites = MiningSites(g.sites);
         hook.openPool(address(mine));
         vm.deal(alice, 1 ether);
     }
@@ -106,31 +108,37 @@ contract LaunchForkTest is Test, MineDeployer {
 
     function test_Fork_FullLaunch() public {
         vm.skip(block.chainid != 4663);
-        uint256 startMcap = _usdToImd(5_000); // $5,000 for all 1B $MINE, in IMD at today's prices
-        Sites memory s = Sites(treasury, vm.addr(SIGNER_KEY), 0.005 ether, 5_000e18, 1_000_000e18);
-        Launch memory l = _launch(address(this), feeRecipient, startMcap, s);
+        uint256 startMcap = _usdToImd(5_000); // $5,000 for all 21M $MINE, in IMD at today's prices
+        Sites memory s = Sites(treasury, vm.addr(SIGNER_KEY), 0.005 ether, 1_500e18, 35_000e18);
+        address owner = makeAddr("owner");
+        Launch memory l = _launch(address(this), owner, feeRecipient, startMcap, s);
         MineHook hook = MineHook(l.hook);
-        MineToken mine = MineToken(l.token);
-        MiningSites sites = MiningSites(l.sites);
+        MineToken mine = MineToken(l.game.token);
+        MiningSites sites = MiningSites(l.game.sites);
 
         // Linked and renounced as planned.
+        address token = l.game.token;
         assertEq(uint160(l.hook) & 0x3FFF, RobinhoodConfig.HOOK_FLAGS);
         assertEq(hook.owner(), address(0), "the hook is renounced");
         assertEq(hook.feeRecipient(), feeRecipient);
-        assertEq(hook.token(), l.token);
-        assertEq(address(sites.token()), l.token);
-        assertEq(sites.owner(), address(this));
+        assertEq(hook.token(), token);
+        assertEq(mine.owner(), address(0), "the token is renounced");
+        assertEq(mine.minter(), l.game.vault);
+        assertEq(address(sites.token()), token);
+        assertEq(sites.owner(), owner);
+        assertEq(MineVault(l.game.vault).owner(), owner);
         assertEq(sites.treasury(), treasury);
         assertEq(mine.balanceOf(l.hook), 0, "the pool half is in the pool");
-        assertEq(mine.balanceOf(address(RobinhoodConfig.POOL_MANAGER)) + mine.balanceOf(address(0xdEaD)), 500_000_000e18);
-        assertEq(sites.vaultBalance(), 500_000_000e18);
-        assertApproxEqRel(hook.marketCap(l.token), startMcap, 0.025e18);
+        assertEq(mine.balanceOf(address(RobinhoodConfig.POOL_MANAGER)) + mine.balanceOf(address(0xdEaD)), 10_500_000e18);
+        assertEq(mine.totalSupply(), 10_500_000e18, "nothing else minted yet");
+        assertEq(sites.vaultBalance(), 10_500_000e18);
+        assertApproxEqRel(hook.marketCap(token), startMcap, 0.025e18);
 
         // A buy with ETH through the real IMD/ETH pool pays the 4% to the fee recipient.
         vm.deal(alice, 1 ether);
         MineEthRouter ethRouter = MineEthRouter(payable(hook.ethRouter())); // (read before the prank, which it would use up)
         vm.prank(alice);
-        uint256 got = ethRouter.buyWithEth{value: 0.01 ether}(l.token, 1, block.timestamp);
+        uint256 got = ethRouter.buyWithEth{value: 0.01 ether}(token, 1, block.timestamp);
         assertGt(got, 0);
         hook.collectProtocolFees(RobinhoodConfig.IMD);
         assertGt(IERC20(RobinhoodConfig.IMD).balanceOf(feeRecipient), 0);
@@ -146,7 +154,7 @@ contract LaunchForkTest is Test, MineDeployer {
                 keccak256(
                     abi.encode(
                         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                        keccak256("MineWorldCraft Mining"), keccak256("1"), block.chainid, l.sites
+                        keccak256("MineWorldCraft Mining"), keccak256("1"), block.chainid, l.game.sites
                     )
                 ),
                 keccak256(abi.encode(sites.EARNINGS_TYPEHASH(), alice, 1_234e18, deadline))
@@ -154,7 +162,19 @@ contract LaunchForkTest is Test, MineDeployer {
         );
         (uint8 v, bytes32 r, bytes32 sg) = vm.sign(SIGNER_KEY, digest);
         vm.prank(alice);
-        assertEq(sites.claim(1_234e18, deadline, abi.encodePacked(r, sg, v)), 1_234e18);
-        assertEq(mine.balanceOf(alice), got + 1_234e18);
+        assertEq(sites.claim(1_234e18, deadline, abi.encodePacked(r, sg, v)), 617e18); // half, at level 1, minted
+        assertEq(mine.balanceOf(alice), got + 617e18);
+        assertEq(mine.totalMinted(), 10_500_000e18 + 617e18);
+
+        // An upgrade paid with $MINE bought through the pool: 75% burned, 25% to the treasury.
+        uint256 cost = sites.upgradeCost(2);
+        deal(token, alice, cost);
+        vm.startPrank(alice);
+        mine.approve(l.game.sites, cost);
+        sites.upgradeSite();
+        vm.stopPrank();
+        assertEq(sites.rateBps(alice), 6_000);
+        assertEq(mine.balanceOf(treasury), cost / 4);
+        assertEq(mine.totalBurned(), cost * 3 / 4);
     }
 }

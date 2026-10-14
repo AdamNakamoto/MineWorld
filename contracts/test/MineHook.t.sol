@@ -21,6 +21,7 @@ import {MineEthRouter} from "../src/MineEthRouter.sol";
 import {MineToken} from "../src/MineToken.sol";
 import {MiningSites} from "../src/MiningSites.sol";
 import {DeployLib} from "../script/DeployLib.sol";
+import {MineDeployer} from "../script/Deploy.s.sol";
 
 contract MockIMD {
     string public name = "Identity.md";
@@ -52,9 +53,9 @@ contract MockIMD {
     }
 }
 
-/// A token of any launch size, for the start-price bounds test (MineToken always launches 500M).
+/// A token of any launch size, for the start-price bounds test (MineToken always launches 10.5M).
 contract LaunchCoin is ERC20 {
-    uint256 public constant TOTAL_SUPPLY = 1_000_000_000e18;
+    uint256 public constant MAX_SUPPLY = 21_000_000e18;
 
     constructor(address to, uint256 amount) ERC20("Launch", "LNCH") {
         _mint(to, amount);
@@ -64,7 +65,7 @@ contract LaunchCoin is ERC20 {
 /// @dev Adapted from Courier World's StampHook tests. Runs twice (see the two contracts at the end): with IMD as the
 ///      pool's currency0 and as its currency1, since the order on mainnet depends on the $MINE address and every code
 ///      path has a branch for each. The vault half goes to a real MiningSites, as on mainnet.
-abstract contract MineHookTest is Test {
+abstract contract MineHookTest is Test, MineDeployer {
     using StateLibrary for IPoolManager;
 
     PoolManager pm;
@@ -82,9 +83,9 @@ abstract contract MineHookTest is Test {
     address alice = makeAddr("alice");
     address bob = makeAddr("bob");
 
-    uint256 constant LAUNCH = 500_000_000e18; // half the 1B supply
-    uint256 constant TOTAL = 1_000_000_000e18;
-    uint256 constant START_MCAP = 50_000e18; // IMD, for the full 1B
+    uint256 constant LAUNCH = 10_500_000e18; // half the 21M supply
+    uint256 constant TOTAL = 21_000_000e18;
+    uint256 constant START_MCAP = 50_000e18; // IMD, for the full 21M
     uint256 constant SIGNER_KEY = 0x51634;
     int24 constant FULL_100 = 887_200;
 
@@ -133,12 +134,13 @@ abstract contract MineHookTest is Test {
 
     receive() external payable {}
 
-    /// @dev $MINE as the deploy script makes it: MiningSites first, at the token's predicted address, then the token.
+    /// @dev $MINE and the game as the deploy script makes them: the launch allocation to `pool`, the vault the one
+    ///      minter, the token renounced.
     function _tokenFor(address pool) internal returns (MineToken t, MiningSites s) {
-        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
-        s = new MiningSites(IERC20(predicted), owner, feeRecipient, vm.addr(SIGNER_KEY), 0.005 ether, 5_000e18, 1_000_000e18);
-        t = new MineToken(pool, address(s));
-        require(address(t) == predicted, "predicted token");
+        Game memory g = _deployGame(
+            address(this), owner, pool, Sites(feeRecipient, vm.addr(SIGNER_KEY), 0.005 ether, 1_500e18, 35_000e18)
+        );
+        return (MineToken(g.token), MiningSites(g.sites));
     }
 
     function _flags() internal pure returns (uint160) {
@@ -201,8 +203,9 @@ abstract contract MineHookTest is Test {
         address dead = 0x000000000000000000000000000000000000dEaD;
         assertEq(stamp.balanceOf(address(pm)) + stamp.balanceOf(dead), LAUNCH);
         assertLt(stamp.balanceOf(dead), 1.1e9);
-        assertEq(stamp.totalSupply(), TOTAL);
-        assertEq(stamp.balanceOf(address(sites)), TOTAL - LAUNCH, "the other half is in the vault");
+        assertEq(stamp.totalSupply(), LAUNCH, "the rest is minted only as players earn it");
+        assertEq(stamp.MAX_SUPPLY(), TOTAL);
+        assertEq(stamp.owner(), address(0));
         assertEq(hook.token(), address(stamp));
     }
 
@@ -223,8 +226,9 @@ abstract contract MineHookTest is Test {
 
     function test_DonationBeforeLaunchCannotBlockOpenPool() public {
         address h = _hookWith(alice, DeployLib.startTickForMarketCap(START_MCAP, TOTAL), LAUNCH);
-        (MineToken s2, MiningSites v2) = _tokenFor(h);
-        vm.prank(address(v2)); // (the only $MINE outside the pool is the vault's)
+        (MineToken s2,) = _tokenFor(h);
+        deal(address(s2), alice, 1);
+        vm.prank(alice);
         s2.transfer(h, 1); // someone sends 1 wei to the hook before the launch
 
         vm.prank(owner);
@@ -235,8 +239,8 @@ abstract contract MineHookTest is Test {
     }
 
     /// Audit ea514609 finding 11 and re-check ca28d248 finding 1 (StampHook): every start price and allocation
-    /// the constructor accepts opens. MineHook's bounds are CourierPad's: start ticks -300,000 to 400,000, and up to
-    /// the whole 1B supply.
+    /// the constructor accepts opens. MineHook's tick bounds are CourierPad's (-300,000 to 400,000), and the
+    /// allocation goes up to $MINE's whole 21M supply.
     /// @dev External, so `vm.expectRevert` checks this constructor call. (A `new` straight in the test body reverts
     ///      the test itself, which forge counts as the expected revert, so nothing after it would run.)
     function newHook(int24 tick, uint256 launch) external returns (address) {
@@ -583,9 +587,9 @@ abstract contract MineHookTest is Test {
         sites.openSite{value: 0.005 ether}();
         assertEq(feeRecipient.balance, 0.005 ether, "the site price went to the treasury");
         uint64 deadline = uint64(block.timestamp + 1 hours);
-        bytes memory sig = _voucher(bob, 1_000e18, deadline);
+        bytes memory sig = _voucher(bob, 2_000e18, deadline);
         vm.prank(bob);
-        sites.claim(1_000e18, deadline, sig);
+        sites.claim(2_000e18, deadline, sig); // a level 1 site converts half
         assertEq(stamp.balanceOf(bob), 1_000e18);
 
         vm.prank(bob);
@@ -608,7 +612,7 @@ abstract contract MineHookTest is Test {
         return makeAddr("carol");
     }
 
-    /// The market cap is fully diluted over the whole 1B supply (the vault's half included), and the start tick
+    /// The market cap is fully diluted over the whole 21M supply (the vault's half included), and the start tick
     /// from the deploy helper puts the launch at most ~2% above the target (the tick rounds down to the spacing:
     /// fewer $MINE per IMD, a slightly higher price), never below it.
     function test_MarketCapIsOverTheWholeSupply() public view {

@@ -1,50 +1,67 @@
-// The Mining Site panel: log in, sign in to earn (free), open a mining site (ETH), convert earnings to $MINE, trade
-// $MINE, and mint or wear a MineWorld Crafter. Everything about money happens here, in plain words.
+// The Mining Site panel: log in, sign in to earn (free), open a mining site (ETH) and upgrade it ($MINE), convert
+// earnings to $MINE, trade $MINE, mint or wear a MineWorld Crafter and level it up ($MINE), and see your NFT boosts
+// (boosts.js). Everything about money happens here, in plain words. Every $MINE payment approves exactly what it
+// costs, then pays (chain.js payMine); part of it is burned and the rest goes to the project's treasury.
 
 import { formatEther } from "https://esm.sh/viem@2";
 import { explain } from "./chain.js";
 import { createTrade } from "./trade.js";
-import { svg, sealedSvg, HAIRS, OUTFITS } from "./crafters.js";
+import { svg, sealedSvg, HAIRS, OUTFITS, rarityOf, RARITIES } from "./crafters.js";
 import { ROOKIE } from "./avatar.js";
-import { fmtMine, BLOCK_REWARDS, MOB_REWARDS, DAILY_EARN_CAP } from "./rewards.js";
+import { fmtMine, unitsToWei, BLOCK_REWARDS, MOB_REWARDS, DAILY_EARN_CAP, WORLD_DAILY_CAP, ZONE_PAY } from "./rewards.js";
+import { SLOTS, SLOT_KEYS, TIERS, CRAFTER_LEVELS, MAX, NO_BOOST, issued, itemBoost, describe } from "./boosts.js";
 import { itemName } from "./blocks.js";
 import { MOBS } from "./rules.js";
 import { short } from "./net.js";
 
 const eth = (wei) => Number(formatEther(wei)).toLocaleString("en-US", { maximumFractionDigits: 5 });
-const mine = (wei) => Number(formatEther(wei)).toLocaleString("en-US", { maximumFractionDigits: 2 });
+const mine = (wei) => Number(formatEther(wei)).toLocaleString("en-US", { maximumFractionDigits: 4 });
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-/// `game`: { chain, net, ledger() → { signedIn, wallet, today, total, cap }, signIn(), toast(text, kind), wear(traits, id) }.
+/// `game`: { chain, net, ledger() → { signedIn, wallet, today, total, cap, boost }, signIn(), toast(text, kind),
+/// wear(traits, id), leveled(tokenId, level) (a Crafter was just leveled up) }. The ledger's amounts are in units
+/// (rewards.js UNIT).
 export function createPanel(game) {
   const el = document.getElementById("panel");
   const body = document.getElementById("panelBody");
   const tradeEl = document.getElementById("tradeBox");
   const { chain } = game;
   let snap = null, busy = false, timer = 0, trade = null, worn = null;
+  // What the last action said, shown where it was started (`at`: "site", "crafter:<id>"...): its progress, how it
+  // ended, or why it didn't go through.
+  let status = null;
   try { worn = JSON.parse(localStorage.getItem("mwc:worn")); } catch {}
 
-  async function run(what, fn) {
+  /// Runs an action: `fn(step)` may report each stage with step(text) and return the words to end with.
+  async function run(what, fn, at = null) {
     if (busy) return;
     busy = true;
+    status = { at, text: `${what}…`, kind: "" };
     render();
     game.toast(`${what}…`);
+    const step = (text) => { status = { at, text, kind: "" }; render(); game.toast(text); };
     try {
-      await fn();
-      game.toast(`${what}: done.`, "good");
+      const said = await fn(step);
+      status = { at, text: typeof said === "string" ? said : `${what}: done.`, kind: "good" };
+      game.toast(status.text, typeof said === "string" ? "gold" : "good");
     } catch (e) {
       console.warn(what, e);
-      game.toast(explain(e), "bad");
+      status = { at, text: explain(e), kind: "bad" };
+      game.toast(status.text, "bad");
     } finally {
       busy = false;
       await refresh();
     }
   }
+  const statusAt = (at) => (status && status.at === at ? `<p class="card-status ${status.kind}" role="status">${esc(status.text)}</p>` : "");
 
   async function refresh() {
     if (!chain) return render();
     try {
       snap = await chain.snapshot();
+      // What converting now would pay, at the site's rate and within today's caps (MiningSites.claimable).
+      const L = game.ledger();
+      if (snap?.site && L.signedIn && L.total) snap.payNow = await chain.claimable(unitsToWei(L.total));
     } catch (e) {
       console.warn("snapshot failed", e);
     }
@@ -88,9 +105,35 @@ export function createPanel(game) {
         const v = await game.net.voucher();
         const pay = await chain.claimable(v.total);
         if (pay === 0n) throw new Error("Nothing to convert right now: today's limits may be reached. They reset at 00:00 UTC.");
-        await chain.claim(v);
+        const got = await chain.claim(v);
+        if (got?.earnings !== undefined) {
+          game.toast(`Converted ${mine(got.earnings)} $MINE of earnings at ${Number(got.rateBps) / 100}%: you received ${mine(got.amount)} $MINE.`, "gold");
+        }
       });
       case "mint": return run(`Minting ${data.n} Crafter${data.n > 1 ? "s" : ""}`, () => chain.mintCrafters(Number(data.n), snap.crafters.price));
+      case "upsite": {
+        // The cost shown is the cost approved: if the owner changed it meanwhile, the upgrade fails rather than charge more.
+        const up = snap?.siteUp;
+        if (!up?.next) return;
+        return run(`Upgrading your mining site to level ${up.next}`, async (step) => {
+          const level = (await chain.upgradeSite(up.cost, { step })) ?? up.next;
+          return `Your mining site is level ${level} now: it converts ${up.nextRate / 100}% of what you earn. Your next conversion pays at that rate.`;
+        }, "site");
+      }
+      case "levelup": {
+        const id = Number(data.id);
+        const m = snap?.crafters?.mine.find((x) => x.id === id), lv = snap?.crafters?.levels;
+        const level = m?.level ?? null;
+        if (!m || !lv || level === null || level >= lv.max) return;
+        const cost = lv.costs[level - 1];
+        return run(`Leveling up Crafter #${id} to level ${level + 1}`, async (step) => {
+          const now = (await chain.levelUp(id, cost, { step })) ?? level + 1;
+          game.leveled?.(id, now);
+          const r = m.traits ? rarityOf(m.traits) : null;
+          const b = r === null ? "" : `: ${describe(itemBoost("crafter", r, now))}`;
+          return `Crafter #${id} is level ${now} now${b}.${worn === id ? " Your boost updates in a moment." : ""}`;
+        }, `crafter:${id}`);
+      }
       case "wear": {
         const id = data.id === "none" ? null : Number(data.id);
         worn = id;
@@ -111,16 +154,18 @@ export function createPanel(game) {
         <p>Earn <b class="gold">$MINE</b> by playing: breaking natural blocks (rarer ores pay more) and defeating monsters.</p>
         <div class="box"><h3>Coming soon</h3><p class="note">The $MINE token, mining sites and the Miners collection aren't on-chain yet. You can already play, and once
         you sign in, everything you earn is counted.</p></div>
-        ${economyBox()} ${ratesBox()}`;
+        ${boostsBox(L)} ${economyBox()} ${ratesBox()}`;
       tradeEl.hidden = true;
       return;
     }
     const s = snap;
     const acct = chain.account;
     const site = !!s?.site;
-    const earnedWei = BigInt(L.total) * 10n ** 16n;
-    const claimed = s?.claimed ?? 0n;
-    const ready = earnedWei > claimed ? earnedWei - claimed : 0n;
+    const earnedWei = unitsToWei(L.total);
+    const claimed = s?.claimed ?? 0n; // $MINE received
+    const settled = s?.settled ?? claimed; // earnings converted (the same before sites had rates)
+    const ready = earnedWei > settled ? earnedWei - settled : 0n;
+    const pct = s?.rateBps ? `${s.rateBps / 100}%` : null;
     const step = (done, text) => `<li class="${done ? "done" : ""}">${done ? "✓ " : ""}${text}</li>`;
     body.innerHTML = `
       <ol class="steps">
@@ -142,19 +187,24 @@ export function createPanel(game) {
         <h3>Your earnings</h3>
         <div class="kv"><span>Earned today</span><b class="gold">${fmtMine(L.today)} / ${fmtMine(L.cap)} $MINE</b></div>
         <div class="kv"><span>Earned in all</span><b>${fmtMine(L.total)} $MINE</b></div>
-        <div class="kv"><span>Converted so far</span><b>${acct ? mine(claimed) : "—"} $MINE</b></div>
-        <div class="kv"><span>Ready to convert</span><b class="gold">${L.signedIn ? mine(ready) : "—"} $MINE</b></div>
+        <div class="kv"><span>Earnings converted so far</span><b>${acct ? mine(settled) : "—"} $MINE</b></div>
+        <div class="kv"><span>$MINE received so far</span><b>${acct ? mine(claimed) : "—"} $MINE</b></div>
+        <div class="kv"><span>Earned, not converted yet</span><b class="gold">${L.signedIn ? mine(ready) : "—"} $MINE</b></div>
+        ${site && pct ? `<div class="kv"><span>You'll receive now (at your site's ${pct}${s.siteLevel ? `, level ${s.siteLevel}` : ""})</span><b class="gold">${L.signedIn && s.payNow !== undefined ? mine(s.payNow) : "—"} $MINE</b></div>` : ""}
         ${s ? `<div class="kv"><span>Your conversions today</span><b>${acct ? mine(s.walletPaid) : "0"} / ${mine(s.walletCap)}</b></div>
         <div class="kv"><span>Everyone's conversions today</span><b>${mine(s.paidToday)} / ${mine(s.dailyCap)}</b></div>` : ""}
         ${s?.paused ? `<p class="warn small">Converting is paused right now. Your earnings stay on the ledger.</p>` : ""}
         <button class="btn gold wide" data-act="convert" ${!acct || !L.signedIn || !site || ready === 0n || busy || s?.paused ? "disabled" : ""}>Convert to $MINE</button>
-        <p class="note">${!site && acct ? "Open a mining site first: only wallets with one can convert. " : ""}Earnings are counted by the world server and paid from the mining vault (half of all $MINE). Each wallet converts up to the daily limit; the rest waits for the next day.</p>
+        <p class="note">${!site && acct ? "Open a mining site first: only wallets with one can convert. " : ""}Earnings are counted by the world server; converting mints $MINE from the mining vault (half of all $MINE) at your site's rate (50% at level 1, up to 100% at level 5), within the daily limits. What a day's limits don't cover waits for the next day.</p>
       </section>
+
+      ${boostsBox(L)}
 
       <section class="box">
         <h3>Mining site <span class="status ${site ? "open" : "closed"}">${site ? "OPEN" : "NOT OPEN"}</span></h3>
         ${site
-          ? `<p class="note">Opened ${new Date(s.site * 1000).toLocaleDateString()}. It's yours for good and lets this wallet convert earnings to $MINE.</p>`
+          ? `<p class="note">Opened ${new Date(s.site * 1000).toLocaleDateString()}. It's yours for good and lets this wallet convert earnings to $MINE.</p>
+             ${siteLevelBox(s)}`
           : `<div class="kv"><span>Price (once, paid in ETH)</span><b>${s ? eth(s.sitePrice) : "…"} ETH</b></div>
              ${acct && s ? `<div class="kv"><span>Your ETH</span><b>${eth(s.eth)}</b></div>` : ""}
              <button class="btn gold wide" data-act="open" ${!acct || !s || busy || (s.eth ?? 0n) < s.sitePrice ? "disabled" : ""}>Open my mining site</button>
@@ -172,6 +222,29 @@ export function createPanel(game) {
     tradeEl.hidden = !chain.trade;
   }
 
+  /// The site's level and what upgrading it costs and does (MiningSites: upgradeSite, paid in $MINE).
+  function siteLevelBox(s) {
+    if (!s.siteLevel) return "";
+    const up = s.siteUp;
+    const rows = `<div class="kv"><span>Level</span><b class="gold">${s.siteLevel}${up ? ` of ${up.max}` : ""}</b></div>
+      <div class="kv"><span>Converts</span><b>${s.rateBps / 100}% of what you earn</b></div>`;
+    if (!up) return rows;
+    if (!up.next) {
+      return `${rows}<div class="kv"><span>Upgrades</span><b class="gold">Max level</b></div>
+        <p class="note">Your site is at the top level: it converts ${s.rateBps / 100}% of everything you earn.</p>${statusAt("site")}`;
+    }
+    const short = s.mine !== undefined && s.mine < up.cost;
+    const burn = up.burnBps / 100;
+    return `${rows}
+      <div class="kv"><span>Level ${up.next} converts</span><b class="gold">${up.nextRate / 100}%</b></div>
+      <div class="kv"><span>Upgrade to level ${up.next}</span><b class="gold">${mine(up.cost)} $MINE</b></div>
+      <button class="btn gold wide" data-act="upsite" ${busy ? "disabled" : ""}>Upgrade to level ${up.next}</button>
+      ${statusAt("site")}
+      <p class="note">Paid in $MINE from your wallet (it asks you to approve exactly ${mine(up.cost)}, then to pay): ${burn}% is burned for good
+      and ${100 - burn}% goes to the project treasury. Your next conversion pays at the new rate, earnings not converted yet included.
+      ${short ? `<span class="warn">You have ${mine(s.mine)} $MINE: ${chain.trade ? "buy more in the trade box below" : "convert your earnings first"}.</span>` : ""}</p>`;
+  }
+
   const pic = (src) => `data:image/svg+xml;utf8,${encodeURIComponent(src)}`;
   function craftersBox(s, acct) {
     const M = s?.crafters;
@@ -183,7 +256,8 @@ export function createPanel(game) {
       <h3>MineWorld Crafters</h3>
       <p class="note">${M.max.toLocaleString()} characters, drawn and stored fully on-chain: every picture is made by the contract itself, and no two are
       alike (${HAIRS.length} hairs, ${OUTFITS.length} outfits, hats, skins, eyes, backgrounds). The one you wear is how your miner looks in the world.
-      Cosmetic only: never what you earn. Minted sealed, revealed after the mint. Resales pay a 5% creator royalty.</p>
+      The one you wear also boosts your mining by its rarity and level (see Boosts). Minted sealed, revealed after the mint. Resales pay a 5%
+      creator royalty.</p>
       <div class="kv"><span>Minted</span><b>${M.minted.toLocaleString()} / ${M.max.toLocaleString()}</b></div>
       <div class="kv"><span>Price</span><b>${price}</b></div>
       ${M.limit ? `<div class="kv"><span>Per wallet</span><b>${M.limit}</b></div>` : ""}
@@ -192,17 +266,79 @@ export function createPanel(game) {
         : `<p class="note">${left <= 0 ? "Sold out." : "The mint isn't open right now."}</p>`}
       ${mine.length ? `<h3>Yours</h3><div class="miners">
         <button class="miner ${worn === null ? "on" : ""}" data-act="wear" data-id="none"><img src="${pic(svg(ROOKIE))}" alt="">Rookie</button>
-        ${mine.map((m) => `<button class="miner ${worn === m.id ? "on" : ""}" data-act="wear" data-id="${m.id}" ${m.traits ? "" : "disabled"}>
-          <img src="${pic(m.traits ? svg(m.traits) : sealedSvg())}" alt="">#${m.id}${m.traits ? "" : " sealed"}</button>`).join("")}
-      </div><p class="note">${mine.some((m) => m.traits) ? "Tap one to wear it. Others see it once the world server has checked it's yours." : "Yours are sealed until the reveal."}</p>` : ""}
+        ${mine.map((m) => {
+          const r = m.traits ? rarityOf(m.traits) : null;
+          return `<button class="miner ${worn === m.id ? "on" : ""}" data-act="wear" data-id="${m.id}" ${m.traits ? "" : "disabled"}>
+          <img src="${pic(m.traits ? svg(m.traits) : sealedSvg())}" alt="">#${m.id}${m.traits ? "" : " sealed"}${r === null ? "" : `<span class="tier t${r}">${RARITIES[r]}</span>`}</button>`;
+        }).join("")}
+      </div><p class="note">${mine.some((m) => m.traits) ? "Tap one to wear it. Others see it once the world server has checked it's yours." : "Yours are sealed until the reveal."}</p>
+      ${levelsList(M, s)}` : ""}
+    </section>`;
+  }
+
+  /// Each Crafter you hold: its rarity, level and boost, and what the next level costs and adds (CrafterLevels).
+  function levelsList(M, s) {
+    const lv = M.levels;
+    if (!lv) return "";
+    const rows = M.mine.map((m) => {
+      const r = m.traits ? rarityOf(m.traits) : null, level = m.level;
+      const next = level !== null && level < lv.max ? level + 1 : null;
+      const cost = next ? lv.costs[level - 1] : null;
+      const now = r === null ? null : itemBoost("crafter", r, level ?? 1);
+      const then = r === null || !next ? null : itemBoost("crafter", r, next);
+      const short = cost !== null && s.mine !== undefined && s.mine < cost;
+      return `<div class="crafter-row ${worn === m.id ? "on" : ""}">
+        <img src="${pic(m.traits ? svg(m.traits) : sealedSvg())}" alt="">
+        <div class="cr-text">
+          <b>#${m.id} · ${r === null ? "Sealed" : `<span class="tier t${r}">${RARITIES[r]}</span>`} · ${level === null ? "level ?" : `Level ${level} of ${lv.max}`}${worn === m.id ? " · worn" : ""}</b>
+          <span class="boost">${now ? describe(now) : "Its boost shows once it's revealed"}</span>
+          ${next ? `<span class="small muted">Level ${next}: ${mine(cost)} $MINE${then ? ` → ${describe(then)}` : ""}${short ? ` <span class="warn">(you have ${mine(s.mine)})</span>` : ""}</span>` : ""}
+          ${statusAt(`crafter:${m.id}`)}
+        </div>
+        ${next ? `<button class="btn gold" data-act="levelup" data-id="${m.id}" ${busy ? "disabled" : ""}>Level up</button>`
+          : level !== null ? `<span class="max-level">Max level</span>` : ""}
+      </div>`;
+    }).join("");
+    const burn = lv.burnBps / 100;
+    return `<h3>Levels</h3><div class="crafter-rows">${rows}</div>
+      <p class="note">A level adds to the Crafter's boost while you wear it, and stays with the Crafter if it's sold. Paid in $MINE (approve
+      exactly the cost, then pay): ${burn}% is burned for good and ${100 - burn}% goes to the project treasury.${chain.trade ? " Short of $MINE? The trade box is below." : ""}</p>`;
+  }
+
+  /// Your boosts: the totals the world server last sent, what each slot adds, and the Crafters' table.
+  function boostsBox(L) {
+    const b = L.boost ?? NO_BOOST;
+    const lead = L.signedIn
+      ? `Your boosts: <b>+${b.speed}% speed, +${b.earn}% $MINE, daily cap ${fmtMine(L.cap)}</b>${b.move ? ` <b>(+${b.move}% move)</b>` : ""}`
+      : "Sign in to earn: then the NFTs you use boost your mining.";
+    const rows = SLOT_KEYS.map((k) => {
+      const src = b.sources.find((x) => x.slot === k);
+      const val = src ? `<b class="on">${esc(src.label)}: ${describe(src)}</b>`
+        : !issued(k) ? `<b class="soon">Coming soon</b>`
+        : `<b class="soon">${k === "crafter" ? "None worn" : "None"}</b>`;
+      return `<div class="kv"><span>${SLOTS[k].name}</span>${val}</div>`;
+    }).join("");
+    const cell = (x) => `+${x.speed}/${x.earn}/${x.cap}`;
+    const levels = Object.keys(CRAFTER_LEVELS).map(Number).sort((p, q) => p - q);
+    const table = `<table class="boost-table"><tr><th>Level</th>${TIERS.map((t) => `<th>${t}</th>`).join("")}</tr>
+      ${levels.map((l) => `<tr><td>L${l}</td>${TIERS.map((t, r) => `<td>${cell(itemBoost("crafter", r, l))}</td>`).join("")}</tr>`).join("")}</table>`;
+    return `<section class="box"><h3>Boosts</h3>
+      <p class="boost-lead">${lead}</p>
+      ${rows}
+      <p class="note">One NFT a slot, and the slots add up. They only add to what you do: blocks break faster, every block, monster and boss share
+      pays more, and your daily cap (${DAILY_EARN_CAP.toLocaleString("en-US")} $MINE) is higher. Nothing pays for holding. At most +${MAX.speed}%
+      speed, +${MAX.earn}% $MINE and +${MAX.cap}% cap; everyone's ${WORLD_DAILY_CAP.toLocaleString("en-US")} $MINE a day still holds.</p>
+      <details><summary class="note">Crafter boosts (% speed / $MINE / daily cap): rarity and level add up</summary>${table}
+      <p class="note">Each of your Crafters shows its rarity and level below (Crafters, Levels); levels are bought there with $MINE, and stay
+      with the Crafter.</p></details>
     </section>`;
   }
 
   function economyBox() {
     return `<section class="box"><h3>How $MINE works</h3>
-      <div class="kv"><span>Supply</span><b>1,000,000,000 $MINE, fixed</b></div>
-      <div class="kv"><span>Liquidity</span><b>50%, locked forever in the $MINE/IMD pool</b></div>
-      <div class="kv"><span>Mining vault</span><b>50%, earned only by playing</b></div>
+      <div class="kv"><span>Supply</span><b>21,000,000 $MINE in all (upgrades and the shop burn 75% of what they cost)</b></div>
+      <div class="kv"><span>Liquidity</span><b>50% (10,500,000), locked forever in the $MINE/IMD pool</b></div>
+      <div class="kv"><span>Mining vault</span><b>50% (10,500,000), minted only as players convert, at most ${WORLD_DAILY_CAP.toLocaleString("en-US")} a day</b></div>
       <div class="kv"><span>Trading fee</span><b>4% per trade</b></div>
       <p class="note">No yield farming: nothing pays for holding or waiting. $MINE comes only from what you do in the world.</p></section>`;
   }
@@ -211,7 +347,8 @@ export function createPanel(game) {
     const blocks = Object.entries(BLOCK_REWARDS).sort((a, b) => b[1] - a[1]).map(([id, v]) => `<div class="kv"><span>${esc(itemName(Number(id)))}</span><b>${v}</b></div>`).join("");
     const mobs = Object.entries(MOB_REWARDS).map(([k, v]) => `<div class="kv"><span>${esc(MOBS[k].name)}</span><b>${v}</b></div>`).join("");
     return `<section class="box"><h3>What earns $MINE</h3>
-      <p class="note">Natural blocks only (blocks players placed pay nothing). Up to ${DAILY_EARN_CAP.toLocaleString()} $MINE per wallet per day.</p>
+      <p class="note">Natural blocks only (blocks players placed pay nothing). Up to ${DAILY_EARN_CAP.toLocaleString("en-US")} $MINE per wallet per day,
+      more with a cap boost. Deepvein pays ${ZONE_PAY.deep}x; NFT boosts add their % on top.</p>
       ${blocks}<h3>Monsters</h3>${mobs}
       <p class="note">Monsters come out at night, and underground at any time.</p></section>`;
   }

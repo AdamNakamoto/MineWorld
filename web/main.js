@@ -1,13 +1,19 @@
 // MineWorldCraft: the game loop. Walking, mining, placing, fighting, the HUD, and wiring the world, the room
-// (net.js), the chain (chain.js) and the Mining Site panel together.
+// (net.js), the chain (chain.js) and the Mining Site panel together. The rocket (rocket.js) flies between the home
+// planet and the zones (zones.js): Deepvein (2x $MINE), Cinderfall (the boss, boss.js) and Red Mesa (PvP, with loot
+// chests, chests.js).
 
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { BLOCKS, AIR, WATER, TOOLS, HAND_DAMAGE, breakTime, itemName } from "./blocks.js";
-import { wrapDelta, SPAWN, REACH, ATTACK_MS, DAY_MS, TOWN, protectedAt, isNight, MOB_KINDS, MOBS_PER_PLAYER, UNDERGROUND_Y, PROTECT_R, CHUNK, wrap, wrapDist } from "./rules.js";
+import { wrapDelta, SPAWN, REACH, ATTACK_MS, DAY_MS, TOWN, isNight, MOB_KINDS, UNDERGROUND_Y, CHUNK, wrap } from "./rules.js";
+import { ZONES, zoneOf, landing, spawnOf, protectedIn, calmAt, pvpAt, BOSS, PVP, ROCKET_REACH, PAD_R, TICKETS_FREE } from "./zones.js";
+import { createRocket, openCard, cardOpen, closeCard, drawCard } from "./rocket.js";
+import { createBoss } from "./boss.js";
+import { createChests } from "./chests.js";
 import { OFFICE } from "./worldgen.js";
 import { makeAtlas, iconFor, faceTiles, tileOf, ATLAS_TILES } from "./textures.js";
 import { createWorld, keyOf, MAX_RADIUS } from "./world.js";
-import { follow as followPlanet, place as placeOnPlanet } from "./planet.js";
+import { follow as followPlanet, place as placeOnPlanet, bend as bendPoint } from "./planet.js";
 import { createGlobe } from "./globe.js";
 import { moveBox, boxHitsBlock } from "./physics.js";
 import { createInventory, SLOTS, HOTBAR } from "./inventory.js";
@@ -23,10 +29,11 @@ import { runCommand } from "./commands.js";
 import { createVoice } from "./voice.js";
 import { cleanName } from "./name-rules.js";
 import { packTraits, unpackTraits } from "./crafters.js";
-import { connectChain } from "./chain.js";
+import { connectChain, explain } from "./chain.js";
 import { createPanel } from "./panel.js";
 import { cleanChat } from "./chat-rules.js";
-import { fmtMine, toCents, DAILY_EARN_CAP } from "./rewards.js";
+import { fmtMine, toUnits, WORLD_DAILY_CAP } from "./rewards.js";
+import { NO_BOOST, dailyCap, withSpeed, withMove, describe } from "./boosts.js";
 import { sfx } from "./sfx.js";
 import { roomUrl } from "./config.js";
 
@@ -61,6 +68,7 @@ resize();
 
 const atlas = makeAtlas();
 const world = createWorld(scene, atlas);
+let zone = "home"; // the planet you're on (zones.js)
 const sky = createSky(scene);
 const inv = createInventory();
 world.onDrop = (k) => synced.delete(k);
@@ -127,9 +135,22 @@ function releaseMouse() {
   if (document.pointerLockElement === canvas) { letGo = true; document.exitPointerLock?.(); }
 }
 
+/// The wear bar under a tool's, weapon's or armor's icon (only once it's been used), green to red as it wears.
+function wearBar(id, d) {
+  const max = BLK.maxDurability(id);
+  if (!max || !d) return "";
+  const left = Math.max(0, 1 - d / max);
+  return `<span class="dura"><i style="width:${Math.max(4, left * 100)}%;background:hsl(${Math.round(left * 120)},85%,48%)"></i></span>`;
+}
+const usesLeft = (id, d) => (BLK.maxDurability(id) ? ` (${BLK.maxDurability(id) - (d ?? 0)}/${BLK.maxDurability(id)} uses left)` : "");
 function slotHtml(i, extraClass = "") {
   const s = inv.slot(i);
-  return `<div class="slot ${extraClass}" data-slot="${i}">${s ? `<img src="${iconFor(s.id, atlas)}" alt="${itemName(s.id)}" title="${itemName(s.id)}">${s.n > 1 ? `<span class="n">${s.n}</span>` : ""}` : ""}</div>`;
+  return `<div class="slot ${extraClass}" data-slot="${i}">${s ? `<img src="${iconFor(s.id, atlas)}" alt="${itemName(s.id)}" title="${itemName(s.id)}${usesLeft(s.id, s.d)}">${s.n > 1 ? `<span class="n">${s.n}</span>` : ""}${wearBar(s.id, s.d)}` : ""}</div>`;
+}
+/// Something wore out: it's gone.
+function broke(id) {
+  toast(`Your ${itemName(id).toLowerCase()} broke!`, "bad");
+  sfx.broke(true);
 }
 function drawHotbar() {
   let html = "";
@@ -163,12 +184,16 @@ function drawInventory() {
   if ($("inv").hidden) return;
   $("armorSlots").innerHTML = BLK.ARMOR_SLOTS.map((slot) => {
     const id = inv.worn(slot);
-    return `<div class="slot ${id ? "" : "empty"}" data-armor="${slot}" title="${id ? `${itemName(id)}: click to take off` : `${SLOT_NAMES[slot]}: none`}">${id ? `<img src="${iconFor(id, atlas)}" alt="">` : SLOT_NAMES[slot][0]}</div>`;
+    const w = inv.wornItem(slot);
+    return `<div class="slot ${id ? "" : "empty"}" data-armor="${slot}" title="${id ? `${itemName(id)}${usesLeft(id, w.d)}: click to take off` : `${SLOT_NAMES[slot]}: none`}">${id ? `<img src="${iconFor(id, atlas)}" alt="">${wearBar(id, w.d)}` : SLOT_NAMES[slot][0]}</div>`;
   }).join("");
   let html = "";
   for (let i = 0; i < SLOTS; i++) html += slotHtml(i, picked === i ? "picked" : "");
   $("invGrid").innerHTML = html;
-  $("recipes").innerHTML = inv.recipes.map((r, i) => {
+  // Repairs first: two worn copies of the same thing make one (their uses left, plus 5%).
+  $("recipes").innerHTML = inv.repairs().map((id) => `<button class="recipe" data-repair="${id}"><img src="${iconFor(id, atlas)}" alt="">
+      <span>Repair ${itemName(id).toLowerCase()}<span class="need">Combine 2 into 1 (their uses left, plus 5%)</span></span></button>`).join("")
+    + inv.recipes.map((r, i) => {
     const need = Object.entries(r.need).map(([id, n]) => `${n} ${itemName(Number(id))}`).join(" + ");
     return `<button class="recipe" data-recipe="${i}" ${inv.canCraft(r) ? "" : "disabled"}><img src="${iconFor(r.out, atlas)}" alt="">
       <span>${r.n > 1 ? `${r.n} ` : ""}${itemName(r.out)}<span class="need">${need}</span></span></button>`;
@@ -201,6 +226,12 @@ $("inv").addEventListener("click", (e) => {
     if (picked === null) picked = inv.slot(i) ? i : null;
     else { inv.swap(picked, i); picked = null; }
     return drawInventory();
+  }
+  const fix = e.target.closest("[data-repair]");
+  if (fix) {
+    inv.repair(Number(fix.dataset.repair));
+    sfx.place();
+    return toast(`Repaired your ${itemName(Number(fix.dataset.repair)).toLowerCase()}.`, "good");
   }
   const r = e.target.closest("[data-recipe]");
   if (r && !r.disabled) {
@@ -340,24 +371,30 @@ const mobs = createMobs(scene, world, {
   killed(id) {
     if (id > 0) setTimeout(() => { if (!confirmed.delete(id)) net?.gone(id); }, 2500);
   },
-  bite(dmg, dx, dz) {
-    // Armor takes its share of the hit; what's left over in fractions adds up to whole points.
-    biteLeft += dmg * (1 - BLK.armorShare(inv.armorPoints()));
-    const n = Math.floor(biteLeft);
-    biteLeft -= n;
-    if (n) hurt(n);
-    player.vel.x += dx * 6; player.vel.z += dz * 6; player.vel.y = Math.max(player.vel.y, 4);
-  },
+  bite(dmg, dx, dz) { takeHit(dmg, dx, dz); },
 });
+/// A hit taken (a monster's bite, the boss's slam or rock, another player's blow in a PvP zone), pushing you along
+/// (dx, dz). Armor takes its share; what's left over in fractions adds up to whole points. Each worn piece wears a
+/// quarter of the hit (at least 1).
+function takeHit(dmg, dx, dz, push = 6) {
+  if (!player.alive || trip) return;
+  for (const id of inv.wearArmor(Math.max(1, Math.floor(dmg / 4)))) broke(id);
+  biteLeft += dmg * (1 - BLK.armorShare(inv.armorPoints()));
+  const n = Math.floor(biteLeft);
+  biteLeft -= n;
+  if (n) hurt(n);
+  player.vel.x += dx * push; player.vel.z += dz * push; player.vel.y = Math.max(player.vel.y, 4);
+}
 let offlineMobAt = 0, offlineMobSeq = 0;
 function offlineMobs(now) {
-  // With no world server there's no ledger, but the nights still have monsters.
-  if (net?.online || now < offlineMobAt || mobs.count() >= MOBS_PER_PLAYER) return;
-  if (!isNight(Date.now()) && player.pos.y >= UNDERGROUND_Y) return;
-  if (wrapDist(player.pos.x, player.pos.z, TOWN.x, TOWN.z) < PROTECT_R + 16) return;
-  offlineMobAt = now + 20_000;
+  // With no world server there's no ledger, but the nights still have monsters (and Deepvein's days).
+  const M = zoneOf(zone).mobs;
+  if (net?.online || now < offlineMobAt || mobs.count() >= M.max) return;
+  if (!M.always && !isNight(Date.now()) && player.pos.y >= UNDERGROUND_Y) return;
+  if (calmAt(zone, player.pos.x, player.pos.z)) return;
+  offlineMobAt = now + M.everyMs;
   const a = Math.random() * Math.PI * 2;
-  mobs.spawn(-(++offlineMobSeq), MOB_KINDS[Math.floor(Math.random() * 3)], wrap(player.pos.x + Math.cos(a) * 12), player.pos.y, wrap(player.pos.z + Math.sin(a) * 12));
+  mobs.spawn(-(++offlineMobSeq), MOB_KINDS[Math.floor(Math.random() * 3)], wrap(player.pos.x + Math.cos(a) * 12), player.pos.y, wrap(player.pos.z + Math.sin(a) * 12), M);
 }
 
 // ---------------------------------------------------------------- health
@@ -374,11 +411,26 @@ function hurt(n) {
     player.alive = false;
     setMining(false);
     releaseMouse();
+    knockedOut();
     $("dead").hidden = false;
   }
 }
+/// Knocked out. In a PvP zone, right after another player's hit, everything you carry drops in a loot chest (the
+/// room checks it was that player's knock-out, and makes the chest; the bag is emptied once it says so).
+let lastPvp = null; // { by, at }: the last hit from another player
+function knockedOut() {
+  const pvp = zoneOf(zone).pvp && lastPvp && performance.now() - lastPvp.at < PVP.killMs - 500 && net?.online;
+  $("respawn").textContent = zone === "home" ? "Back to town" : `Back to ${ZONES[zone].name}'s pad`;
+  if (pvp) {
+    const who = net.others.get(lastPvp.by)?.name ?? "Another player";
+    $("deadText").textContent = `${who} beat you. Everything you carried drops in a loot chest where you fell: the first to open it takes it all (it waits ${PVP.chestMs / 60_000} minutes).`;
+    net.pvpDead(lastPvp.by, inv.stacks());
+  } else $("deadText").textContent = "You keep everything you carry.";
+  lastPvp = null;
+}
 $("respawn").addEventListener("click", () => {
-  player.pos.set(SPAWN.x, SPAWN.y, SPAWN.z);
+  const sp = spawnOf(zone);
+  player.pos.set(sp.x, sp.y, sp.z);
   player.vel.set(0, 0, 0);
   player.yaw = 0;
   player.pitch = 0;
@@ -395,11 +447,22 @@ $("respawn").addEventListener("click", () => {
 // ---------------------------------------------------------------- the room
 let net = null, serverOffset = 0;
 const synced = new Set();
-const ledger = { signedIn: false, wallet: null, name: null, today: 0, total: 0, cap: toCents(DAILY_EARN_CAP) };
+// Amounts are in ledger units (rewards.js UNIT). `cap`: your daily cap here, with your boost; `boost`: your NFT boost
+// as the room last said (boosts.js), none until it has checked your NFTs (and none for guests).
+const ledger = { signedIn: false, wallet: null, name: null, today: 0, total: 0, cap: dailyCap(0, "home"), boost: NO_BOOST };
 function drawLedger() {
   $("earnToday").textContent = fmtMine(ledger.today);
   $("earnWho").textContent = ledger.signedIn ? `${ledger.name ?? short(ledger.wallet)} · ${fmtMine(ledger.total)} earned in all` : "Guest: sign in to earn (M)";
+  const b = ledger.boost, said = describe(b);
+  $("earnBoost").hidden = !ledger.signedIn || !said;
+  $("earnBoost").textContent = `⚡ ${[b.speed && `+${b.speed}% speed`, b.earn && `+${b.earn}% $MINE`, b.cap && `cap ${fmtMine(ledger.cap)}`, b.move && `+${b.move}% move`].filter(Boolean).join(", ")}`;
+  $("earnBoost").title = `Your boosts, from ${b.sources.map((x) => x.label).join(", ") || "nothing yet"}. Daily cap here: ${fmtMine(ledger.cap)} $MINE.`;
   panel?.render();
+}
+/// No boost (signed out, or reconnecting: the room checks your NFTs again first).
+function dropBoost() {
+  ledger.boost = NO_BOOST;
+  ledger.cap = dailyCap(0, zone);
 }
 let voice = null;
 const url = roomUrl();
@@ -409,7 +472,7 @@ if (url) {
       // Every chunk in range is asked for again once connected (edits made meanwhile come back with it).
       synced.clear();
       world.forgetRequests();
-      if (!on) mobs.clear();
+      if (!on) { mobs.clear(); dropBoost(); drawLedger(); }
       $("onlineN").hidden = !on;
     },
     welcome(serverTime, count) {
@@ -419,41 +482,117 @@ if (url) {
       voice?.reconnected();
       if (inv.armorPoints()) net.gear(inv.armorTiers());
     },
-    joined(id, name) { sysLine(`${name} joined the game`); },
-    left(id, name) { sysLine(`${name} left the game`); voice?.left(id); },
+    joined(id, name, landed) { sysLine(landed ? `${name} landed here by rocket` : `${name} joined the game`); },
+    left(id, name, to) { sysLine(to ? `${name} flew to ${ZONES[to]?.name ?? "another planet"}` : `${name} left the game`); voice?.left(id); },
+    gone(id) { voice?.left(id); },
+    /// The room has you on planet k (after a flight; or it refused one and you're still where it says).
+    /// The room has you on planet k: the answer to a flight; or a flight it refused; or, after a reload or a sign-in,
+    /// the zone your wallet was on (the room remembers it: a ticket has no time limit).
+    zoned(k, at) {
+      if (k === zone) {
+        // Not after our own flight: whatever was asked meanwhile may have been answered for another planet.
+        if (!trip) { synced.clear(); world.forgetRequests(); }
+        return;
+      }
+      if (trip) trip.to = k; // (a flight the room refused: the rocket lands where the room has you)
+      else toast(`You're on ${ZONES[k].name}${k === "home" ? "" : ", where you left off"}.`, "good");
+      switchZone(k, at ? { ...at, yaw: player.yaw } : landing(k));
+      drawZoneTag();
+    },
+    regrow(k) {
+      if (k !== zone) return;
+      world.setZone(zone);
+      synced.clear();
+      toast(`A new week: ${ZONES[zone].name} has grown back.`, "good");
+    },
+    sys(text) { sysLine(text); },
+    boss(m) { boss.set(m); },
+    bossHp(hp) { boss.setHp(hp); },
+    bossReward({ units, share, items, signedIn }) {
+      for (const [id, n] of items) if (inv.give(id, n)) toast("Your bag is full: some loot was left behind.", "bad");
+      const loot = items.map(([id, n]) => `${n > 1 ? `${n} ` : ""}${itemName(id)}`).join(", ");
+      const text = `${BOSS.name} is beaten! You did ${share}% of the damage${units ? `: +${fmtMine(units)} $MINE` : ""}${loot ? `, and got ${loot}` : ""}.`;
+      sysLine(text);
+      toast(text, "gold");
+      if (!signedIn) sysLine("Sign in to earn (M) to get a share of the boss's $MINE next time.");
+      sfx.win();
+    },
+    pvpHit(from, dmg, dx, dz) {
+      if (!zoneOf(zone).pvp || !player.alive) return;
+      lastPvp = { by: from, at: performance.now() };
+      showTarget(`${net.others.get(from)?.name ?? "Someone"} hit you!`, 900);
+      takeHit(dmg, dx, dz, 7);
+    },
+    pvpNo(target, why) {
+      if (why === "safe") showTarget("No fighting on the landing pad", 900);
+      else if (why === "nopvp") showTarget(zoneOf(zone).rule, 1200);
+    },
+    dropped(id) {
+      inv.clearAll();
+      if (id) toast("Everything you carried is in the loot chest where you fell.", "bad");
+    },
+    dropNo() { $("deadText").textContent = "You keep everything you carry."; },
+    chest(id, x, y, z, until, who) { chests.add(id, x, y, z, until, who); },
+    chests(list) { chests.set(list); },
+    chestGone(id, by) { chests.remove(id); if (by) sysLine(`${by} opened a loot chest.`); },
+    looted(id, items, who) {
+      chests.remove(id);
+      let left = 0;
+      for (const [item, n, d] of items) left += inv.give(item, n, d);
+      sfx.chest();
+      toast(`You took ${who}'s loot: ${items.length} stack${items.length === 1 ? "" : "s"}.${left ? " Your bag was full: some of it was left behind." : ""}`, "gold");
+    },
+    lootNo(id, why) { toast(why, "bad"); },
+    /// Your rocket tickets, as the room keeps them (after signing in, buying one, and using one).
+    tickets(t) { tickets = t; drawCard(); },
     voices(ids) { voice?.setVoices(ids); },
     voice(id, on) { voice?.setVoice(id, on); },
     rtc(from, data) { voice?.signal(from, data); },
     named(name) { ledger.name = name; drawLedger(); drawNameBox(); toast(`You're ${name} now.`, "good"); },
     edits(k, list) { world.setEdits(k, list); synced.add(k); },
     set(x, y, z, b) { world.set(x, y, z, b); },
-    earn({ cents, today, total, what }) {
+    earn({ units, today, total, what }) {
       Object.assign(ledger, { today, total });
-      if (what === "cap" || !cents) { if (what === "cap") showTarget("Daily $MINE limit reached: come back tomorrow (UTC)", 2500); }
+      if (what === "cap" || what === "worldcap" || !units) {
+        if (what === "cap") showTarget(`Your daily $MINE limit (${fmtMine(ledger.cap)}) is reached: come back tomorrow (UTC)`, 2500);
+        if (what === "worldcap") showTarget(`Today's ${WORLD_DAILY_CAP.toLocaleString("en-US")} $MINE for everyone is all mined: back at 00:00 UTC`, 2500);
+      }
       else {
         sfx.coin();
         const c = document.querySelector(".coin");
         c.classList.remove("pop"); void c.offsetWidth; c.classList.add("pop");
-        if (cents >= 300) toast(`+${fmtMine(cents)} $MINE · ${typeof what === "number" ? itemName(what) : what}`, "gold");
+        if (units >= toUnits(0.3)) toast(`+${fmtMine(units)} $MINE · ${typeof what === "number" ? itemName(what) : what}`, "gold"); // (coal and up)
       }
       drawLedger();
     },
+    /// Your NFT boost, as the room has checked it (after signing in, wearing a Crafter, equipping, flying).
+    boost(b, cap) {
+      const was = ledger.boost.sources.map((x) => x.label).join(", ");
+      ledger.boost = b;
+      if (Number.isFinite(cap)) ledger.cap = cap;
+      const now = b.sources.map((x) => x.label).join(", ");
+      if (now && now !== was) toast(`⚡ ${now}: ${describe(b)}`, "good");
+      drawLedger();
+    },
     ledger({ today, total }) { Object.assign(ledger, { today, total }); drawLedger(); },
-    mob(id, kind, x, y, z) { mobs.spawn(id, kind, x, y, z); },
+    mob(id, kind, x, y, z) { mobs.spawn(id, kind, x, y, z, zoneOf(zone).mobs); },
     mobdead(id) { confirmed.add(id); mobs.kill(id); sfx.win(); },
     chat(l) { if (!voice?.isMuted(l.name)) chatLine(l.name, l.text, l.mine); },
     count(n) { $("onlineN").textContent = `● ${n} online`; },
     error(text) { toast(text, "bad"); },
     signedin(wallet, token, l) {
-      Object.assign(ledger, { signedIn: true, wallet, name: l.name, today: l.today, total: l.total, cap: l.cap });
+      Object.assign(ledger, { signedIn: true, wallet, name: l.name, today: l.today, total: l.total, cap: l.cap, boost: NO_BOOST });
       drawNameBox();
       try { localStorage.setItem(`mwc:tok:${wallet.toLowerCase()}`, token); } catch {}
       drawLedger();
       if (panel?.worn !== null && panel?.worn !== undefined) net.wear(panel.worn);
+      resendTickets(wallet);
     },
     signedout(reason) {
       ledger.signedIn = false;
       ledger.name = null;
+      tickets = {};
+      dropBoost();
       try { localStorage.removeItem(`mwc:tok:${ledger.wallet?.toLowerCase()}`); } catch {}
       drawLedger();
       toast(reason);
@@ -518,6 +657,17 @@ connectChain().catch((e) => { console.warn("chain unavailable", e); return null;
       dressMe(traits);
       try { localStorage.setItem("mwc:wornTraits", JSON.stringify(traits ? packTraits(traits) : null)); } catch {}
     },
+    /// Crafter `id` was just leveled up to `level`: if it's the one you wear, the room reads it again at once (rather
+    /// than at its next check, minutes away), and once more a few seconds later if the boost it sends back doesn't show
+    /// the new level yet (its RPC a block behind).
+    leveled(id, level) {
+      if (!net?.online || !ledger.signedIn || panel?.worn !== id) return;
+      net.recheck();
+      setTimeout(() => {
+        const src = ledger.boost.sources.find((x) => x.slot === "crafter");
+        if (!src || !src.label.endsWith(` L${level}`)) net.recheck();
+      }, 5000);
+    },
   });
   if (!chain) return;
   chain.onAccount = (a) => {
@@ -525,7 +675,9 @@ connectChain().catch((e) => { console.warn("chain unavailable", e); return null;
     if (ledger.signedIn) net?.signOut();
     ledger.signedIn = false;
     ledger.wallet = a;
+    tickets = {};
     ledger.today = ledger.total = 0;
+    dropBoost();
     inv.load(a);
     if (a) tryResume(a);
     else net?.signOut();
@@ -578,6 +730,7 @@ function teleport(x, y, z) {
 const commandGame = {
   teleport,
   here: () => ({ x: player.pos.x, y: player.pos.y, z: player.pos.z }),
+  zone: () => zone,
   homeKey: () => `mwc:home:${(ledger.wallet ?? "guest").toLowerCase()}`,
   say: (text, kind) => { sysLine(text); if (kind === "bad") sfx.hurt?.(); },
 };
@@ -609,7 +762,7 @@ function lockMouse() {
 const keys = new Set();
 let mining = false, placing = false, placeAt = 0, attackAt = 0, playing = false;
 const anyOverlay = () => !$("inv").hidden || (panel?.isOpen ?? false) || !$("dead").hidden || !$("wallets").hidden || !$("chatForm").hidden
-  || !$("menu").hidden || !$("notice").hidden || !$("shop").hidden;
+  || !$("menu").hidden || !$("notice").hidden || !$("shop").hidden || cardOpen();
 function setMining(on) {
   if (mining === on) return;
   mining = on;
@@ -624,8 +777,9 @@ addEventListener("keydown", (e) => {
   else if (e.code === "KeyM") { panel?.isOpen ? panel.close() : panel?.open(); }
   else if (e.code === "KeyV") nextView();
   else if (e.code === "Enter" || e.code === "KeyT") { e.preventDefault(); openChat(); }
-  else if (e.code === "Escape") { closeInventory(); panel?.close(); shop.close(); $("menu").hidden = true; $("notice").hidden = true; }
+  else if (e.code === "Escape") { closeInventory(); panel?.close(); shop.close(); closeCard(); $("menu").hidden = true; $("notice").hidden = true; }
   else if (e.code === "KeyB") voice?.toggle();
+  else if (e.code === "KeyF" && !anyOverlay()) { if (rocket.onPad(player.pos.x, player.pos.y, player.pos.z) || lookingAt === "rocket") openRocket(); }
   else if (/^Digit[1-9]$/.test(e.code)) select(Number(e.code.slice(5)) - 1);
   if (e.code === "Space") e.preventDefault();
 });
@@ -716,7 +870,7 @@ $("siteBtn").addEventListener("click", () => panel?.open());
 $("viewBtn").addEventListener("click", nextView);
 $("titleSite").addEventListener("click", () => panel?.open());
 $("invBtn").addEventListener("click", () => ($("inv").hidden ? openInventory() : closeInventory()));
-const shop = createShop({ inv, atlas, toast, release: releaseMouse, resume: () => { if (!touch && playing) lockMouse(); } });
+const shop = createShop({ inv, atlas, toast, release: releaseMouse, resume: () => { if (!touch && playing) lockMouse(); }, chain: () => chain });
 $("shopBtn").addEventListener("click", () => shop.open());
 $("chatBtn").addEventListener("click", openChat);
 $("menuBtn").addEventListener("click", openMenu);
@@ -736,11 +890,15 @@ $("soundToggle").addEventListener("change", (e) => { if (e.target.checked === sf
 let noticeAt = 0;
 function spawnNotice() {
   const now = Date.now();
-  if (now - noticeAt < 60_000) return showTarget("Spawn is protected: go exploring (/wild)", 1500);
+  if (now - noticeAt < 60_000) return showTarget(`${zone === "home" ? "Spawn" : "The pad"} is protected: go exploring (/wild)`, 1500);
   noticeAt = now;
   setMining(false);
   placing = false;
   releaseMouse();
+  $("noticeTitle").textContent = zone === "home" ? "Spawn is protected" : "The landing pad is protected";
+  $("noticeText").innerHTML = zone === "home"
+    ? "Mining and building are off within 64 blocks of spawn. Walk out, or use <b>/wild</b> to find a safe spot."
+    : `Mining and building are off within ${PAD_R} blocks of the pad${zone === "boss" ? ", round the arena and along its path" : ""}. Walk out, or use <b>/wild</b> to find a safe spot.`;
   $("notice").hidden = false;
 }
 $("noticeGo").addEventListener("click", () => { $("notice").hidden = true; runCommand("/wild", commandGame); if (!touch) lockMouse(); });
@@ -775,25 +933,35 @@ if (url) fetch(url.replace(/^ws/, "http").replace(/\/ws$/, "/count")).then((r) =
 // ---------------------------------------------------------------- mining, placing, fighting
 let breaking = null; // { x, y, z, b, t, need }
 const ray = new THREE.Vector3();
+let lookingAt = null; // what's under the crosshair, if it isn't a block: "folk", "rocket", "chest", "boss" or "foe"
 function interact(dt, now) {
   const eye = eyePos;
   lookDir(ray);
   const hit = world.raycast(eye, ray, REACH);
   const mobHit = mobs.raycast(eye, ray, 3.6);
   const mobFirst = mobHit && (!hit || mobHit.t < hit.t);
-  // A villager in front of everything else: a click talks to them.
+  // Things that aren't blocks, nearest first: a villager, the rocket, a loot chest, the boss, and another player, but
+  // only where players can fight (a PvP zone, off its pad): anywhere else they can't be aimed at, let alone hit.
+  const things = [];
   const folk = villagers.raycast(eye, ray, 4.5);
-  if (folk && (!hit || folk.t < hit.t) && (!mobHit || folk.t < mobHit.t)) {
+  if (folk) things.push({ kind: "folk", t: folk.t, v: folk.v });
+  const rk = rocket.raycast(eye, ray, ROCKET_REACH);
+  if (rk) things.push({ kind: "rocket", t: rk.t });
+  const ch = chests.raycast(eye, ray, 4.5);
+  if (ch) things.push({ kind: "chest", t: ch.t, chest: ch.chest });
+  const bs = boss.raycast(eye, ray, 4.5);
+  if (bs) things.push({ kind: "boss", t: bs.t });
+  const foe = pvpAt(zone, player.pos.x, player.pos.z) ? net?.raycast(eye, ray, 3.6) : null; // (not from the safe pad)
+  if (foe) things.push({ kind: "foe", t: foe.t, id: foe.id, o: foe.o });
+  things.sort((a, b) => a.t - b.t);
+  const th = things[0];
+  lookingAt = null;
+  if (th && (!hit || th.t < hit.t) && (!mobHit || th.t < mobHit.t)) {
     outline.visible = false;
     crack.visible = false;
     breaking = null;
-    showTarget(`${folk.v.name} · ${folk.v.job} · ${folk.v.shop ? "click for the shop" : "click to talk"}`, 300);
-    if (mining && !talkLatch) {
-      talkLatch = true;
-      sayHello(folk.v);
-      if (folk.v.shop) { setMining(false); shop.open(); }
-    }
-    return;
+    lookingAt = th.kind;
+    return useThing(th, dt, now);
   }
   // Online, a chunk can be changed only once the room has sent its edits (so nothing is undone when they arrive).
   const allowed = hit && (!net || (net.online && synced.has(keyOf(Math.floor(hit.x / CHUNK), Math.floor(hit.z / CHUNK)))));
@@ -810,20 +978,18 @@ function interact(dt, now) {
       breaking = null;
       if (now - attackAt > (TOOLS[hand]?.swingMs ?? ATTACK_MS)) {
         attackAt = now;
-        const tool = TOOLS[hand];
-        const dmg = tool?.kind === "sword" ? tool.damage : HAND_DAMAGE + (tool?.kind === "pick" ? 1 : 0);
+        const dmg = swing(hand);
         mobs.hit(mobHit.mob, dmg, ray.x, ray.z);
-        hunger.tire(EXHAUSTION.attack);
         if (mobHit.mob.id > 0) net?.hit(mobHit.mob.id, dmg);
-        sfx.hit();
       }
     } else if (hit && allowed) {
-      if (protectedAt(hit.x, hit.z)) { spawnNotice(); breaking = null; }
+      if (protectedIn(zone, hit.x, hit.z)) { spawnNotice(); breaking = null; }
       else if (BLOCKS[hit.b].hardness === Infinity) breaking = null;
       else {
         if (!breaking || breaking.x !== hit.x || breaking.y !== hit.y || breaking.z !== hit.z || breaking.b !== hit.b) {
+          // (Your NFT speed boost breaks it sooner; the room allows for the same boost: boosts.js.)
           const bt = breakTime(hit.b, hand);
-          breaking = { x: hit.x, y: hit.y, z: hit.z, b: hit.b, t: 0, need: Math.max(0.05, bt.seconds), drops: bt.drops, tick: 0 };
+          breaking = { x: hit.x, y: hit.y, z: hit.z, b: hit.b, t: 0, need: Math.max(0.05, withSpeed(bt.seconds, ledger.boost.speed)), drops: bt.drops, tick: 0 };
         }
         breaking.t += dt;
         breaking.tick -= dt;
@@ -847,7 +1013,7 @@ function interact(dt, now) {
     const px = wrap(hit.x + hit.nx), py = hit.y + hit.ny, pz = wrap(hit.z + hit.nz); // (round the seam)
     if (s && s.id < 64 && BLOCKS[s.id]?.placeable) {
       const there = world.get(px, py, pz);
-      if (protectedAt(px, pz)) spawnNotice();
+      if (protectedIn(zone, px, pz)) spawnNotice();
       else if ((there === AIR || there === WATER || BLOCKS[there]?.plant) && !boxHitsBlock(player.pos, HALF, TALL, px, py, pz) && py > 0 && py < 128) {
         world.set(px, py, pz, s.id);
         inv.useSlot(player.sel);
@@ -861,11 +1027,65 @@ function interact(dt, now) {
   if (mobFirst) showTarget(mobHit.mob.def.name, 300);
 }
 
+/// A swing with what's in hand at something: its damage (a sword's, or a fist's, a pickaxe a little more); it tires
+/// you, and wears the tool (a sword 1 a hit, a pickaxe 2).
+function swing(hand) {
+  const tool = TOOLS[hand];
+  hunger.tire(EXHAUSTION.attack);
+  if (tool) {
+    const gone = inv.wearOut(player.sel, tool.kind === "sword" ? 1 : 2);
+    if (gone) broke(gone);
+  }
+  sfx.hit();
+  return tool?.kind === "sword" ? tool.damage : HAND_DAMAGE + (tool?.kind === "pick" ? 1 : 0);
+}
+
+/// Using what's under the crosshair that isn't a block: talk to a villager, open the rocket's card or a loot chest,
+/// hit the boss, or (in a PvP zone, off the pad) another player.
+function useThing(th, dt, now) {
+  const click = mining && !talkLatch && player.alive;
+  const hand = inv.slot(player.sel)?.id ?? null;
+  const ready = () => now - attackAt > (TOOLS[hand]?.swingMs ?? ATTACK_MS);
+  if (mining && player.alive) swingT += dt * 10;
+  else swingT = 0;
+  if (th.kind === "folk") {
+    showTarget(`${th.v.name} · ${th.v.job} · ${th.v.shop ? "click for the shop" : "click to talk"}`, 300);
+    if (click) {
+      talkLatch = true;
+      sayHello(th.v);
+      if (th.v.shop) { setMining(false); shop.open(); }
+    }
+  } else if (th.kind === "rocket") {
+    showTarget(touch ? "The rocket · tap ⛏ to fly" : "The rocket · click (or F) to fly", 300);
+    if (click) { talkLatch = true; openRocket(); }
+  } else if (th.kind === "chest") {
+    const left = Math.max(0, th.chest.until - (Date.now() + serverOffset));
+    showTarget(`${th.chest.who}'s loot · click to open · ${Math.floor(left / 60_000)}:${String(Math.floor((left % 60_000) / 1000)).padStart(2, "0")}`, 300);
+    if (click) { talkLatch = true; net ? net.loot(th.chest.id) : toast("Loot chests need the world server."); }
+  } else if (th.kind === "boss") {
+    showTarget(`${BOSS.name} · ${Math.max(0, boss.state?.hp ?? 0).toLocaleString()} / ${BOSS.hp.toLocaleString()}`, 300);
+    if (mining && player.alive && ready()) {
+      attackAt = now;
+      const dmg = swing(hand);
+      boss.flash();
+      if (net?.online) net.bossHit(dmg);
+      else toast("The boss fight needs the world server (offline right now).");
+    }
+  } else if (th.kind === "foe") {
+    const can = pvpAt(zone, player.pos.x, player.pos.z) && pvpAt(zone, th.o.pos.x, th.o.pos.z);
+    showTarget(can ? th.o.name : `${th.o.name} · no fighting on the landing pad`, 300);
+    if (mining && player.alive && can && ready()) {
+      attackAt = now;
+      net.pvpHit(th.id, swing(hand));
+    }
+  }
+}
+
 function finishBreak(b) {
   world.set(b.x, b.y, b.z, AIR);
   // A plant standing on the broken block goes with it.
   const above = world.get(b.x, b.y + 1, b.z);
-  if (BLOCKS[above]?.plant && !protectedAt(b.x, b.z)) {
+  if (BLOCKS[above]?.plant && !protectedIn(zone, b.x, b.z)) {
     world.set(b.x, b.y + 1, b.z, AIR);
     net?.breakBlock(b.x, b.y + 1, b.z);
   }
@@ -873,6 +1093,12 @@ function finishBreak(b) {
   sfx.broke(BLOCKS[b.b].tier > 0);
   net?.breakBlock(b.x, b.y, b.z);
   hunger.tire(EXHAUSTION.break);
+  // The tool in hand wears: a pickaxe 1 a block, anything else 2 (blocks that break instantly cost nothing).
+  const tool = TOOLS[inv.slot(player.sel)?.id];
+  if (tool && BLOCKS[b.b].hardness > 0) {
+    const gone = inv.wearOut(player.sel, tool.kind === "pick" ? 1 : 2);
+    if (gone) broke(gone);
+  }
   // What a block gives (blocks.js dropsFor: ore items, apples from leaves, berries from bushes...).
   const drops = BLK.dropsFor ? BLK.dropsFor(b.b, Math.random, b.drops) : (b.drops && BLOCKS[b.b].drop !== null ? [[BLOCKS[b.b].drop, 1]] : []);
   for (const [id, n] of drops) if (inv.add(id, n)) showTarget("Inventory full", 1200);
@@ -895,6 +1121,198 @@ function endTalk() {
   talking = null;
 }
 
+// ---------------------------------------------------------------- the rocket and the zones
+// Click the rocket (or stand on its pad and press F) for the card; pick a planet and the rocket lifts off with the
+// camera watching, the screen fades to the destination turning in space (the title's globe, with that planet's
+// picture), and you land standing on its pad once the ground there is ready.
+const rocket = createRocket(scene);
+rocket.setZone("home");
+const boss = createBoss(scene, {
+  hurt: (dmg, dx, dz) => takeHit(dmg, dx, dz, 9),
+  posOf: (id) => (id === net?.id ? player.pos : net?.others.get(id)?.pos ?? null),
+  boom: (k) => { shake = Math.max(shake, 0.6 * k); sfx.boom(k); },
+});
+const chests = createChests(scene);
+let trip = null; // a flight: { to, phase: "lift" | "space" | "land", t }
+let travelGlobe = null, shake = 0, onPadSaid = false;
+const pictures = new Map(); // zone -> the globe's picture of it (promise)
+const picture = (k) => { if (!pictures.has(k)) pictures.set(k, world.map(512, 256, k)); return pictures.get(k); };
+
+function openRocket() {
+  if (trip || !player.alive) return;
+  setMining(false);
+  placing = false;
+  releaseMouse();
+  openCard(zone, fly, () => { if (!touch && playing) lockMouse(); }, net ? ticketSales : null);
+}
+
+// Rocket tickets (zones.js): the room keeps each signed-in wallet's (["tickets", { zone: count }]) and uses one on each
+// trip out. Buying one: pay the zone's `ticket` in $MINE (MinePayments, kind 1: chain.pay approves exactly that, then
+// pays) and hand the room the transaction, which it checks on-chain. A payment the room hasn't confirmed yet (it was
+// offline, or the page closed) is kept here and sent again after the next sign-in. Offline (no room) trips are free.
+let tickets = {};
+const claiming = new Set(); // payments being handed to the room right now
+const tixKey = (w) => `mwc:tixpay:${w.toLowerCase()}`;
+function unconfirmed(w) {
+  try { const v = JSON.parse(localStorage.getItem(tixKey(w))); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+function setUnconfirmed(w, list) {
+  try { list.length ? localStorage.setItem(tixKey(w), JSON.stringify(list)) : localStorage.removeItem(tixKey(w)); } catch {}
+}
+/// Whether a trip to `to` needs a ticket you don't have.
+const needsTicket = (to) => !TICKETS_FREE && !!net && to !== "home" && to !== zone && zoneOf(to).ticket > 0 && !(tickets[to] > 0);
+/// Hands the room payment `hash` (from `wallet`) for a ticket to `to`: resolves with your tickets there now, or throws
+/// why not. Tried again a couple of times while the room can't read the chain yet.
+async function claimTicket(wallet, hash, to) {
+  claiming.add(hash);
+  try {
+    for (let tries = 0; ; tries++) {
+      const r = await net.ticket(hash, to);
+      const forget = () => setUnconfirmed(wallet, unconfirmed(wallet).filter((p) => p.hash !== hash));
+      if (r[0] === "ticketok") { forget(); return r[2]; }
+      if (!r[4]) forget();
+      if (!r[4] || tries >= 2) throw new Error(r[2]);
+      await new Promise((ok) => setTimeout(ok, 3000));
+    }
+  } finally {
+    claiming.delete(hash);
+  }
+}
+async function buyTicket(to, step) {
+  const Z = ZONES[to];
+  if (!chain?.hasPayments) throw new Error("Tickets can't be bought on this chain yet.");
+  if (!net?.online) throw new Error("The world server is offline right now, and it keeps the tickets. Try again soon.");
+  if (!ledger.signedIn) throw new Error("Sign in to earn first (Mining Site panel, M): the world server keeps tickets for your wallet.");
+  if (chain.account?.toLowerCase() !== ledger.wallet?.toLowerCase()) throw new Error("Log in with the wallet you signed in with.");
+  const wallet = ledger.wallet;
+  try {
+    const { hash } = await chain.pay(1, BigInt(Z.ticket) * 10n ** 18n, {
+      step,
+      onHash: (h) => setUnconfirmed(wallet, [...unconfirmed(wallet), { hash: h, zone: to, at: Date.now() }]),
+    });
+    step("Paid. The world server is checking the payment…");
+    const n = await claimTicket(wallet, hash, to);
+    toast(`Ticket to ${Z.name} bought: you have ${n}.`, "gold");
+    return n;
+  } catch (e) {
+    throw new Error(explain(e));
+  }
+}
+/// After signing in: payments for tickets the room never confirmed go to it again.
+function resendTickets(wallet) {
+  if (TICKETS_FREE) return;
+  const list = unconfirmed(wallet).filter((p) => Date.now() - p.at < 4 * 3600_000);
+  setUnconfirmed(wallet, list);
+  for (const p of list) {
+    if (claiming.has(p.hash) || !ZONES[p.zone]) continue;
+    claimTicket(wallet, p.hash, p.zone).then((n) => toast(`Your ticket to ${ZONES[p.zone].name} is ready: you have ${n}.`, "good")).catch(() => {});
+  }
+}
+const ticketSales = {
+  tickets: () => tickets,
+  signedIn: () => ledger.signedIn && !!net?.online,
+  balance: () => (chain?.account ? chain.mineBalance() : Promise.resolve(null)),
+  buy: buyTicket,
+  signIn: () => signIn().catch((e) => { throw new Error(explain(e)); }),
+  moreMine: () => (chain?.trade ? "buy some in the Mining Site panel's trade box (M)" : "convert your earnings in the Mining Site panel (M)"),
+};
+
+/// Fly to planet `to`: the take-off starts here; frame() runs the rest (tripStep).
+function fly(to) {
+  if (trip || !player.alive || !ZONES[to] || to === zone) return;
+  if (needsTicket(to)) return toast(`A trip to ${ZONES[to].name} needs a ticket: buy one at the rocket.`, "bad");
+  closeCard();
+  if (!touch && playing) lockMouse();
+  setMining(false);
+  placing = false;
+  breaking = null;
+  trip = { to, phase: "lift", t: 0 };
+  travelGlobe ??= createGlobe();
+  const Z = ZONES[to];
+  picture(to).then(({ data, w, h }) => data && travelGlobe.setMap(data, w, h, Z.globe.cap, Z.globe.air));
+  rocket.launch();
+  sfx.rocket();
+  me.root.visible = false;
+  heldGroup.visible = false;
+}
+function tripStep(dt) {
+  trip.t += dt;
+  const fade = $("fade");
+  if (trip.phase === "lift") {
+    if (trip.t > 2.4 && !trip.dark) { trip.dark = true; fade.hidden = false; void fade.offsetWidth; fade.classList.add("on"); }
+    if (trip.t > 2.95) {
+      // In space: the new planet loads round its pad meanwhile.
+      switchZone(trip.to);
+      Object.assign(trip, { phase: "space", t: 0 });
+      $("travelTo").textContent = `Flying to ${ZONES[trip.to].name}`;
+      $("travelLine").textContent = ZONES[trip.to].line;
+      $("travel").hidden = false;
+      fade.classList.remove("on");
+    }
+  } else if (trip.phase === "space") {
+    const ready = world.shown(player.pos.x, player.pos.z) && world.chunkCount() >= 25 && !(net?.online && net.flying);
+    if (trip.t > 2.6 && (ready || trip.t > 15)) { fade.classList.add("on"); Object.assign(trip, { phase: "land", t: 0 }); }
+  } else if (trip.phase === "land") {
+    if (trip.t > 0.5 && !trip.landed) {
+      trip.landed = true;
+      $("travel").hidden = true;
+      fade.classList.remove("on");
+      me.root.visible = view > 0;
+      heldGroup.visible = view === 0;
+      const Z = ZONES[zone];
+      toast(`Welcome to ${Z.name}${Z.label === "Home" ? "" : ` · ${Z.label}`}. ${Z.rule}.`, Z.pvp ? "bad" : "good");
+      sysLine(`${Z.name}: ${Z.line} ${Z.warn ?? Z.rule}.`);
+    }
+    if (trip.t > 1.0) { fade.hidden = true; trip = null; }
+  }
+}
+/// The camera through the take-off: off to one side of the pad, watching the rocket climb.
+const _mid = new THREE.Vector3(), _bent = new THREE.Vector3();
+function liftCamera() {
+  const pad = rocket.pad;
+  camera.position.set(pad.x + 13, pad.y + 2.2 + Math.min(6, trip.t * 1.5), pad.z + 2.5); // (east: between the lamp posts)
+  followPlanet(camera.position, 0);
+  camera.lookAt(bendPoint(rocket.middle(_mid), _bent));
+}
+
+/// Puts you on planet `k`, standing at `spot` (its pad, unless the room says otherwise): the world, the monsters, the
+/// loot chests, the boss, the rocket, the sky and the HUD all switch over, and the room is told.
+function switchZone(k, spot = landing(k)) {
+  zone = k;
+  world.setZone(k);
+  synced.clear();
+  mobs.clear();
+  confirmed.clear();
+  chests.clear();
+  boss.setZone(k);
+  rocket.setZone(k);
+  sky.setColours(ZONES[k].sky);
+  if (officeSign) officeSign.visible = k === "home";
+  if (k !== "home") for (const f of villagers.folk) { f.out = false; f.av.root.visible = false; }
+  player.pos.set(spot.x, spot.y, spot.z);
+  player.vel.set(0, 0, 0);
+  if (spot.yaw !== undefined) player.yaw = spot.yaw;
+  player.pitch = 0;
+  player.fallFrom = null;
+  breaking = null;
+  lastPvp = null;
+  onPadSaid = true; // (you land on it: no need to explain it)
+  if (net && net.zone !== k) net.fly(k);
+  drawZoneTag();
+}
+function drawZoneTag() {
+  const Z = ZONES[zone];
+  $("zoneTag").innerHTML = `<b>${Z.name}</b>${Z.label === "Home" ? "" : `<span>${Z.label}</span>`}<span class="rule ${Z.pvp ? "pvp" : ""}">${Z.pvp ? "PvP on (not on the pad)" : "No PvP"}</span>`;
+  $("zoneTag").title = Z.rule;
+}
+drawZoneTag();
+/// The first time you step on a rocket's pad, say what it's for.
+function padHint() {
+  const on = rocket.onPad(player.pos.x, player.pos.y, player.pos.z);
+  if (on && !onPadSaid) toast(touch ? "🚀 The rocket: tap ⛏ on it to fly to the other zones." : "🚀 The rocket: press F (or click it) to fly to the other zones.", "good");
+  onPadSaid = on;
+}
+
 // ---------------------------------------------------------------- the camera
 const eyePos = new THREE.Vector3();
 const back = new THREE.Vector3();
@@ -904,9 +1322,17 @@ function lookDir(out) {
   return out.set(-Math.sin(player.yaw) * c, Math.sin(player.pitch), -Math.cos(player.yaw) * c);
 }
 /// First person at your eyes; or pulled back (behind you, or out in front looking back), stopping short of walls.
+/// A blow nearby (the boss's slam) shakes the view a moment.
+function shakeCamera() {
+  if (shake <= 0) return;
+  camera.position.x += (Math.random() - 0.5) * shake * 0.5;
+  camera.position.y += (Math.random() - 0.5) * shake * 0.5;
+  camera.position.z += (Math.random() - 0.5) * shake * 0.5;
+}
 function placeCamera() {
   if (view === 0) {
     camera.position.copy(eyePos);
+    shakeCamera();
     camera.rotation.set(player.pitch, player.yaw, 0);
     return;
   }
@@ -915,6 +1341,7 @@ function placeCamera() {
   const hit = world.raycast(eyePos, back, 4.5);
   const d = hit ? Math.max(0.4, hit.t - 0.3) : 4.5;
   camera.position.copy(eyePos).addScaledVector(back, d);
+  shakeCamera();
   if (view === 1) {
     // A little above your head, so it doesn't sit on the crosshair (unless a ceiling is in the way).
     if (!world.solid(Math.floor(camera.position.x), Math.floor(camera.position.y + 0.5), Math.floor(camera.position.z))) camera.position.y += 0.4;
@@ -961,10 +1388,19 @@ function frame() {
   if (fresh.length && net?.online) net.chunks(fresh);
 
   if (playing) {
-    const ready = world.loaded(Math.floor(player.pos.x), Math.floor(player.pos.z));
+    if (trip) {
+      tripStep(dt);
+      // In space: the destination turning, coming closer, while its ground loads.
+      if (trip && trip.phase !== "lift" && !trip.landed) {
+        travelGlobe.render(renderer, dt, 0.7 + Math.min(1, trip.t / 4) * 0.5);
+        return;
+      }
+    }
+    const still = !!trip; // (no walking, falling or fighting while the rocket flies)
+    const ready = !still && world.loaded(Math.floor(player.pos.x), Math.floor(player.pos.z));
     // Movement.
     let fx = 0, fz = 0;
-    const typing = anyOverlay();
+    const typing = anyOverlay() || still;
     if (!typing) {
       if (keys.has("KeyW") || keys.has("ArrowUp")) fz += 1;
       if (keys.has("KeyS") || keys.has("ArrowDown")) fz -= 1;
@@ -977,7 +1413,8 @@ function frame() {
     forward.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
     right.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
     const sprint = hunger.food >= SPRINT_MIN_FOOD && (keys.has("ShiftLeft") || keys.has("ShiftRight") || (touch && Math.hypot(stickState.dx, stickState.dy) > 0.95));
-    const speed = (player.water ? 2.6 : sprint ? 5.8 : 4.3) * (player.alive ? 1 : 0);
+    // (On land, an NFT move boost speeds you up: boosts.js. The room's speed check allows far more than the fastest.)
+    const speed = (player.water ? 2.6 : withMove(sprint ? 5.8 : 4.3, ledger.boost.move)) * (player.alive ? 1 : 0);
     const tx = (forward.x * fz + right.x * fx) * speed, tz = (forward.z * fz + right.z * fx) * speed;
     const k = 1 - Math.exp(-dt * (player.onGround ? 14 : player.water ? 5 : 3));
     player.vel.x += (tx - player.vel.x) * k;
@@ -1022,7 +1459,9 @@ function frame() {
     eat(dt);
 
     eyePos.set(player.pos.x, player.pos.y + EYE, player.pos.z);
-    placeCamera();
+    if (trip?.phase === "lift") liftCamera();
+    else placeCamera();
+    shake = Math.max(0, shake - dt * 1.5);
     me.root.rotation.y = player.yaw + Math.PI;
     me.head.rotation.x = -player.pitch * 0.8;
     me.animate(dt, player.alive ? Math.hypot(player.vel.x, player.vel.z) : 0, mining && player.alive);
@@ -1032,6 +1471,10 @@ function frame() {
     heldGroup.rotation.x = -Math.abs(Math.sin(swingT)) * 0.6;
 
     mobs.update(dt, player);
+    rocket.update(dt);
+    boss.update(dt, Date.now() + serverOffset, player);
+    chests.update(Date.now() + serverOffset, now / 1000);
+    if (!trip) padHint();
     if (talking && (now > talking.until || Math.hypot(wrapDelta(talking.v.pos.x - player.pos.x), wrapDelta(talking.v.pos.z - player.pos.z)) > 7)) endTalk();
     offlineMobs(now);
     net?.tick(dt, { x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw, pitch: player.pitch });
@@ -1048,7 +1491,7 @@ function frame() {
   const top = world.topAt(Math.floor(camera.position.x), Math.floor(camera.position.z));
   const under = top >= 0 ? Math.max(0, Math.min(1, (top - camera.position.y - 2) / 10)) : 0;
   const s = sky.update(dev.time !== null ? dev.time * DAY_MS : Date.now() + serverOffset, camera, under);
-  villagers.update(dt, Date.now() + serverOffset, dev.time !== null ? dev.time * DAY_MS : Date.now() + serverOffset);
+  if (zone === "home") villagers.update(dt, Date.now() + serverOffset, dev.time !== null ? dev.time * DAY_MS : Date.now() + serverOffset);
   world.uniforms.daylight.value = s.daylight;
   world.uniforms.fogColor.value.copy(s.color);
   const far = world.radius * CHUNK;
@@ -1072,14 +1515,25 @@ function drawOnPlanet(dt) {
   mobs.draw();
   villagers.draw();
   net?.draw();
+  rocket.draw();
+  boss.draw();
+  chests.draw();
   if (me.root.visible) placeOnPlanet(meHolder, player.pos, 0);
   // The outline and cracks are boxes round a block's centre: stand them at the bent centre, turned with the ground.
   for (const o of [outline, crack]) if (o.visible) placeOnPlanet(o, o.userData.at, 0);
   for (const m of debris) placeOnPlanet(m, m.userData.p, 0);
-  if (officeSign) placeOnPlanet(officeSign, officeSign.userData.at, 0);
+  if (officeSign?.visible) placeOnPlanet(officeSign, officeSign.userData.at, 0);
 }
 const globe = createGlobe();
 world.map(512, 256).then(({ data, w, h }) => data && globe.setMap(data, w, h));
 drawHotbar();
 frame();
-if (local) window.mwc = { player, world, inv, mobs, villagers, camera, globe, renderer, scene, get net() { return net; }, get chain() { return chain; }, ledger, dev, select, setMining, signIn, dressMe, nextView };
+if (local) {
+  window.mwc = {
+    player, world, inv, mobs, villagers, camera, globe, renderer, scene, get net() { return net; }, get chain() { return chain; }, ledger, dev, select,
+    setMining, signIn, dressMe, nextView,
+    // The rocket's zones, for testing: where you are, fly (with the take-off) or switch at once, the boss, the chests.
+    get zone() { return zone; }, get trip() { return trip; }, fly, switchZone, openRocket, rocket, boss, chests, takeHit,
+    get lookingAt() { return lookingAt; },
+  };
+}

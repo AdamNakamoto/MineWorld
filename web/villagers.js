@@ -55,10 +55,12 @@ export const VILLAGERS = [
   { name: "Wren", job: "Crafter fan", home: "West House", work: "plaza", look: T(33, 1, 5, 1, 0, 3), lines: [
     "See my look? It's a MineWorld Crafter. You can mint one in the Mining Site panel and wear it.",
     "Press V to see yourself from outside. Your Crafter's face is on your miner!",
+    "Wearing a Crafter makes you a better miner too: faster blocks, more $MINE, a higher daily cap. Rarer and higher-level ones more.",
   ] },
   { name: "Odo", job: "Elder", home: "Town Hall", work: "Town Hall", look: T(17, 13, 2, 0, 1, 0), lines: [
     "We built this town at the top of the world. Everything past the gates is wild.",
     "Once you've signed in, pick a name in the menu (Esc) so folk know who you are.",
+    "Deepvein pays double but its monsters never sleep. And in Red Mesa, other miners can take everything you carry.",
   ] },
   { name: "Hazel", job: "Fisher", home: "Lake House", work: "pond", look: T(21, 6, 1, 1, 2, 2), lines: [
     "The pond's calm today. Mind the deep water out in the wild: you sink slowly, but you do sink.",
@@ -75,6 +77,7 @@ export const VILLAGERS = [
   { name: "Quill", job: "Mapmaker", home: "Barn", work: "orchard", look: T(8, 3, 3, 1, 4, 9), lines: [
     "The planet is 512 blocks around. Your position is in the top-left corner.",
     "From the clock tower you can see the horizon curve away. It really is a little planet.",
+    "Seen the rocket on the launch pad, north-east of the plaza? It flies to Deepvein, Cinderfall and Red Mesa.",
   ] },
 ];
 

@@ -80,8 +80,9 @@ export function createMobs(scene, world, hooks) {
   const live = new Map(); // id -> mob
   let clock = 0;
 
-  /// The room sent a monster for this player, near (x, y, z): stand it on the nearest floor there.
-  function spawn(id, kind, x, y, z) {
+  /// The room sent a monster for this player, near (x, y, z): stand it on the nearest floor there. `mul`: the zone's
+  /// { hp, damage } against home's (zones.js mobs: Deepvein's are tougher).
+  function spawn(id, kind, x, y, z, mul = { hp: 1, damage: 1 }) {
     const def = MOBS[kind];
     if (!def || live.has(id)) return;
     const tall = Math.ceil(def.size[1]);
@@ -107,7 +108,7 @@ export function createMobs(scene, world, hooks) {
     holder.add(group);
     scene.add(holder);
     const mob = {
-      id, kind, def, holder, group, anim, hp: def.hp, born: performance.now(),
+      id, kind, def, holder, group, anim, hp: Math.round(def.hp * mul.hp), damage: def.damage * mul.damage, born: performance.now(),
       pos: new THREE.Vector3(wrap(spot[0]), spot[1], wrap(spot[2])), vel: new THREE.Vector3(), yaw: 0, attackT: 1, hurtT: 0,
       dead: 0, wanderT: 0, wander: 0,
     };
@@ -168,7 +169,7 @@ export function createMobs(scene, world, hooks) {
       m.attackT -= dt;
       if (player.alive && dist < half + 1.1 && Math.abs(dy) < h && m.attackT <= 0) {
         m.attackT = 1.1;
-        hooks.bite(m.def.damage, dx / (dist || 1), dz / (dist || 1));
+        hooks.bite(m.damage, dx / (dist || 1), dz / (dist || 1));
       }
     }
   }

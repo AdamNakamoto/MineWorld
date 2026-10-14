@@ -5,6 +5,9 @@
 // doesn't cost the frame rate; this side keeps a copy of every loaded chunk's blocks (for physics, aiming and the rest
 // of the game) and sends the worker every change in the same order, so both copies stay the same. A block you break
 // or place is re-meshed right here at the start of the next frame, without waiting for the worker.
+//
+// It shows one planet at a time: the home planet or one of the rocket's zones (zones.js). setZone drops every chunk
+// and edit and starts over on the new planet (the worker does the same, in step).
 
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { BLOCKS, AIR, WATER } from "./blocks.js";
@@ -90,6 +93,8 @@ export function createWorld(scene, atlas) {
   let genFlight = 0, meshFlight = 0;
   let want = [], wantAt = null; // the chunks in range, nearest first, and where that was worked out
   let px0 = 0, pz0 = 0; // the last position update() saw
+  let zone = "home", zoneSeq = 0; // the planet shown, and the message that switched to it (older replies are stale)
+  const natural = (x, y, z) => naturalBlock(x, y, z, zone);
 
   // ---------------------------------------------------------------- the worker
   let seq = 0;
@@ -123,6 +128,8 @@ export function createWorld(scene, atlas) {
 
   function onReply(m) {
     if (m.t === "ready") { early = null; return; }
+    if ((m.t === "gen" || m.t === "mesh") && !(m.seq >= zoneSeq)) return; // made for the planet before
+
     if (m.t === "gen") onGen(m);
     else if (m.t === "mesh") onMesh(m);
     else if (m.t === "map") mapWaits.shift()?.(m);
@@ -131,9 +138,26 @@ export function createWorld(scene, atlas) {
   }
 
   const mapWaits = []; // (answered in the order asked)
-  /// The whole planet from above as w x h RGBA pixels (planet-map.js), made in the worker: resolves { w, h, data }.
-  function map(w, h) {
-    return new Promise((ok) => { mapWaits.push(ok); post({ t: "map", w, h }); });
+  /// A whole planet from above as w x h RGBA pixels (planet-map.js), made in the worker: resolves { w, h, data }.
+  /// `z`: which planet (the home planet if left out).
+  function map(w, h, z = "home") {
+    return new Promise((ok) => { mapWaits.push(ok); post({ t: "map", w, h, zone: z }); });
+  }
+
+  /// Show another planet (a zone key, zones.js): every chunk and edit of this one is dropped, and the new one is
+  /// generated round the player from the next update() on. (The caller asks the room for the new planet's edits.)
+  function setZone(z) {
+    zone = z;
+    for (const c of chunks.values()) dispose(c);
+    chunks.clear();
+    edits.clear();
+    pending.clear();
+    urgentSet.clear();
+    genFlight = meshFlight = 0;
+    want = [];
+    wantAt = null;
+    need = new Set();
+    zoneSeq = post({ t: "zone", zone: z });
   }
 
   // ---------------------------------------------------------------- blocks
@@ -220,7 +244,7 @@ export function createWorld(scene, atlas) {
     const c = chunks.get(id);
     if (!c) return;
     // Back to the generator's block wherever ours were never accepted, and the room's on top.
-    const r = patchEdits(c.blocks, cx * CHUNK, cz * CHUNK, prev, m, naturalBlock);
+    const r = patchEdits(c.blocks, cx * CHUNK, cz * CHUNK, prev, m, natural);
     if (!r.changed.length) return;
     for (const i of r.changed) c.tops[i & 255] = columnTop(c.blocks, i & 15, (i >> 4) & 15);
     if (r.lit) c.lights = chunkLights(c.blocks);
@@ -245,7 +269,7 @@ export function createWorld(scene, atlas) {
     };
     if (p?.touched) {
       // Edits made while it was being generated: lay the latest over it (the worker did the same with its copy).
-      const r = patchEdits(c.blocks, cx * CHUNK, cz * CHUNK, p.touched, edits.get(m.id) ?? new Map(), naturalBlock);
+      const r = patchEdits(c.blocks, cx * CHUNK, cz * CHUNK, p.touched, edits.get(m.id) ?? new Map(), natural);
       if (r.changed.length) { chunkTops(c.blocks, c.tops); c.lights = chunkLights(c.blocks); }
     }
     chunks.set(m.id, c);
@@ -471,7 +495,10 @@ export function createWorld(scene, atlas) {
   }
 
   return {
-    get, set, setEdits, update, raycast, loaded, uniforms, draw, map,
+    get, set, setEdits, update, raycast, loaded, uniforms, draw, map, setZone,
+    get zone() { return zone; },
+    /// Whether the chunk holding (x, z) is loaded and drawn (meshed), for an arrival to wait on.
+    shown(x, z) { const c = chunkAt(wrap(x), wrap(z)); return !!c?.meshes; },
     solid: (x, y, z) => SOLID[get(x, y, z)] === 1,
     /// The highest block of the column at (x, z) that keeps the sky off it (leaves don't), or -1 where nothing is
     /// loaded.

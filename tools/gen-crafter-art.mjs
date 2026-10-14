@@ -2,7 +2,8 @@
 // (contracts/test/CrafterVectors.sol) from the JavaScript that defines every Crafter:
 //
 //   web/crafters-art.js   the masks, palettes and trait options
-//   web/crafters.js       traitsOf (the shuffle and the weighted picks), pixels (the layer order) and svgOf (the SVG)
+//   web/crafters.js       traitsOf (the shuffle and the weighted picks), rarityOf, pixels (the layer order) and svgOf
+//                         (the SVG)
 //
 // The JS is the specification: the contract must draw every Crafter byte for byte like svg() does. Run after any
 // change to either file (or to this one):
@@ -296,28 +297,68 @@ assert(blob.length === T.end, "blob layout");
 // ---------------------------------------------------------------- names (from attributes() itself)
 
 const zero = Object.fromEntries(FIELDS.map((f) => [f, 0]));
-const base = RULES.attributes(zero);
-assert(Array.isArray(base) && base.length === 8 && base.every((a) => a.length === 2), "attributes() returns eight [trait_type, value] pairs");
+const { RARITIES, rarityOf } = RULES;
+assert(Array.isArray(RARITIES) && RARITIES.length >= 1 && RARITIES.length <= 4 && typeof rarityOf === "function", "crafters.js exports RARITIES (1-4 names) and rarityOf(traits)");
+/// attributes() lists the eight traits, then ["Rarity", RARITIES[rarityOf(t)]]: the traits' part.
+const traitAttributes = (t) => {
+  const a = RULES.attributes(t);
+  assert(Array.isArray(a) && a.length === 9 && a.every((x) => x.length === 2), "attributes() returns nine [trait_type, value] pairs: the eight traits, then Rarity");
+  assert(a[8][0] === "Rarity" && a[8][1] === RARITIES[rarityOf(t)], `attributes() must end with ["Rarity", RARITIES[rarityOf(t)]]`);
+  return a.slice(0, 8);
+};
+const base = traitAttributes(zero);
 const KINDS = base.map(([k]) => k);
 const fieldOf = KINDS.map((_, k) => {
-  const f = FIELDS.filter((f) => RULES.attributes({ ...zero, [f]: 1 })[k][1] !== base[k][1]);
+  const f = FIELDS.filter((f) => traitAttributes({ ...zero, [f]: 1 })[k][1] !== base[k][1]);
   assert(f.length === 1, `attribute ${KINDS[k]} must follow exactly one trait`);
   return f[0];
 });
 assert(new Set(fieldOf).size === 8, "each trait has its own attribute");
 for (const f of FIELDS) {
-  const changed = KINDS.filter((_, k) => RULES.attributes({ ...zero, [f]: 1 })[k][1] !== base[k][1]);
+  const changed = KINDS.filter((_, k) => traitAttributes({ ...zero, [f]: 1 })[k][1] !== base[k][1]);
   assert(changed.length === 1, `trait ${f} must change exactly one attribute`);
 }
 const SAFE = /^[A-Za-z0-9 ._-]+$/;
 const NAMES = KINDS.map((kind, k) => {
   assert(SAFE.test(kind), `trait type ${JSON.stringify(kind)}: letters, digits, spaces and . _ - only (it goes into JSON and Solidity as is)`);
   return Array.from({ length: COUNT[fieldOf[k]] }, (_, i) => {
-    const n = RULES.attributes({ ...zero, [fieldOf[k]]: i })[k][1];
+    const n = traitAttributes({ ...zero, [fieldOf[k]]: i })[k][1];
     assert(typeof n === "string" && SAFE.test(n), `${kind} ${i}: name ${JSON.stringify(n)}: letters, digits, spaces and . _ - only`);
     return n;
   });
 });
+// The rarity comes last: a ninth kind of name, worked out from the background and the hat.
+for (const n of RARITIES) assert(typeof n === "string" && SAFE.test(n), `rarity ${JSON.stringify(n)}: letters, digits, spaces and . _ - only`);
+NAMES.push([...RARITIES]);
+const ALL_KINDS = [...KINDS, "Rarity"];
+const kindCount = (k) => (k < KINDS.length ? COUNT[fieldOf[k]] : RARITIES.length);
+
+// ---------------------------------------------------------------- rarity
+
+/// rarityOf() as a table by background and hat. It must depend on those two alone: checked here against every
+/// option of every other trait (and below, against every token of the supply).
+const RARITY = BACKGROUNDS.map((_, b) => HATS.map((_, h) => rarityOf({ ...zero, background: b, hat: h })));
+for (let b = 0; b < COUNT.background; b++) {
+  for (let h = 0; h < COUNT.hat; h++) {
+    const r = RARITY[b][h];
+    assert(Number.isInteger(r) && r >= 0 && r < RARITIES.length, `rarityOf: ${r} for background ${b}, hat ${h} isn't an index into RARITIES`);
+    for (const f of FIELDS) {
+      if (f === "background" || f === "hat") continue;
+      for (let i = 0; i < COUNT[f]; i++) {
+        assert(rarityOf({ ...zero, [f]: i, background: b, hat: h }) === r, `rarityOf must depend on the background and the hat alone (it changed with ${f})`);
+      }
+    }
+  }
+}
+assert(2 * COUNT.background * COUNT.hat <= 256, "the rarity table (2 bits per background and hat) must fit a word");
+let rarityTable = 0n;
+RARITY.forEach((row, b) => row.forEach((r, h) => (rarityTable |= BigInt(r) << BigInt(2 * (b * COUNT.hat + h)))));
+const rarityOdds = RARITIES.map((_, r) => {
+  let w = 0;
+  BACKGROUNDS.forEach((bg, b) => HATS.forEach((hat, h) => (w += RARITY[b][h] === r ? bg.w * hat.w : 0)));
+  return w / (BACKGROUNDS.reduce((t, o) => t + o.w, 0) * HATS.reduce((t, o) => t + o.w, 0));
+});
+const pct = (x) => `${+(x * 100).toFixed(2)}%`;
 const nameBase = [];
 const flatNames = [];
 for (const list of NAMES) {
@@ -409,24 +450,32 @@ const tokens = TOKEN_IDS.map((id) => {
   const t = RULES.traitsOf(SEED, id, hash);
   assert(FIELDS.every((f) => Number.isInteger(t[f]) && t[f] >= 0 && t[f] < COUNT[f]), `token ${id}: traits out of range`);
   const svg = check(t, `token ${id}`);
-  return { id, t, svg: keccakText(svg), svgLength: svg.length, attributes: keccakText(attributesJson(t)) };
+  return { id, t, rarity: rarityOf(t), svg: keccakText(svg), svgLength: svg.length, attributes: keccakText(attributesJson(t)) };
 });
 const looks = LOOKS.map((t, i) => {
   const svg = check(t, `look ${i}`);
-  return { t, svg: keccakText(svg), svgLength: svg.length, attributes: keccakText(attributesJson(t)) };
+  return { t, rarity: rarityOf(t), svg: keccakText(svg), svgLength: svg.length, attributes: keccakText(attributesJson(t)) };
 });
+assert(new Set(looks.map((x) => x.rarity)).size === RARITIES.length, "the looks must cover every rarity");
 const sealedSvg = RULES.sealedSvg();
 {
   const px = Array(N * N).fill(rgb(SEALED.background, "SEALED.background"));
   for (const [pos, ch] of pixelsOf.sealed) px[pos] = resolveSealed(ch)[1];
   assert(contractSvg(px, rgb(SEALED.background, "SEALED.background")) === sealedSvg, "the sealed picture: the contract's SVG writer doesn't match sealedSvg()");
 }
-// Sanity: the whole supply under the vector seed takes 3,333 different hair x outfit x eyes x gaze combinations.
+// Sanity: the whole supply under the vector seed takes 3,333 different hair x outfit x eyes x gaze combinations. And
+// each token's rarity, by the table, matches rarityOf(): their counts and the whole run of them are vectors too.
+const rarityCounts = RARITIES.map(() => 0);
+const raritySequence = [];
 {
   const seen = new Set();
   for (let id = 1; id <= SUPPLY; id++) {
     const t = RULES.traitsOf(SEED, id, hash);
     seen.add(`${t.hair},${t.outfit},${t.eyes},${t.gaze}`);
+    const r = rarityOf(t);
+    assert(r === RARITY[t.background][t.hat], `token ${id}: rarityOf doesn't match the table`);
+    rarityCounts[r]++;
+    raritySequence.push(r);
   }
   assert(seen.size === SUPPLY, "traitsOf gave two tokens the same hair, outfit, eyes and gaze");
 }
@@ -458,8 +507,9 @@ const wrap = (text, first, next, width = 118) => {
   return out.join("\n");
 };
 const fieldDoc = { hair: "HAIRS", outfit: "OUTFITS", eyes: "EYES", gaze: "0 left, 1 right", background: "BACKGROUNDS", skin: "SKINS", hat: "HATS (0 None)", blush: "BLUSHES" };
+const rarityDoc = RARITIES.map((n, r) => `${r} ${n} ${pct(rarityOdds[r])}`).join(", ");
 const kindOfField = Object.fromEntries(fieldOf.map((f, k) => [f, k]));
-const pieces = KINDS.map((kind, k) => (k === 0 ? `[{"trait_type":"${kind}","value":"` : `"},{"trait_type":"${kind}","value":"`));
+const pieces = ALL_KINDS.map((kind, k) => (k === 0 ? `[{"trait_type":"${kind}","value":"` : `"},{"trait_type":"${kind}","value":"`));
 const noHat = HATS.findIndex((h) => !h.mask);
 const HIDE_FROM = 8 * N; // a hat hides the hair above row 8
 const head = words(SVG_HEAD);
@@ -505,6 +555,15 @@ ${wrap(`Weighted pick of x % ${total(BLUSHES)}: ${weightDoc(BLUSHES)}.`, "    //
         return _pick(x, ${packWeights(BLUSHES)}, ${BLUSHES.length}, ${total(BLUSHES)});
     }
 
+${wrap(`rarityOf() in web/crafters.js: ${rarityDoc} (by the weights). It depends on the background and the hat alone, so it's kept as a table of the two: 2 bits each, at 2 * (background * ${COUNT.hat} + hat).`, "    /// @notice ", "    ///         ")}
+    uint256 internal constant RARITIES = ${RARITIES.length};
+
+${wrap(`The rarity (${RARITIES.map((n, r) => `${r} ${n}`).join(", ")}) of a Crafter with background \`bg\` and hat \`hatIndex\`. Indexes past their tables give nonsense: callers check them first.`, "    /// @notice ", "    ///         ")}
+    function rarity(uint256 bg, uint256 hatIndex) internal pure returns (uint8) {
+        // (64 hex digits: 40 would make an address literal)
+        return uint8((0x${rarityTable.toString(16).padStart(64, "0")} >> (2 * (bg * ${COUNT.hat} + hatIndex))) & 3);
+    }
+
     /// @dev pick() in web/crafters.js: \`x % total\`, walked through the weights (16 bits each, first option lowest).
     function _pick(uint256 x, uint256 weights, uint256 n, uint256 total) private pure returns (uint8) {
         uint256 r = x % total;
@@ -521,7 +580,7 @@ ${wrap(`Weighted pick of x % ${total(BLUSHES)}: ${weightDoc(BLUSHES)}.`, "    //
 /// @notice MineWorld Crafters' pictures, drawn on chain: every Crafter as a 24 x 24 pixel-art SVG, painted layer by
 ///         layer from the masks and palettes of web/crafters-art.js (outfit, face, ink, eyes, blush, hair, hat) and
 ///         written exactly as svgOf() in web/crafters.js writes it. Also the sealed picture shown before the reveal,
-///         and the trait names marketplaces list. Holds no state and has no owner.
+///         the trait names marketplaces list, and each Crafter's rarity. Holds no state and has no owner.
 contract CrafterArt {
     /// @notice A trait index past the end of its table.
     error BadTraits();
@@ -538,7 +597,7 @@ ${wrap(`Roles: ${ROLES.map((r, i) => `${i} ${r}`).join(", ")}.`, "    ///      "
     bytes private constant ART =
 ${hexLines(blob, "        ")};
 
-${wrap(`The trait names, back to back (${KINDS.map((k, i) => `${k} from ${nameBase[i]}`).join(", ")}), and where each one ends (uint16).`, "    /// @dev ", "    ///      ")}
+${wrap(`The trait names, back to back (${ALL_KINDS.map((k, i) => `${k} from ${nameBase[i]}`).join(", ")}), and where each one ends (uint16).`, "    /// @dev ", "    ///      ")}
     bytes private constant NAMES =
 ${flatNames.reduce((lines, n) => {
     const last = lines.length - 1;
@@ -578,22 +637,30 @@ ${hexLines(nameEnds.flatMap((e) => [e >> 8, e & 255]), "        ")};
     }
 
     /// @notice The traits as marketplaces list them: a JSON array of {"trait_type", "value"} in the order of
-    ///         attributes() in web/crafters.js (${KINDS.join(", ")}).
+    ///         attributes() in web/crafters.js (${ALL_KINDS.join(", ")}).
     function attributes(Traits calldata t) external pure returns (string memory) {
         _check(t);
         bytes memory names = NAMES;
         bytes memory ends = NAME_ENDS;
         return string.concat(
 ${KINDS.map((kind, k) => `            '${pieces[k]}',\n            _name(names, ends, ${nameBase[k]} + uint256(t.${fieldOf[k]})),`).join("\n")}
+            '${pieces[KINDS.length]}',
+            _name(names, ends, ${nameBase[KINDS.length]} + uint256(CrafterRules.rarity(t.background, t.hat))),
             '"}]'
         );
     }
 
-    /// @notice A trait's name: \`kind\` in the attributes' order (${KINDS.map((k, i) => `${i} ${k}`).join(", ")}).
+    /// @notice A Crafter's rarity: ${RARITIES.map((n, r) => `${r} ${n}`).join(", ")} (rarityOf() in web/crafters.js).
+    function rarityOf(Traits calldata t) external pure returns (uint8) {
+        _check(t);
+        return CrafterRules.rarity(t.background, t.hat);
+    }
+
+    /// @notice A trait's name: \`kind\` in the attributes' order (${ALL_KINDS.map((k, i) => `${i} ${k}`).join(", ")}).
     function traitName(uint256 kind, uint256 index) external pure returns (string memory) {
-        if (kind >= ${KINDS.length}) revert BadTraits();
+        if (kind >= ${ALL_KINDS.length}) revert BadTraits();
         uint256 first = (0x${[...nameBase].reverse().map((b) => b.toString(16).padStart(4, "0")).join("_")} >> (16 * kind)) & 0xffff;
-        uint256 count = (0x${KINDS.map((_, k) => COUNT[fieldOf[k]]).reverse().map((b) => b.toString(16).padStart(4, "0")).join("_")} >> (16 * kind)) & 0xffff;
+        uint256 count = (0x${ALL_KINDS.map((_, k) => kindCount(k)).reverse().map((b) => b.toString(16).padStart(4, "0")).join("_")} >> (16 * kind)) & 0xffff;
         if (index >= count) revert BadTraits();
         return _name(NAMES, NAME_ENDS, first + index);
     }
@@ -779,11 +846,20 @@ ${Object.entries(SOURCES).map(([k, rel]) => `    bytes32 internal constant ${k} 
     bytes32 internal constant SEALED_SVG = ${keccakText(sealedSvg)};
 
     /// @notice keccak256 of the names, back to back, of each trait (in the attributes' order).
-${KINDS.map((k, i) => `    bytes32 internal constant ${k.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_NAMES = ${keccakText(NAMES[i].join("|"))}; // "|"-joined, ${NAMES[i].length}`).join("\n")}
+${ALL_KINDS.map((k, i) => `    bytes32 internal constant ${k.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_NAMES = ${keccakText(NAMES[i].join("|"))}; // "|"-joined, ${NAMES[i].length}`).join("\n")}
+
+    /// @notice How many of the ${SUPPLY} Crafters under SEED have each rarity (${RARITIES.join(", ")}).
+    function rarityCounts() internal pure returns (uint256[${RARITIES.length}] memory) {
+        return [${rarityCounts.map((c, i) => (i === 0 ? `uint256(${c})` : `${c}`)).join(", ")}];
+    }
+
+    /// @notice keccak256 of every Crafter's rarity under SEED, one byte each, from #1 to #${SUPPLY}.
+    bytes32 internal constant RARITY_SEQUENCE = ${toHex(keccakBytes(Uint8Array.from(raritySequence)))};
 
     struct Token {
         uint256 id;
         Traits traits;
+        uint8 rarity; // rarityOf(traits)
         bytes32 svg; // keccak256 of svg(traits)
         uint256 svgLength;
         bytes32 attributes; // keccak256 of the attributes JSON array
@@ -791,6 +867,7 @@ ${KINDS.map((k, i) => `    bytes32 internal constant ${k.toUpperCase().replace(/
 
     struct Look {
         Traits traits;
+        uint8 rarity;
         bytes32 svg;
         uint256 svgLength;
         bytes32 attributes;
@@ -799,13 +876,13 @@ ${KINDS.map((k, i) => `    bytes32 internal constant ${k.toUpperCase().replace(/
     /// @notice ${tokens.length} tokens under SEED: traitsOf(SEED, id), and their pictures.
     function tokens() internal pure returns (Token[] memory v) {
         v = new Token[](${tokens.length});
-${tokens.map((x, i) => `        v[${i}] = Token(${x.id}, ${traitsSol(x.t)}, ${x.svg}, ${x.svgLength}, ${x.attributes});`).join("\n")}
+${tokens.map((x, i) => `        v[${i}] = Token(${x.id}, ${traitsSol(x.t)}, ${x.rarity}, ${x.svg}, ${x.svgLength}, ${x.attributes});`).join("\n")}
     }
 
-    /// @notice ${looks.length} looks that between them draw every option of every trait.
+    /// @notice ${looks.length} looks that between them draw every option of every trait, and every rarity.
     function looks() internal pure returns (Look[] memory v) {
         v = new Look[](${looks.length});
-${looks.map((x, i) => `        v[${i}] = Look(${traitsSol(x.t)}, ${x.svg}, ${x.svgLength}, ${x.attributes});`).join("\n")}
+${looks.map((x, i) => `        v[${i}] = Look(${traitsSol(x.t)}, ${x.rarity}, ${x.svg}, ${x.svgLength}, ${x.attributes});`).join("\n")}
     }
 }
 `;
@@ -814,7 +891,8 @@ ${looks.map((x, i) => `        v[${i}] = Look(${traitsSol(x.t)}, ${x.svg}, ${x.s
 
 const outputs = [[OUT_ART, art], [OUT_VECTORS, vectors]];
 const lengths = [...tokens, ...looks].map((x) => x.svgLength);
-const summary = `art data ${blob.length} bytes (${MASK_LIST.length} masks, ${Object.values(pixelsOf).reduce((t, p) => t + p.length, 0)} pixels, ${palettes.length} palettes, ${layers.length} layers), names ${nameText.length} bytes; ${tokens.length} token and ${looks.length} look vectors, SVGs ${Math.min(...lengths)}-${Math.max(...lengths)} bytes, sealed ${sealedSvg.length}`;
+const rarityNote = RARITIES.map((n, r) => `${n} ${rarityCounts[r]}`).join(", ");
+const summary = `rarity over the ${SUPPLY} under the vector seed: ${rarityNote} (odds ${rarityOdds.map(pct).join(" / ")}); art data ${blob.length} bytes (${MASK_LIST.length} masks, ${Object.values(pixelsOf).reduce((t, p) => t + p.length, 0)} pixels, ${palettes.length} palettes, ${layers.length} layers), names ${nameText.length} bytes; ${tokens.length} token and ${looks.length} look vectors, SVGs ${Math.min(...lengths)}-${Math.max(...lengths)} bytes, sealed ${sealedSvg.length}`;
 if (process.argv.includes("--check")) {
   const stale = outputs.filter(([rel, text]) => {
     try {

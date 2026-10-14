@@ -5,7 +5,7 @@
 
 import {
   AIR, GRASS, DIRT, STONE, COBBLE, SAND, GRAVEL, PLANKS, LOG, LEAVES, BEDROCK, WATER, GLASS, BRICKS, LAMP, ROOF,
-  FLOWER_YELLOW, FLOWER_RED, FLOWER_BLUE, BERRY_BUSH, TALL_GRASS,
+  FLOWER_YELLOW, FLOWER_RED, FLOWER_BLUE, BERRY_BUSH, TALL_GRASS, PAD_PLATE,
 } from "./blocks.js";
 import { TOWN } from "./rules.js";
 
@@ -15,6 +15,11 @@ export const TOWN_R = 56; // townBlock draws everything within this radius (insi
 
 /// The Mining Office: walls from OFFICE.x0..x1, z0..z1, door on the south side.
 export const OFFICE = { x0: -6, x1: 6, z0: -14, z1: -6, door: 0 };
+
+/// The rocket's launch pad (zones.js): a round pad of landing plates in the north-east, on open grass between the
+/// north road, the lane and the clock tower (nobody's door or walk goes there), with a short brick path south to the
+/// lane. `r2`: the pad's squared radius; the rocket itself is drawn on its middle (rocket.js).
+export const LAUNCH = { x: 12, z: -34, r2: 30, path: [-28, -24] };
 
 // ---------------------------------------------------------------- buildings
 // Each building: its footprint (inclusive), which side its door is on (n, s, e or w) and where along that side,
@@ -57,7 +62,8 @@ export const DOORS = Object.fromEntries([["Mining Office", { x: TOWN.x + OFFICE.
 // What each column of the town is, worked out once: a building (its index), a road, the plaza, a garden...
 const R = TOWN_R, SIZE = 2 * R + 1;
 const PLAN = new Int16Array(SIZE * SIZE).fill(-100); // >= 0: building index; negative: one of the kinds below
-const GROUND = -100, ROAD = -1, LANE = -2, PLAZA = -3, GARDEN = -4, POND = -5, SHORE = -6, HEDGE = -7, ORCHARD = -8;
+const GROUND = -100, ROAD = -1, LANE = -2, PLAZA = -3, GARDEN = -4, POND = -5, SHORE = -6, HEDGE = -7, ORCHARD = -8,
+  PAD = -9, PAD_PATH = -10;
 const at = (dx, dz) => (dz + R) * SIZE + (dx + R);
 for (let dz = -R; dz <= R; dz++) {
   for (let dx = -R; dx <= R; dx++) {
@@ -73,6 +79,9 @@ for (let dz = -R; dz <= R; dz++) {
     if (pond <= 22) k = POND;
     else if (pond <= 34 && k === GROUND) k = SHORE;
     if (dx >= -46 && dx <= -38 && dz >= 30 && dz <= 42 && k === GROUND) k = ORCHARD;
+    // The launch pad (only ever on open ground: tools/check-worldgen.mjs checks it overlaps nothing).
+    if ((dx - LAUNCH.x) ** 2 + (dz - LAUNCH.z) ** 2 <= LAUNCH.r2 && k === GROUND) k = PAD;
+    else if (Math.abs(dx - LAUNCH.x) <= 1 && dz >= LAUNCH.path[0] && dz <= LAUNCH.path[1] && k === GROUND) k = PAD_PATH;
     PLAN[at(dx, dz)] = k;
   }
 }
@@ -84,6 +93,7 @@ BUILDINGS.forEach((b, i) => {
 const LAMPS = new Set();
 for (const d of [16, 40, 48]) for (const s of [-1, 1]) { LAMPS.add(`${s * d},3`); LAMPS.add(`${s * d},-3`); LAMPS.add(`3,${s * d}`); LAMPS.add(`-3,${s * d}`); }
 for (const [x, z] of [[7, 7], [-7, 7]]) LAMPS.add(`${x},${z}`);
+for (const sx of [-4, 4]) for (const sz of [-4, 4]) LAMPS.add(`${LAUNCH.x + sx},${LAUNCH.z + sz}`); // round the launch pad
 const GATES = new Set();
 for (const s of [-1, 1]) { GATES.add(`2,${s * 52}`); GATES.add(`-2,${s * 52}`); GATES.add(`${s * 52},2`); GATES.add(`${s * 52},-2`); }
 const ORCHARD_TREES = [[-44, 33], [-40, 37], [-44, 40], [-40, 31]];
@@ -220,6 +230,13 @@ export function townBlock(x, y, z) {
       case LANE: return GRAVEL;
       case POND: return WATER;
       case SHORE: return SAND;
+      case PAD: {
+        // Landing plates, a brick rim, and a lamp set in the rim at each side.
+        const px = dx - LAUNCH.x, pz = dz - LAUNCH.z, r2 = px * px + pz * pz;
+        if (r2 <= 20) return PAD_PLATE;
+        return (px === 0 || pz === 0) && r2 === 25 ? LAMP : BRICKS;
+      }
+      case PAD_PATH: return BRICKS;
       default: return GRASS;
     }
   }

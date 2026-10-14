@@ -14,9 +14,9 @@ const amount = (wei) => {
 
 export function createTrade(chain, el, { run, isBusy, onLogin }) {
   const T = {
-    symbol: "$MINE", supply: 1_000_000_000, balance: (s) => s.mine,
+    symbol: "$MINE", supply: 21_000_000, balance: (s) => s.mine, // (all there will ever be: the market cap is over this)
     quote: chain.trade.quote, market: chain.trade.market, execute: chain.trade.execute,
-    note: "Every trade pays 4% of its IMD side to the MineWorldCraft wallet. The pool started with $MINE only (half the supply, locked forever), so sells fill once buyers have brought IMD in.",
+    note: "Every trade pays 4% of its IMD side to the MineWorldCraft wallet. The pool started with $MINE only (10.5M, half the supply, locked forever), so sells fill once buyers have brought IMD in.",
   };
   let side = "buy", asset = "ETH", slipBps = 100, text = "";
   let snap = null, market = null, marketAt = 0;

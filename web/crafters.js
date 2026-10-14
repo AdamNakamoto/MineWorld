@@ -56,12 +56,25 @@ export function traitsOf(seed, id, hash) {
   };
 }
 
-/// The traits as marketplaces list them.
+/// Rarity, from a Crafter's background and hat (rarityOf gives an index into this list).
+export const RARITIES = ["Common", "Rare", "Legendary"];
+
+/// A Crafter's rarity: 2 (Legendary) with the Gold background; 1 (Rare) with the Night background or any hard hat
+/// (Hard Hat Yellow, Orange or White); 0 (Common) otherwise. With the weights in crafters-art.js that's 6%, 25.2% and
+/// 68.8% of Crafters. You can see it in the picture.
+export function rarityOf(t) {
+  const background = BACKGROUNDS[t.background].name;
+  if (background === "Gold") return 2;
+  if (background === "Night" || HATS[t.hat].mask === "hard") return 1;
+  return 0;
+}
+
+/// The traits as marketplaces list them, then the rarity. (The contract adds the Crafter's level after these.)
 export function attributes(t) {
   return [
     ["Background", BACKGROUNDS[t.background].name], ["Skin", SKINS[t.skin].name], ["Eyes", EYES[t.eyes].name],
     ["Gaze", t.gaze ? "Right" : "Left"], ["Blush", BLUSHES[t.blush].name], ["Hair", HAIRS[t.hair].name],
-    ["Hat", HATS[t.hat].name], ["Outfit", OUTFITS[t.outfit].name],
+    ["Hat", HATS[t.hat].name], ["Outfit", OUTFITS[t.outfit].name], ["Rarity", RARITIES[rarityOf(t)]],
   ];
 }
 

@@ -27,8 +27,10 @@ a Cloudflare Worker for the shared world, Foundry contracts reusing Courier's au
 ./dev.sh
 ```
 
-Starts Anvil on port 8610, deploys $MINE, MiningSites and the Crafters, gives the dev players (Anvil accounts 2-9) some
-$MINE and two revealed Crafters each, writes `web/chain.json` and `multiplayer/.dev.vars`, and serves the site at
+Starts Anvil on port 8610, deploys $MINE, its vault, MiningSites, MinePayments, the Crafters and CrafterLevels, gives the
+dev players (Anvil accounts 2-9) 1,000,000 play $MINE (from a stand-in for the pool's half: there's no pool, so no
+trade box, on a plain local chain) and two revealed Crafters each, writes `web/chain.json` and `multiplayer/.dev.vars`,
+and serves the site at
 http://localhost:5810. Then, once it prints "Game", start the local world server (it reads `.dev.vars` when it starts,
 so start it after `dev.sh`, and restart it whenever `dev.sh` restarts):
 
@@ -48,8 +50,9 @@ run `python3 tools/rpc-relay.py` and fork through it: `FORK_URL=http://127.0.0.1
 WASD to move, Space to jump, Shift to sprint, the mouse to look. Hold the left button to mine (or attack, or click a
 villager to talk), right click to place the block in your hand or hold it to eat, 1-9 or the wheel to pick, **E** the
 inventory and crafting, **M** the Mining Site panel, **V** to see your miner from outside, **B** voice chat, **T** or
-Enter to chat, **Esc** the menu (your name, voice, settings). Phones get a stick, look-by-drag, and mine / place / jump
-buttons. Chat commands: `/wild` (a safe random spot far from spawn), `/spawn`, `/sethome` and `/home`, `/help`.
+Enter to chat, **F** the rocket (on its pad), **Esc** the menu (your name, voice, settings). Phones get a stick,
+look-by-drag, and mine / place / jump buttons. Chat commands: `/wild` (a safe random spot far from spawn), `/spawn`,
+`/sethome` and `/home`, `/help`; on a zone they work within it (`/spawn` is its landing pad, `/home` only where it was set).
 
 Punch a tree for logs, craft planks and sticks, then a wooden pickaxe; stone needs a pickaxe, iron ore a stone one,
 gold, diamonds and $MINE crystals an iron one. Monsters (Mudlings, Cave crawlers, Bone rattlers, Rock golems) come out
@@ -61,8 +64,20 @@ The Smithy's shop (**H**, or Garrick the armorer at the Smithy's door; `web/shop
 Crystal pickaxe, the fastest), weapons (up to the Crystal sword and the slow, heavy war hammer) and armor: helmet,
 chestplate, leggings and boots in Padded, Iron, Diamond and Crystal. Armor takes a share of monsters' hits (a full
 Diamond set, 20 points, takes two thirds), shows as a row over the hearts and on your miner for everyone to see; click
-a piece in the inventory to wear it. Prices are in $MINE but **nothing is charged while the game is being tested**
-(`FREE_WHILE_TESTING`); paying with the $MINE token on-chain comes later, at the same prices.
+a piece in the inventory to wear it. Prices are in $MINE (from 5 for torches or apples and 8 for padded boots to 3,950
+for the war hammer; the best full kit is 21,025), paid on-chain: **Buy** approves exactly the price for MinePayments and
+pays it (the "shop" kind: 75% burned, 25% to the project treasury), and once the receipt shows that payment the items go
+into the inventory. Inventories live in the browser, so the game checks the receipt itself and remembers every payment
+that delivered, so one payment never adds items twice; an order cut short after paying (a reload) is delivered the next
+time the shop opens. Buying needs a logged-in wallet with enough $MINE (the shop shows the balance). `FREE_WHILE_TESTING`
+in `web/shop.js` makes it all free again.
+
+Tools, weapons and armor wear out, with the classic block games' numbers (`maxDurability` in `web/blocks.js`): wood 59
+uses, stone 131, iron 250, diamond 1,561, crystal 2,031, the war hammer 1,200; armor by piece and tier (an iron
+chestplate 240, a diamond one 528). A pickaxe wears 1 for each block it breaks (none for blocks that break instantly)
+and 2 for each hit; a sword 1 for each hit and 2 for each block; each worn piece of armor a quarter of every monster's
+hit (at least 1). A bar under the icon shows what's left (hover for the count), and at zero the item breaks. Two worn
+copies of the same item combine into one at the top of the crafting list: their uses left, plus 5% of a new one's.
 
 ## The planet
 
@@ -86,6 +101,48 @@ houses, work in the shops and walk the roads to the plaza, the garden and the po
 one is follows the clock alone, so every player sees them in the same place with nothing sent over the network. Click
 one to talk: they know the game.
 
+## The rocket and its zones
+
+A rocket stands on the launch pad in the town's north-east (`web/town.js` `LAUNCH`, on open grass between the north road,
+the lane and the clock tower). Click it, or stand on the pad and press **F**, for the destination card; it lifts off,
+the screen fades to the destination turning in space, and you land on its pad (`web/rocket.js`). **Tickets:** one
+ticket per trip out (home to a zone, or a zone to another), with no time limit; the way home is always free, and from
+home the next trip out needs a new one. The world server remembers each wallet's zone, so a reload or a dropped
+connection lands you back there. A ticket costs the zone's `ticket` in $MINE, paid in full to the treasury: Deepvein
+and Cinderfall 2,100 each, Red Mesa 210. Sign in, then **Buy ticket** on the rocket's card: the game approves exactly
+the price for MinePayments and pays it (the "ticket" kind), and hands the world server the transaction; the server
+reads its receipt and keeps the ticket for the wallet if the payment succeeded, came from that signed-in wallet, was a
+ticket of at least that zone's price, is at most 3 hours old and never bought a ticket before. The card then says how
+many you have there; the next trip out there uses one. Guests can't fly out. `TICKETS_FREE` in `web/zones.js` makes
+every trip free again. Every zone is its own 512-block planet, bent like home, from its
+own seed (`web/zonegen.js`); its landing pad (the middle of the planet) is protected for 20 blocks: no mining, building or
+fighting there. Everything tunable is in `web/zones.js`; what the zones pay is in `web/rewards.js` (`ZONE_PAY`, `BOSS_POOL`).
+
+| Zone | | |
+|---|---|---|
+| Home planet | No PvP | The town and its villagers |
+| **Deepvein**, the 2x Mine Zone | No PvP | Rocky crags riddled with caves, stone over harder deep rock (1.5x stone's breaking time), glowcaps on cave floors, rare ores three times as common (iron 2x, coal 1.5x). Everything earned pays **2x** (blocks and monsters), within the usual 300 a wallet (more with a cap boost) and 35,000 a day for everyone. Monsters come day and night, up to 5 at once, about every 10 s, with 1.5x health and damage. Its edits are kept a week at a time: every Monday 00:00 UTC it grows back |
+| **Cinderfall**, the Boss Zone | No PvP | Ash plains, basalt, volcanoes with glowing craters, cracks of fire and ember-tipped spires. A stone-brick path runs north from the pad to the arena, where **Ashgrim, the Cinder Colossus** (an original giant of cooled lava with a molten heart, 1,500 HP) fights everyone at once |
+| **Red Mesa**, the PvP Zone | PvP off the pad | Terraced mesas in banded clays over red sand, dry riverbeds and cacti. Players can hit each other; a player beaten here drops everything they carry |
+
+**The boss.** The world server keeps its health and picks its moves; every game animates each move from its start time,
+so all see the same thing and nothing is sent while it moves. It walks towards someone, **slams** both fists (a red ring
+on the ground shows the reach: step out before they land), **throws a molten rock** at where someone stands (an orange
+ring marks it: move off it), and once it's under 60% it **calls up monsters** beside it. The server checks every hit on it
+(no faster than a sword, at most the war hammer's 9, from within reach of where it is). Beaten, it pays 150 $MINE (`BOSS_POOL`) shared
+by the signed-in players who hit it, by the damage each did (each share with its player's earn boost, through the ledger
+and its caps), plus diamonds, gold, iron
+and $MINE crystals for everyone who did 5% or more (more, and maybe a Crystal sword, for the top hitter); it's back 10
+minutes later. Left alone it heals.
+
+**PvP.** Only in Red Mesa, never on its pad, and nowhere else (the zone's `pvp` flag; elsewhere other players can't even
+be aimed at). The server checks each hit (both in the zone, off the pad, within reach, no faster than a swing, at most 9
+damage, not just after landing) and passes it to the one hit, whose game takes off its armor's share and wear. A player
+beaten there leaves everything they carried (inventory and armor, with wear) in a loot chest where they fell; the server
+keeps it 3 minutes and hands it, once, to the first player close enough to open it. Inventories live in the browser, so
+the chest holds what the beaten player's game reports (cleaned up by the server); a chest is only made right after a
+checked hit from the named player, once per knock-out.
+
 ## Players
 
 Other players walk the planet with you, with name tags and the Crafter they wear. After signing in (Mining Site panel),
@@ -102,18 +159,46 @@ servers only, so players behind strict networks may not connect until a TURN rel
 
 | | |
 |---|---|
-| $MINE | 1,000,000,000, fixed, minted once. ERC-20 with permit; no owner, no mint, no transfer tax |
-| Liquidity | 50% (500M) locked forever, single-sided, in one $MINE/IMD Uniswap v4 pool |
-| Mining vault | 50% (500M) in `MiningSites`, paid out only for what players earn in the game |
+| $MINE | 21,000,000 in all, the same as Courier World's $STAMP. ERC-20 with permit, no transfer tax |
+| Liquidity | 50% (10,500,000) locked forever, single-sided, in one $MINE/IMD Uniswap v4 pool at launch |
+| Mining vault | 50% (10,500,000), minted by `MineVault` only as players convert what they earn in the game: at most 35,000 a day, whatever the rules contract asks, so it lasts at least 300 days (longer still: earnings a site's rate doesn't convert are never minted) |
 | Trading fee | Every swap pays 4% of its IMD side to `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` (taken by the pool's hook; the hook is renounced at launch, so only that wallet can ever move its own fee) |
-| Mining site | Opened once per wallet with ETH (0.005 at launch), paid to the treasury. Needed to convert earnings to $MINE |
-| Crafters NFT | 3,333 cosmetic pixel-art characters, drawn and stored entirely on chain, no two alike. Free blind mint (5 a transaction, 10 a wallet; the owner can set a price, paid straight to the treasury), revealed after the mint. 5% royalty, enforced |
-| No yield farming | Nothing pays for holding or waiting. $MINE comes only from playing |
+| Mining site | Opened once per wallet with ETH (0.005 at launch), paid to the treasury. Needed to convert earnings to $MINE. A new site is level 1 and converts 50% of what it earns; upgrades raise it to 60%, 70%, 85% and 100% at levels 2 to 5, for 4,620, 18,942, 77,662 and 318,415 $MINE (about $1,000 for all four at a $50,000 market cap) |
+| Crafter levels | Every Crafter starts at level 1; its holder raises it to level 5 for 2,310, 9,471, 38,831 and 159,207 $MINE (half a site's). The level stays with the Crafter when it's sold, shows as its "Level" trait, and adds to its boost (below) |
+| Shop and tickets | Paid in $MINE through `MinePayments` at the game's prices (`web/shop.js` `CATALOG`, `web/zones.js` `ticket`): the shop's 75% burned and 25% to the treasury; rocket tickets (2,100 for Deepvein or Cinderfall, 210 for Red Mesa) all to the treasury |
+| Burns | Site upgrades and Crafter levels burn 75% of what they cost and send 25% to the treasury, as the shop does. The token counts every mint against its 21M cap, so a burn is for good: the supply only ever shrinks from what was minted |
+| Crafters NFT | 3,333 pixel-art characters, drawn and stored entirely on chain, no two alike. The one a player wears is how their miner looks, and boosts their mining by its rarity and level (below). Free blind mint (5 a transaction, 10 a wallet; the owner can set a price, paid straight to the treasury), revealed after the mint. 5% royalty, enforced |
+| Owner and treasury | `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` owns the vault, the three upgradeable contracts and the Crafters, and is the treasury (site sales, the unburned share of upgrades and payments, tickets, any mint price, the royalty) and the fee recipient. Ownership moves in two steps and can't be renounced; it can be handed to a multisig or a timelock |
+| No yield farming | Nothing pays for holding or waiting. $MINE comes only from playing; NFT boosts only add to what a player does |
+
+**What can change and what can't.** Fixed forever: the token (21M cap, no owner, no proxy, no pause, no blocklist, no
+transfer tax), the mining vault (35,000 a day and 10,500,000 in all, not upgradeable; its distributor can only be
+replaced in the open, two days after it's proposed), the pool's locked liquidity and its 4% fee to the fee recipient
+(the hook is renounced), and the Crafters' art, rarities and 5% royalty rate. Upgradeable by the owner (UUPS proxies, every site,
+level and total kept across upgrades): `MiningSites` (site price, upgrade costs, rates, burn share, more levels up to
+20, the daily caps, the voucher key, pause), `CrafterLevels` (costs, burn share, more levels) and `MinePayments` (each
+kind's burn share, new kinds). Whatever runs in them, nobody can mint more than the vault allows: the most an owner or
+a leaked server key could take is the vault's 35,000 a day.
 
 **Earning.** Signing in with a wallet (one free signature) makes the world server count that wallet's earnings:
-breaking natural blocks and defeating monsters, at the rates in `web/rewards.js` (stone 0.5, coal 3, iron 8, gold 20,
-diamond 60, a $MINE crystal 150; monsters 6-25). Blocks players placed pay nothing. A wallet earns up to 3,000 $MINE a
-UTC day. To add an activity or change a rate, edit `web/rewards.js` and deploy the server and the site.
+breaking natural blocks and defeating monsters, at the rates in `web/rewards.js` (grass, dirt and sand 0.01; stone and
+logs 0.05; coal 0.3, iron 0.8, gold 2, diamond 6, a $MINE crystal 15; monsters 0.6 to 2.5; Deepvein pays 2x). Blocks
+players placed pay nothing. A wallet earns up to 300 $MINE a UTC day before boosts (times a zone's `capMul` in
+`web/zones.js`, 1 everywhere for now), and everyone together at most 35,000 a day, boosts or not. The ledger counts
+ten-thousandths of a $MINE, so a percentage boost on a 0.01 block is kept exactly. To add an activity or change a rate,
+edit `web/rewards.js` and deploy the server and the site.
+
+**NFT boosts.** Every NFT a player uses can boost their mining while they play (`web/boosts.js`, shared by the game and
+the server; nothing pays for holding). One item per slot, and the slots add up: **speed** (blocks break that much faster;
+the server allows for it in its break-rate check), **earn** (more $MINE for every block, monster and boss share),
+**cap** (a higher daily cap) and **move** (faster walking, for the vehicles to come). Totals are capped at +150% speed,
++150% earn, +300% cap and +100% move. Today the **Crafter** slot is live: its rarity gives Common +5% speed, +5% earn,
++10% cap; Rare +10/+10/+25; Legendary +20/+20/+50; its level (bought on-chain from CrafterLevels) adds L2 +5/+5/+10,
+L3 +15/+15/+30, L4 +30/+30/+60, L5 +50/+50/+100. Skins, companions, auras and vehicles have their slots and placeholder
+tables waiting (contract `null`, "Coming soon" in the panel); the top of `web/boosts.js` says how to plug a collection
+in. The server reads what a player owns when they sign in, wear or equip (`ownerOf`, the Crafter's rarity from its
+seed, `levelOf`; a level it can't read counts as 1 and is read again a minute later), checks again every 10 minutes
+while they earn, and tells the game; the Mining Site panel (M) and a line under the HUD's earnings show it.
 
 **Checks.** The server runs the same world generator as the game (`web/worldgen.js`), so it knows what every block
 was. It pays for a break only if the block is really there, within reach of where the player really is, outside the
@@ -121,17 +206,32 @@ town, and not faster than the best pickaxe allows; monsters are spawned by the s
 harder than the best sword's. A player who moves faster than anyone can earns nothing for a while.
 
 **Converting.** With a mining site open, **Convert to $MINE** asks the server for a voucher for the wallet's lifetime
-total and `MiningSites.claim` pays the difference from what it has paid before, within a per-wallet daily cap (5,000)
-and a global one (1,000,000); the owner can change both up to hard limits (100,000 and 5,000,000) and pause claims. A
-leaked server key can take at most the daily caps until it's paused and replaced.
+total (in wei) and `MiningSites.claim` converts the earnings it hasn't converted before at the site's rate (50% at level
+1, up to 100% at level 5) at the moment it claims, so an upgrade before claiming converts everything still unclaimed at
+the better rate. It pays within a per-wallet daily cap (1,500 $MINE at launch, at most 3,500) and one across everyone
+(35,000, the vault's daily limit); the owner can change the caps and pause claims. The panel shows both what you earned
+and what you'll receive. A leaked server key can take at most the daily caps until it's paused and replaced.
+
+**Upgrading.** The Mining Site panel (M) shows your site's level and rate, the next level's rate and cost, and an
+**Upgrade to level N** button: it approves exactly that cost for MiningSites, then calls `upgradeSite` (75% burned, 25%
+to the treasury), and the claim box shows the new rate at once. Under the Crafters, **Levels** lists each Crafter you
+hold with its rarity, level, boost, and the next level's cost and boost; **Level up** approves exactly the cost for
+CrafterLevels, then calls `upgrade(tokenId)`. If it's the Crafter you wear, the game asks the world server to read it
+again at once (`["recheck"]`), so the new boost counts within seconds. Every $MINE payment in the game approves exactly
+what it costs, never more, so a price raised meanwhile makes it fail instead of charging more. Short of $MINE? Buy some
+in the panel's trade box.
 
 ## Contracts
 
 | | |
 |---|---|
-| `MineToken.sol` | $MINE: 500M to the hook (pool), 500M to MiningSites (vault) at deploy |
+| `MineToken.sol` | $MINE: Courier World's $STAMP (StampToken) line for line. ERC-20 with permit and burn, 21M cap counting every mint (so burns are for good), 10.5M to the hook (pool) at launch, the rest minted only by its one minter, the vault (set once). Renounced at deploy: no owner, no proxy, no pause, no tax |
+| `MineVault.sol` | The mining vault, $MINE's minter: mints straight to players when its distributor (MiningSites) asks, never more than 35,000 in a UTC day nor 10,500,000 in all. Not upgradeable. The owner can replace the distributor only in the open (`proposeDistributor`, then `acceptDistributor` two days later) |
 | `MineHook.sol`, `MineRouter.sol`, `MineEthRouter.sol` | Courier's audited `StampHook` and routers for $MINE: one pool, locked launch liquidity, 4% fee on the IMD side, buy/sell with IMD or ETH. Differences from StampHook: launch supply up to 1B, lowest start tick -300,000 (as CourierPad), market cap over the fixed supply |
-| `MiningSites.sol` | Mining sites (ETH, once per wallet) and the vault's claims: EIP-712 vouchers from the world server, daily caps, pause. Ownable2Step, can't be renounced |
+| `MiningSites.sol` | UUPS proxy, the rules for converting: mining sites (ETH, once per wallet) with levels 1 to 5 converting 50/60/70/85/100% (`upgradeSite`, paid in $MINE: `upgradeCost(level)`, 75% burned), and the claims the vault pays: EIP-712 vouchers from the world server, a daily cap per wallet (1,500, at most 3,500) and across everyone (35,000), pause. The owner tunes prices, rates, costs and caps, adds levels (up to 20) and can upgrade it |
+| `CrafterLevels.sol` | UUPS proxy: each Crafter's level (`levelOf`, 1 to `maxLevel`), raised by its holder with `upgrade(tokenId)` for `upgradeCost(level)` $MINE (75% burned). The Crafters show it as the "Level" trait once pointed at it (`setAttributesExtension`) |
+| `MinePayments.sol` | UUPS proxy: `pay(kind, amount, ref)` takes $MINE from the player (with their exact approval), burns the kind's share, sends the rest to the treasury and emits `Paid(player, kind, amount, burned, ref)`, which the game checks. Kinds: 0 "shop" (75% burned), 1 "ticket" (nothing burned); the owner can change burn shares and add kinds. Prices live in the game, not here |
+| `MinePayer.sol`, `UpgradeCosts.sol`, `lib/OwnedUUPS.sol` | What the three proxies share: taking a payment (burned share burned from the payer's wallet, the rest to the treasury; nothing ever held), level costs, and two-step ownership that can't be renounced, with the owner alone upgrading. State in ERC-7201 namespaced storage |
 | `MineWorldCrafters.sol` | MineWorld Crafters (Courier Skins adapted): 3,333 Crafters, commit-reveal, traits from a keyed shuffle (each token a different hair, outfit, eyes and gaze) and weighted picks, fully on-chain metadata and pictures, enforced 5% royalty (ERC721-C, OpenSea's registry). The owner can update the website and social links (`setLinks`) and the collection's picture and banner (`setCollectionImages`) shown on OpenSea at any time |
 | `CrafterArt.sol` | The Crafters' pictures as 24 x 24 SVGs, generated from `web/crafters-art.js` and `web/crafters.js` by `tools/gen-crafter-art.mjs`; never edit it by hand |
 
@@ -162,7 +262,8 @@ Settings are in `contracts/launch.env` (public values only). The real launch, af
    with the sale closed; the reveal secret goes to `~/mineworldcraft-crafters-reveal-secret.txt`, never printed; keep
    it safe). Open the mint with `setSaleOpen(true)`; after it, `setSaleOpen(false)`, wait for the next block, then
    `reveal(secret)`.
-4. Set `CHAIN_ID`, `CHAIN_RPC`, `MINING_ADDRESS` and `CRAFTERS_ADDRESS` in `multiplayer/wrangler.toml`, deploy the
+4. Set `CHAIN_ID`, `CHAIN_RPC`, `MINING_ADDRESS`, `CRAFTERS_ADDRESS`, `LEVELS_ADDRESS` (CrafterLevels, for the
+   Crafters' boosts) and `PAYMENTS_ADDRESS` (MinePayments, for rocket tickets) in `multiplayer/wrangler.toml`, deploy the
    Worker, put its address in `web/config.js` (`LIVE_ROOM`) and its domain in the Worker's `ORIGINS`, and publish the
    site with `web/deployments/robinhood.json` (written by `export-web.sh`).
 5. On OpenSea: set the collection's links and pictures (or call `setLinks` and `setCollectionImages`) and turn on
@@ -175,8 +276,16 @@ cd multiplayer
 npx wrangler deploy
 ```
 
-One Durable Object holds the world: who's playing, every edit (per chunk), the monsters, chat, names, voice set-up
-messages and the $MINE ledger (16 shards). The terrain itself is never stored: both sides generate it from the same seed. Built for Cloudflare's
+One Durable Object holds the world: who's playing and on which planet, every edit (per chunk, per planet: home's under
+`c2:`, a zone's under `z<zone>:`, Deepvein's under `zdeep<week>:` with older weeks cleared), the monsters, the boss, the
+PvP loot chests, chat, names, voice set-up messages, rocket tickets (`tix:<wallet>`: how many to each zone; every
+payment that bought one under `tixTx:<hash>`, kept for good) and the $MINE ledger (16 shards under `led2:`, in ten-thousandths of
+a $MINE; the old `led:` shards in hundredths are converted the first time they're read). The terrain itself is never stored: both sides generate it from the same seed. Built for Cloudflare's
 free plan: hibernating WebSockets, pings answered without waking the room, positions sent only while moving, writes
 batched every 30 seconds (the free plan allows 100,000 requests and 100,000 written rows a day per account, shared by
 every Worker on it, so a separate Cloudflare account keeps Courier World's room unaffected).
+
+For tests on your own machine, `npx wrangler dev --var DEV_HOOKS:1` turns on two dev hooks, `["dev", "today", mine]`
+and `["dev", "world", mine]` (set a signed-in wallet's earnings today, or everyone's), so the daily caps can be tried
+without mining for hours. They only answer connections made to that local server; never put `DEV_HOOKS` in
+`wrangler.toml`.

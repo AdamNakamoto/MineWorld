@@ -33,8 +33,15 @@
       <div class="card earn" title="$MINE earned (the world server's ledger)">
         <div><span class="coin" aria-hidden="true"></span><b id="earnToday">0</b> <span class="muted">today</span></div>
         <div class="small muted"><span id="earnWho">Guest: sign in to earn</span></div>
+        <div class="small boost-line" id="earnBoost" hidden></div>
       </div>
+      <div class="card small zone-tag" id="zoneTag" title="The planet you're on"></div>
       <div class="card small mono" id="where"></div>
+    </div>
+    <div id="bossBar" class="boss-bar" hidden>
+      <b id="bossName"></b>
+      <div class="boss-hp"><i id="bossHp"></i></div>
+      <span id="bossNote" class="small"></span>
     </div>
     <div class="topright">
       <span id="onlineN" class="card small" hidden></span>
@@ -62,7 +69,7 @@
         <input id="chatInput" maxlength="140" autocomplete="off" enterkeyhint="send" placeholder="Say something, or /help for commands" aria-label="Chat message">
       </form>
     </div>
-    <div id="help" class="help card small">Click to play · WASD move · Space jump · Shift sprint · Left click mine / attack · Right click place or eat · 1–9 / wheel pick · E inventory · M Mining Site · V view · B voice · T chat · /help commands</div>
+    <div id="help" class="help card small">Click to play · WASD move · Space jump · Shift sprint · Left click mine / attack · Right click place or eat · 1–9 / wheel pick · E inventory · M Mining Site · V view · B voice · T chat · F the rocket (on its pad) · /help commands</div>
   </div>
 
   <div id="touch" class="touch" hidden>
@@ -74,9 +81,9 @@
 
   <div id="notice" class="overlay notice" hidden>
     <div class="sheet small-sheet">
-      <h2 class="gold-title">Spawn is protected</h2>
+      <h2 class="gold-title" id="noticeTitle">Spawn is protected</h2>
       <p class="sub">Go exploring to mine and build</p>
-      <p class="muted">Mining and building are off within 64 blocks of spawn. Walk out, or use <b>/wild</b> to find a safe spot.</p>
+      <p class="muted" id="noticeText">Mining and building are off within 64 blocks of spawn. Walk out, or use <b>/wild</b> to find a safe spot.</p>
       <button id="noticeGo" class="btn wide">Go exploring (/wild)</button>
       <button id="noticeStay" class="btn wide">Stay at spawn</button>
     </div>
@@ -110,11 +117,13 @@
       <section class="box">
         <h3>Controls</h3>
         <p class="note">WASD move · Space jump · Shift sprint · mouse look · left click mine / attack · right click place, or hold to eat ·
-        1–9 or wheel pick · E inventory (click armor to wear it) · H shop · M Mining Site · V view · B voice · T or Enter chat · Esc menu</p>
+        1–9 or wheel pick · E inventory (click armor to wear it) · H shop · M Mining Site · V view · B voice · T or Enter chat ·
+        F the rocket (stand on its pad, or click it) · Esc menu</p>
       </section>
       <section class="box">
         <h3>Commands</h3>
-        <p class="note"><b>/wild</b> a safe random spot far from spawn · <b>/spawn</b> back to town · <b>/sethome</b> and <b>/home</b> · <b>/help</b></p>
+        <p class="note"><b>/wild</b> a safe random spot far from spawn · <b>/spawn</b> back to town (or a zone's pad) · <b>/sethome</b> and
+        <b>/home</b> · <b>/help</b></p>
       </section>
     </div>
   </div>
@@ -133,8 +142,8 @@
   <div id="shop" class="overlay" hidden>
     <div class="sheet shop-sheet">
       <header><h2>⚒ The Smithy</h2><button class="x" data-close aria-label="Close">✕</button></header>
-      <p class="note">Tools for mining, weapons and armor. Prices are in $MINE; <b>free while the game is being tested</b>: paying
-      with the $MINE token comes later.</p>
+      <p class="note" id="shopNote"></p>
+      <p class="card-status" id="shopStatus" role="status" hidden></p>
       <div class="seg tabs" role="tablist">
         <button data-tab="Tools">Tools</button><button data-tab="Weapons">Weapons</button><button data-tab="Armor">Armor</button><button data-tab="Supplies">Supplies</button>
       </div>
@@ -154,10 +163,22 @@
   <div id="dead" class="overlay dead" hidden>
     <div class="sheet small-sheet">
       <h2>Knocked out!</h2>
-      <p class="muted">You keep everything you carry.</p>
+      <p class="muted" id="deadText">You keep everything you carry.</p>
       <button id="respawn" class="btn big">Back to town</button>
     </div>
   </div>
+
+  <div id="rocketCard" class="overlay" hidden>
+    <div class="sheet rocket-sheet">
+      <header><h2>🚀 Where to?</h2><button class="x" data-close aria-label="Close">✕</button></header>
+      <p class="note" id="rocketTicket"></p>
+      <p class="card-status" id="rocketStatus" role="status" hidden></p>
+      <div id="rocketList" class="dests"></div>
+    </div>
+  </div>
+
+  <div id="fade" class="fade" hidden></div>
+  <div id="travel" class="travel" hidden><b id="travelTo"></b><span id="travelLine"></span></div>
 
   <div id="wallets" class="overlay" hidden>
     <div class="sheet small-sheet">

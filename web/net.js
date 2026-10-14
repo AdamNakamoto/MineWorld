@@ -2,10 +2,18 @@
 // $MINE ledger. The room (multiplayer/) checks every break and every hit; this side just reports them and draws
 // what comes back. Position updates go out only when you move (the room runs on Cloudflare's free plan, which
 // counts incoming messages).
+//
+// The others you see are the ones on your planet (zones.js): flying somewhere (zone()) tells the room, drops everyone
+// you saw, and ignores what the room says about the old planet until it answers "zoned" with the new one's players.
+//
+// $MINE amounts from the room (earn, signedin, boost, bossreward) are in ledger units, ten-thousandths of a $MINE
+// (rewards.js UNIT). Your NFT boost (boosts.js) comes as ["boost", ...] whenever it changes. Your rocket tickets
+// (zones.js) come as ["tickets", { zone: count }] after signing in and whenever they change.
 
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { createAvatar } from "./avatar.js";
 import { unpackTraits } from "./crafters.js";
+import { unpackBoost } from "./boosts.js";
 import { wrap, wrapDelta } from "./rules.js";
 import { place } from "./planet.js";
 
@@ -37,14 +45,19 @@ function nameTag(text) {
   return s;
 }
 
+// What the room says about the planet you're on (ignored between leaving one and the room's "zoned" for the next).
+const PLANET_NEWS = new Set(["p", "act", "join", "leave", "look", "gear", "set", "edits", "mob", "boss", "bosshp",
+  "chest", "chests", "chestgone", "pvphit", "regrow"]);
+
 export function createNet(url, scene, h) {
   let ws = null, id = null, open = false, closedByUs = false, backoff = 1000;
-  let hello = null, resume = null;
+  let hello = null, resume = null, zone = "home", flying = null;
   const others = new Map(); // id -> { av, tag, name, design, pos, target, yaw, tyaw, act, speed }
   const queue = [];
   let lastSent = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, at: 0 };
   let pingTimer = null;
   const waiting = new Map(); // reply kind -> resolve
+  const ticketWaits = new Map(); // payment hash (lower case) -> resolve: the room's answer about that ticket
 
   function send(msg) {
     if (open) ws.send(JSON.stringify(msg));
@@ -57,7 +70,9 @@ export function createNet(url, scene, h) {
     ws.onopen = () => {
       open = true;
       backoff = 1000;
-      ws.send(JSON.stringify(["hello", hello ?? {}]));
+      ws.send(JSON.stringify(["hello", { ...(hello ?? {}), zone }]));
+      flying = null;
+      lastSent = { x: NaN, y: 0, z: 0, yaw: 0, pitch: 0, at: 0 }; // (the room starts us on the pad: say where we really are)
       if (resume) ws.send(JSON.stringify(["resume", resume.address, resume.token]));
       while (queue.length) ws.send(JSON.stringify(queue.shift()));
       clearInterval(pingTimer);
@@ -110,26 +125,35 @@ export function createNet(url, scene, h) {
 
   function receive(m) {
     const [k] = m;
+    if (flying && PLANET_NEWS.has(k)) return; // (about the planet just left)
     switch (k) {
       case "welcome": {
         id = m[1];
         for (const p of m[3]) add(...p);
-        h.welcome?.(m[2], others.size + 1);
+        h.welcome?.(m[2], m[4] ?? others.size + 1);
+        break;
+      }
+      case "zoned": {
+        // The room has you on planet m[1] now: these are the players there.
+        flying = null;
+        zone = m[1];
+        for (const pid of [...others.keys()]) { drop(pid); h.gone?.(pid); }
+        for (const p of m[2]) add(...p);
+        h.zoned?.(m[1], m[3]);
         break;
       }
       case "join": {
-        // A join for someone already here is a new name or look, not a new arrival.
+        // A join for someone already here is a new name or look, not a new arrival (m[9]: "landed" by rocket).
         const known = others.has(m[1]);
         add(m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
-        if (!known) h.joined?.(m[1], m[2]);
-        h.count?.(others.size + 1);
+        if (!known) h.joined?.(m[1], m[2], m[9] === "landed");
         break;
       }
       case "leave": {
+        // (m[2]: the planet they flew to, if they didn't just leave the game.)
         const o = others.get(m[1]);
         drop(m[1]);
-        if (o) h.left?.(m[1], o.name);
-        h.count?.(others.size + 1);
+        if (o) h.left?.(m[1], o.name, m[2] ?? null);
         break;
       }
       case "voices": h.voices?.(m[1]); break;
@@ -154,15 +178,40 @@ export function createNet(url, scene, h) {
         if (o) add(m[1], o.name, o.look, o.target.x, o.target.y, o.target.z, o.tyaw, m[2]);
         break;
       }
-      case "edits": h.edits?.(m[1], m[2]); break;
+      case "edits": if ((m[3] ?? "home") === zone) h.edits?.(m[1], m[2]); break;
       case "set": h.set?.(m[1], m[2], m[3], m[4]); break;
-      case "earn": h.earn?.({ cents: m[1], today: m[2], total: m[3], what: m[4] }); break;
+      case "earn": h.earn?.({ units: m[1], today: m[2], total: m[3], what: m[4] }); break;
+      case "boost": h.boost?.(unpackBoost(m.slice(1)), m[6]); break;
       case "ledger": h.ledger?.({ today: m[1], total: m[2], cap: m[3] }); break;
       case "mob": h.mob?.(m[1], m[2], m[3], m[4], m[5]); break;
       case "mobdead": h.mobdead?.(m[1]); break;
       case "chat": h.chat?.({ id: m[1], name: m[2], text: m[3], mine: m[1] === id }); break;
       case "count": h.count?.(m[1]); break;
       case "err": h.error?.(m[1]); break;
+      case "sys": h.sys?.(m[1]); break;
+      case "regrow": h.regrow?.(m[1]); break;
+      case "boss": h.boss?.(m); break;
+      case "bosshp": h.bossHp?.(m[1], m[2], !!m[3]); break;
+      case "bossreward": h.bossReward?.({ units: m[1], share: m[2], items: m[3], signedIn: m[4] }); break;
+      case "pvphit": h.pvpHit?.(m[1], m[2], m[3], m[4]); break;
+      case "pvpno": h.pvpNo?.(m[1], m[2]); break;
+      case "dropped": h.dropped?.(m[1]); break;
+      case "dropno": h.dropNo?.(m[1]); break;
+      case "chest": h.chest?.(m[1], m[2], m[3], m[4], m[5], m[6]); break;
+      case "chests": h.chests?.(m[1]); break;
+      case "chestgone": h.chestGone?.(m[1], m[2]); break;
+      case "looted": h.looted?.(m[1], m[2], m[3]); break;
+      case "lootno": h.lootNo?.(m[1], m[2]); break;
+      case "tickets": h.tickets?.(m[1] && typeof m[1] === "object" ? m[1] : {}); break;
+      case "ticketok": case "ticketno": {
+        // ["ticketok", zone, count, hash] / ["ticketno", zone, why, hash, retry]
+        const key = String(m[3] ?? "").toLowerCase();
+        const w = ticketWaits.get(key);
+        ticketWaits.delete(key);
+        if (w) w(m);
+        else h.ticket?.(m); // (an answer about a payment sent again after a reconnect)
+        break;
+      }
       case "challenge": case "signedin": case "voucher": case "signinfail": {
         const key = k === "signinfail" ? "signedin" : k;
         const w = waiting.get(key);
@@ -227,15 +276,55 @@ export function createNet(url, scene, h) {
     for (const o of others.values()) if (o.holder.visible) place(o.holder, o.pos, 0);
   }
 
+  /// The other miner a ray (origin o, unit direction d) hits first within `max`: { id, o, t }. (Only asked in a PvP
+  /// zone: nowhere else can players hit each other.)
+  function raycast(origin, d, max) {
+    let best = null;
+    for (const [pid, o] of others) {
+      if (!o.holder.visible) continue;
+      const min = [o.pos.x - 0.4, o.pos.y, o.pos.z - 0.4], mx = [o.pos.x + 0.4, o.pos.y + 1.85, o.pos.z + 0.4];
+      const O = [origin.x, origin.y, origin.z], D = [d.x, d.y, d.z];
+      let t0 = 0, t1 = max, ok = true;
+      for (let a = 0; a < 3 && ok; a++) {
+        if (Math.abs(D[a]) < 1e-9) { if (O[a] < min[a] || O[a] > mx[a]) ok = false; continue; }
+        let ta = (min[a] - O[a]) / D[a], tb = (mx[a] - O[a]) / D[a];
+        if (ta > tb) [ta, tb] = [tb, ta];
+        t0 = Math.max(t0, ta);
+        t1 = Math.min(t1, tb);
+        if (t0 > t1) ok = false;
+      }
+      if (ok && (!best || t0 < best.t)) best = { id: pid, o, t: t0 };
+    }
+    return best;
+  }
+
   return {
     start(helloMsg) { hello = helloMsg; connect(); },
     stop() { closedByUs = true; ws?.close(); },
     send,
     get id() { return id; },
     get online() { return open; },
+    get zone() { return zone; },
+    /// Between asking to fly and the room's answer.
+    get flying() { return !!flying; },
     others,
     tick,
     draw,
+    raycast,
+    /// Fly to planet `key` (zones.js): the room puts you on its pad and answers "zoned" with who's there.
+    fly(key) {
+      zone = key;
+      for (const pid of [...others.keys()]) { drop(pid); h.gone?.(pid); }
+      if (!open) return; // (the next hello says where you are)
+      flying = key;
+      send(["zone", key]);
+      lastSent = { x: NaN, y: 0, z: 0, yaw: 0, pitch: 0, at: 0 };
+    },
+    bossHit: (dmg) => send(["bosshit", dmg]),
+    pvpHit: (target, dmg) => send(["pvp", target, dmg]),
+    /// Knocked out by player `by` in a PvP zone, carrying `items` ([item, count, wear] stacks).
+    pvpDead: (by, items) => send(["pvpdead", by, items]),
+    loot: (chestId) => send(["loot", chestId]),
     chunks: (keys) => { for (let i = 0; i < keys.length; i += 48) send(["chunks", keys.slice(i, i + 48)]); },
     breakBlock: (x, y, z) => send(["break", x, y, z]),
     place: (x, y, z, b) => send(["place", x, y, z, b]),
@@ -248,8 +337,29 @@ export function createNet(url, scene, h) {
     chat: (text) => send(["chat", text]),
     /// Pick a name (web/name-rules.js); the room answers "named" or an error.
     setName: (name) => send(["setname", name]),
-    /// Wear Crafter `tokenId` (null for the Rookie): the room checks on-chain that it's yours.
+    /// Wear Crafter `tokenId` (null for the Rookie): the room checks on-chain that it's yours, and its rarity and
+    /// level become your Crafter boost.
     wear: (tokenId) => send(["wear", tokenId]),
+    /// Use token `tokenId` of a boost slot's collection (boosts.js SLOTS: "skin", "companion", "aura", "vehicle"), or
+    /// null to stop: the room checks it's yours and answers with your new ["boost", ...] (or why not).
+    equip: (slot, tokenId) => send(["equip", slot, tokenId]),
+    /// Ask the room to read the NFTs you use again now (after leveling up the Crafter you wear): it answers with your
+    /// ["boost", ...]. The room allows a couple at once, then one every 15 s.
+    recheck: () => send(["recheck"]),
+    /// A rocket ticket to `zone`, paid by transaction `hash` (MinePayments, kind 1): the room checks the payment and
+    /// answers ["ticketok", zone, count, hash] or ["ticketno", zone, why, hash, retry] (retry 1: worth sending again).
+    ticket(hash, zone, ms = 45_000) {
+      const key = hash.toLowerCase();
+      return new Promise((ok) => {
+        ticketWaits.set(key, ok);
+        send(["ticket", hash, zone]);
+        setTimeout(() => {
+          if (ticketWaits.get(key) !== ok) return;
+          ticketWaits.delete(key);
+          ok(["ticketno", zone, "The world server didn't answer. Try again.", hash, 1]);
+        }, ms);
+      });
+    },
     /// The armor you have on (tiers for head, chest, legs, feet), for the others to see.
     gear: (tiers) => send(["gear", tiers]),
     /// One free signature proves the wallet is yours; from then on the room counts your earnings for it.

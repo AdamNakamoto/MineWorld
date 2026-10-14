@@ -60,6 +60,7 @@ contract CrafterArtTest is Test {
             bytes memory svg = bytes(art.render(v[i].traits));
             assertEq(svg.length, v[i].svgLength, string.concat("look ", vm.toString(i), ": length"));
             assertEq(keccak256(svg), v[i].svg, string.concat("look ", vm.toString(i), ": picture"));
+            assertEq(art.rarityOf(v[i].traits), v[i].rarity, string.concat("look ", vm.toString(i), ": rarity"));
         }
     }
 
@@ -75,16 +76,16 @@ contract CrafterArtTest is Test {
     }
 
     function test_TraitNamesMatchTheJs() public {
-        uint256[8] memory counts = [
+        uint256[9] memory counts = [
             CrafterRules.BACKGROUNDS, CrafterRules.SKINS, CrafterRules.EYES, CrafterRules.GAZES, CrafterRules.BLUSHES,
-            CrafterRules.HAIRS, CrafterRules.HATS, CrafterRules.OUTFITS
+            CrafterRules.HAIRS, CrafterRules.HATS, CrafterRules.OUTFITS, CrafterRules.RARITIES
         ];
-        bytes32[8] memory expected = [
+        bytes32[9] memory expected = [
             CrafterVectors.BACKGROUND_NAMES, CrafterVectors.SKIN_NAMES, CrafterVectors.EYES_NAMES,
             CrafterVectors.GAZE_NAMES, CrafterVectors.BLUSH_NAMES, CrafterVectors.HAIR_NAMES, CrafterVectors.HAT_NAMES,
-            CrafterVectors.OUTFIT_NAMES
+            CrafterVectors.OUTFIT_NAMES, CrafterVectors.RARITY_NAMES
         ];
-        for (uint256 kind; kind < 8; kind++) {
+        for (uint256 kind; kind < 9; kind++) {
             string memory all = art.traitName(kind, 0);
             for (uint256 i = 1; i < counts[kind]; i++) all = string.concat(all, "|", art.traitName(kind, i));
             assertEq(keccak256(bytes(all)), expected[kind], vm.toString(kind));
@@ -92,8 +93,11 @@ contract CrafterArtTest is Test {
             art.traitName(kind, counts[kind]);
         }
         vm.expectRevert(CrafterArt.BadTraits.selector);
-        art.traitName(8, 0);
+        art.traitName(9, 0);
         assertEq(art.traitName(0, 7), "Gold");
+        assertEq(art.traitName(8, 0), "Common");
+        assertEq(art.traitName(8, 1), "Rare");
+        assertEq(art.traitName(8, 2), "Legendary");
         assertEq(art.traitName(3, 1), "Right");
         assertEq(art.traitName(5, 8), "Rainbow Long");
         assertEq(art.traitName(6, 0), "None");
@@ -103,6 +107,7 @@ contract CrafterArtTest is Test {
         Traits memory ok = Traits(35, 15, 5, 1, 7, 4, 9, 1);
         art.render(ok);
         art.attributes(ok);
+        assertEq(art.rarityOf(ok), 2);
         for (uint256 f; f < 8; f++) {
             Traits memory t = ok;
             if (f == 0) t.hair = 36;
@@ -117,6 +122,8 @@ contract CrafterArtTest is Test {
             art.render(t);
             vm.expectRevert(CrafterArt.BadTraits.selector);
             art.attributes(t);
+            vm.expectRevert(CrafterArt.BadTraits.selector);
+            art.rarityOf(t);
         }
     }
 
@@ -131,6 +138,7 @@ contract CrafterArtTest is Test {
             assertEq(abi.encode(t), abi.encode(v[i].traits), string.concat("token ", id, ": traits"));
             assertEq(keccak256(bytes(art.render(t))), v[i].svg, string.concat("token ", id, ": picture"));
             assertEq(keccak256(bytes(art.attributes(t))), v[i].attributes, string.concat("token ", id, ": attributes"));
+            assertEq(art.rarityOf(t), v[i].rarity, string.concat("token ", id, ": rarity"));
         }
     }
 
@@ -157,6 +165,11 @@ contract CrafterArtTest is Test {
                 assertEq(vm.parseJsonString(json, string.concat(at, ".trait_type")), kinds[k]);
                 assertEq(vm.parseJsonString(json, string.concat(at, ".value")), art.traitName(k, index[k]));
             }
+            // Then the rarity, and nothing more without an attributes extension.
+            assertEq(vm.parseJsonString(json, ".attributes[8].trait_type"), "Rarity");
+            assertEq(vm.parseJsonString(json, ".attributes[8].value"), art.traitName(8, v[i].rarity));
+            assertEq(crafters.rarityOf(v[i].id), v[i].rarity);
+            assertFalse(vm.keyExistsJson(json, ".attributes[9]"));
         }
     }
 
@@ -167,6 +180,9 @@ contract CrafterArtTest is Test {
         assertEq(vm.parseJsonString(json, ".image"), string.concat("data:image/svg+xml;base64,", vm.toBase64(art.sealedSvg())));
         assertEq(vm.parseJsonString(json, ".attributes[0].trait_type"), "Status");
         assertEq(vm.parseJsonString(json, ".attributes[0].value"), "Sealed");
+        assertFalse(vm.keyExistsJson(json, ".attributes[1]"));
+        vm.expectRevert(MineWorldCrafters.NotRevealed.selector);
+        crafters.rarityOf(7);
     }
 
     /// Gas of a view call as eth_call runs it (cold storage, nothing copied back), plus the call itself. An
@@ -280,6 +296,48 @@ contract CrafterArtTest is Test {
             uint256 bit = 1 << (y & 255);
             assertEq(seen[y >> 8] & bit, 0, "two inputs share a place");
             seen[y >> 8] |= bit;
+        }
+    }
+
+    // ---------------------------------------------------------------- rarity
+
+    /// Every Crafter's rarity under the vector seed, as rarityOf() in web/crafters.js gives it: the counts and the
+    /// whole run of 3,333, exactly.
+    function test_RarityMatchesTheJsForEveryCrafter() public view {
+        uint256[3] memory counts;
+        bytes memory run = new bytes(CrafterRules.SUPPLY);
+        for (uint256 id = 1; id <= CrafterRules.SUPPLY; id++) {
+            uint8 r = art.rarityOf(crafters.traitsFor(CrafterVectors.SEED, id));
+            counts[r]++;
+            run[id - 1] = bytes1(r);
+        }
+        console2.log("rarity over the 3,333 under the vector seed: Common", counts[0]);
+        console2.log("                                             Rare  ", counts[1]);
+        console2.log("                                             Legendary", counts[2]);
+        assertEq(abi.encode(counts), abi.encode(CrafterVectors.rarityCounts()));
+        assertEq(keccak256(run), CrafterVectors.RARITY_SEQUENCE);
+        // Roughly the odds: 68.8%, 25.2%, 6%.
+        assertApproxEqAbs(counts[0], 2293, 120);
+        assertApproxEqAbs(counts[1], 840, 100);
+        assertApproxEqAbs(counts[2], 200, 60);
+    }
+
+    /// The rule, spelled out here independently of the generated table: Legendary with the Gold background (7);
+    /// Rare with the Night background (6) or a hard hat (7, 8, 9: yellow, orange, white); Common otherwise. Nothing
+    /// else matters.
+    function test_RarityIsTheBackgroundAndTheHat() public view {
+        assertEq(art.traitName(0, 6), "Night");
+        assertEq(art.traitName(0, 7), "Gold");
+        assertEq(art.traitName(6, 7), "Hard Hat Yellow");
+        assertEq(art.traitName(6, 8), "Hard Hat Orange");
+        assertEq(art.traitName(6, 9), "Hard Hat White");
+        for (uint8 b; b < CrafterRules.BACKGROUNDS; b++) {
+            for (uint8 h; h < CrafterRules.HATS; h++) {
+                uint8 want = b == 7 ? 2 : (b == 6 || h >= 7 ? 1 : 0);
+                assertEq(art.rarityOf(Traits(3, 2, 1, 0, b, 4, h, 1)), want);
+                assertEq(art.rarityOf(Traits(35, 15, 5, 1, b, 0, h, 0)), want);
+                assertEq(CrafterRules.rarity(b, h), want);
+            }
         }
     }
 

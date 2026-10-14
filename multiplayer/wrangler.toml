@@ -19,3 +19,8 @@ new_sqlite_classes = ["World"]
 # CHAIN_RPC = "https://robinhood-rpc.publicnode.com"
 # MINING_ADDRESS = "0x..."
 # CRAFTERS_ADDRESS = "0x..."  (MineWorld Crafters: a player wears one only once the room has checked they own it)
+# LEVELS_ADDRESS = "0x..."    (CrafterLevels: each Crafter's level, for its boost; without it every Crafter is level 1)
+# PAYMENTS_ADDRESS = "0x..."  (MinePayments: rocket tickets are paid there; without it none can be bought)
+# Later NFT collections that boost mining (web/boosts.js SLOTS), once issued, if their address isn't in boosts.js:
+# SKINS_ADDRESS, COMPANIONS_ADDRESS, AURAS_ADDRESS, VEHICLES_ADDRESS.
+# Never set DEV_HOOKS here: it's for `wrangler dev --var DEV_HOOKS:1` on your own machine only.

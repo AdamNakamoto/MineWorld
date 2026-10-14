@@ -4,37 +4,58 @@ pragma solidity ^0.8.26;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC20Burnable} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /// @title MineToken
-/// @notice $MINE, MineWorldCraft's token. A fixed supply of 1,000,000,000, all minted once, here, at deploy: half to
-///         the pool hook (MineHook), which locks it in the $MINE/IMD Uniswap v4 pool for good, and half to the vault
-///         (MiningSites), which pays it out only to players for what they earn in the game. A plain ERC-20 with
-///         EIP-2612 permit and burn: no owner, no minting after deploy, no transfer tax, no blocklist. The 4%
-///         trading fee is taken by the pool's hook, not by the token, so wallet-to-wallet transfers are never taxed.
-contract MineToken is ERC20, ERC20Burnable, ERC20Permit {
-    uint256 public constant TOTAL_SUPPLY = 1_000_000_000e18;
-    /// @notice Locked as single-sided liquidity in the pool.
-    uint256 public constant POOL_SUPPLY = 500_000_000e18;
-    /// @notice Held by MiningSites for players to earn.
-    uint256 public constant VAULT_SUPPLY = TOTAL_SUPPLY - POOL_SUPPLY;
+/// @notice $MINE, earned by mining. Courier World's $STAMP (StampToken), line for line: hard-capped at 21M, counting
+///         every mint so burns are permanent. A fixed launch allocation (10.5M) is minted to the pool hook at deploy
+///         (locked there as liquidity); everything else is minted by the mining vault (MineVault, the one minter, set
+///         once) as players earn it, at most 35,000 a day. No transfer tax: the 4% trading fee lives in the pool hook.
+///         The deploy renounces ownership right after setting the minter, so nobody owns the token.
+contract MineToken is ERC20, ERC20Burnable, ERC20Permit, Ownable {
+    uint256 public constant MAX_SUPPLY = 21_000_000e18;
 
-    /// @notice Received POOL_SUPPLY at deploy: the pool hook on Robinhood Chain (a stand-in on a bare dev chain).
-    address public immutable pool;
-    /// @notice Received VAULT_SUPPLY at deploy: MiningSites.
-    address public immutable vault;
+    address public minter;
+    uint256 public totalMinted;
 
+    event MinterSet(address indexed minter);
+
+    error NotMinter();
+    error CapExceeded();
+    error MinterAlreadySet();
     error ZeroAddress();
 
-    constructor(address pool_, address vault_) ERC20("MineWorldCraft", "MINE") ERC20Permit("MineWorldCraft") {
-        if (pool_ == address(0) || vault_ == address(0)) revert ZeroAddress();
-        pool = pool_;
-        vault = vault_;
-        _mint(pool_, POOL_SUPPLY);
-        _mint(vault_, VAULT_SUPPLY);
+    /// @param liquidity_ receives `liquidityAmount` at deploy: the pool hook on mainnet (a stand-in holder on a bare dev
+    ///        chain), or nobody (0).
+    constructor(address owner_, address liquidity_, uint256 liquidityAmount)
+        ERC20("MineWorldCraft", "MINE")
+        ERC20Permit("MineWorldCraft")
+        Ownable(owner_)
+    {
+        if (liquidityAmount > MAX_SUPPLY) revert CapExceeded();
+        if (liquidityAmount > 0) {
+            if (liquidity_ == address(0)) revert ZeroAddress();
+            totalMinted = liquidityAmount;
+            _mint(liquidity_, liquidityAmount);
+        }
     }
 
-    /// @notice Nobody controls the token. (Explorers read this as renounced.)
-    function owner() external pure returns (address) {
-        return address(0);
+    /// @notice One-shot, so the owner can never swap in a different minter later.
+    function setMinter(address minter_) external onlyOwner {
+        if (minter != address(0)) revert MinterAlreadySet();
+        if (minter_ == address(0)) revert ZeroAddress();
+        minter = minter_;
+        emit MinterSet(minter_);
+    }
+
+    function mint(address to, uint256 amount) external {
+        if (msg.sender != minter) revert NotMinter();
+        if (totalMinted + amount > MAX_SUPPLY) revert CapExceeded();
+        totalMinted += amount;
+        _mint(to, amount);
+    }
+
+    function totalBurned() external view returns (uint256) {
+        return totalMinted - totalSupply();
     }
 }

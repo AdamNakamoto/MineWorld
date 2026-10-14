@@ -341,6 +341,65 @@ const TILES = {
       set(x, y, needle ? 0x46785a : r() < 0.3 ? 0x1f4430 : 0x2b5a3e, 255, 10);
     }
   }),
+  // The rocket's zones (zones.js): Cinderfall, Red Mesa, Deepvein, and the landing pads.
+  basalt_side: () => tile(80, (set, r) => {
+    // Tall columns, a little paler at their joints.
+    for (let x = 0; x < T; x++) {
+      const c = x % 5 === 0 ? 0x2a2a30 : x % 5 === 1 ? 0x4a4a54 : 0x3a3a42;
+      for (let y = 0; y < T; y++) set(x, y, r() < 0.06 ? 0x26262c : c, 255, 10);
+    }
+  }),
+  basalt_top: () => tile(81, (set, r) => {
+    for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) {
+      const d = Math.max(Math.abs(x - 7.5), Math.abs(y - 7.5));
+      set(x, y, d > 6.6 ? 0x2a2a30 : r() < 0.1 ? 0x2e2e36 : 0x40404a, 255, 10);
+    }
+  }),
+  ember: () => tile(82, (set, r) => {
+    // Dark crust over glowing cracks.
+    for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) set(x, y, 0x3a1c14, 255, 12);
+    for (let i = 0; i < 5; i++) {
+      let x = (r() * T) | 0, y = (r() * T) | 0;
+      for (let k = 0; k < 9; k++) {
+        set(x, y, k % 3 ? 0xff8a1e : 0xffd04a, 255, 20);
+        x = (x + ((r() * 3) | 0) - 1 + T) % T;
+        y = (y + ((r() * 3) | 0) - 1 + T) % T;
+      }
+    }
+  }),
+  ash: () => tile(83, (set, r) => { for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) set(x, y, r() < 0.12 ? 0x55555a : r() < 0.1 ? 0x8a8a8c : 0x6e6e72, 255, 14); }),
+  red_sand: () => tile(84, (set, r) => { for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) set(x, y, r() < 0.12 ? 0xa8502a : 0xc66a36, 255, 16); }),
+  red_clay: () => tile(85, (set, r) => {
+    for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) set(x, y, y % 8 === 3 ? 0x8e3e26 : 0xa34a2e, 255, 10);
+    void r;
+  }),
+  pale_clay: () => tile(86, (set, r) => {
+    for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) set(x, y, y % 8 === 5 ? 0xc8a88a : 0xdcbfa0, 255, 10);
+    void r;
+  }),
+  deep_rock: () => tile(87, (set, r) => {
+    for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) set(x, y, 0x3e4048, 255, 18);
+    for (let i = 0; i < 7; i++) {
+      const x = (r() * T) | 0, y = (r() * T) | 0;
+      for (let k = 0; k < 3; k++) set(x + k, y + (k >> 1), 0x2a2c32, 255, 6);
+    }
+    for (let i = 0; i < 4; i++) set((r() * T) | 0, (r() * T) | 0, 0x5a5e6a, 255, 10);
+  }),
+  glowcap: () => tile(88, (set) => {
+    for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) set(x, y, 0, 0);
+    // Three little glowing mushrooms.
+    for (const [cx, top, w] of [[4, 7, 2], [10, 4, 3], [13, 9, 1]]) {
+      for (let y = top + 2; y < T; y++) set(cx, y, 0xb8e8d0, 255, 8);
+      for (let dx = -w; dx <= w; dx++) { set(cx + dx, top + 1, 0x3fd6c0, 255, 10); if (Math.abs(dx) < w) set(cx + dx, top, 0x9ffff0, 255, 10); }
+    }
+  }),
+  pad_plate: () => tile(89, (set) => {
+    for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) {
+      const edge = x === 0 || y === 0, rivet = (x === 2 || x === 13) && (y === 2 || y === 13);
+      const stripe = (x + y) % 8 < 2 && (y < 3 || y > 12);
+      set(x, y, rivet ? 0xd8dce4 : edge ? 0x5a606a : stripe ? 0xe8b830 : 0x8a909a, 255, edge ? 4 : 8);
+    }
+  }),
   crack0: () => crack(1), crack1: () => crack(2), crack2: () => crack(3), crack3: () => crack(4), crack4: () => crack(5),
 };
 function crack(stage) {

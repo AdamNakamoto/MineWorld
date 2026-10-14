@@ -7,28 +7,57 @@
 // rock), outside the town, and broken no faster than the best pickaxe allows; blocks players placed pay nothing;
 // monsters are spawned by the room and their hits come no faster and no harder than the best sword's. A player who
 // moves faster than anyone can, or has just (re)connected, earns nothing for a few seconds. Each wallet earns at most
-// DAILY_EARN_CAP a UTC day, from one connection at a time. A player signs in once with their wallet (a free
-// signature), and the room signs vouchers for their lifetime total, which MiningSites pays out on-chain to wallets
-// with an open mining site.
+// DAILY_EARN_CAP a UTC day, from one connection at a time, and everyone together at most WORLD_DAILY_CAP. A player
+// signs in once with their wallet (a free signature), and the room signs vouchers for their lifetime total, which
+// MiningSites pays out on-chain to wallets with an open mining site. The ledger counts ten-thousandths of a $MINE
+// (rewards.js UNIT); vouchers are in wei.
+//
+// NFT boosts (web/boosts.js): the NFTs a signed-in player uses (their Crafter, and later a skin, a companion, an aura
+// and a vehicle) make their blocks break faster (allowed for in the break-rate check), make everything they earn pay
+// more and raise their daily cap. The room works each player's boost out from the chain (ownerOf, the Crafter's rarity
+// and CrafterLevels' level) when they sign in, wear or equip, checks it again every few minutes while they earn, and
+// tells the game. Guests get none.
 //
 // Runs on Cloudflare's free plan: WebSockets hibernate, pings are answered without waking the room, and writes are
 // batched (edits per chunk, the ledger in 16 shards) every FLUSH_MS.
 //
 // The world is a small planet that wraps round in x and z (rules.js): positions are kept in 0..WORLD, and every
 // distance (reach, who's near, voice, monsters, the speed check) is measured the short way round.
+//
+// The rocket flies between planets (web/zones.js): the home planet and three zones, each its own world. Every player
+// is on one of them (the attachment's `zone`): positions, block changes, monsters, block checks (naturalBlock for
+// that zone), voice set-up and who joined or left go only to players on the same one; chat goes everywhere. Edits are
+// stored per zone (Deepvein's per week, so it grows back every Monday), earnings are multiplied by the zone's rate
+// (rewards.js ZONE_PAY). Cinderfall's boss lives here: its health, its moves (picked here, animated by every game from
+// the same start time, so nothing is sent while it moves), the checked hits on it and the pool it pays. In Red Mesa,
+// players can hit each other: each hit is checked here and passed to the one hit, and a player beaten there leaves a
+// loot chest that the first to open it takes (kept here a few minutes).
+//
+// Rocket tickets (unless zones.js TICKETS_FREE): a signed-in player pays a zone's `ticket` in $MINE on-chain
+// (MinePayments.pay, kind 1, from their own wallet) and sends the transaction's hash; the room reads its receipt and,
+// if the payment checks out (see buyTicket), keeps one ticket to that zone for the wallet, used up by its next trip
+// out there. Each payment buys one ticket, once.
 
 import { DurableObject } from "cloudflare:workers";
-import { verifyMessage, isAddress, getAddress, createPublicClient, http, parseAbi, keccak256, encodeAbiParameters } from "viem";
+import {
+  verifyMessage, isAddress, getAddress, createPublicClient, http, parseAbi, parseEventLogs, keccak256,
+  encodeAbiParameters, BaseError, ContractFunctionRevertedError,
+} from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { BLOCKS, AIR, WATER, BEDROCK, fastestBreak, BEST_DAMAGE } from "../../web/blocks.js";
+import { BLOCKS, AIR, WATER, BEDROCK, fastestBreak, BEST_DAMAGE, itemName, stackSize, maxDurability, damageable } from "../../web/blocks.js";
 import { naturalBlock, index as blockIndex } from "../../web/worldgen.js";
 import {
-  WORLD, CHUNK, HEIGHT, SPAWN, TOWN, PROTECT_R, ROOM_REACH, ROOM_ATTACK_MS, protectedAt, isNight,
-  MOBS, MOBS_PER_PLAYER, MOB_EVERY_MS, MOB_LIFE_MS, UNDERGROUND_Y, wrap, wrapDelta, wrapDist,
+  WORLD, CHUNK, HEIGHT, ROOM_REACH, isNight, MOBS, MOB_LIFE_MS, UNDERGROUND_Y, wrap, wrapDelta, wrapDist,
 } from "../../web/rules.js";
-import { BLOCK_REWARDS, MOB_REWARDS, DAILY_EARN_CAP, toCents, centsToWei } from "../../web/rewards.js";
+import {
+  BLOCK_REWARDS, MOB_REWARDS, WORLD_DAILY_CAP, ZONE_PAY, BOSS_POOL, UNIT, toUnits, unitsToWei, fmtMine,
+} from "../../web/rewards.js";
+import { SLOTS, isSlot, boostOf, NO_BOOST, dailyCap, withEarn, withSpeed, packBoost } from "../../web/boosts.js";
+import {
+  isZone, zoneOf, landing, spawnOf, onPad, protectedIn, calmAt, weekOf, ARENA, BOSS, bossAt, PVP, TICKETS_FREE,
+} from "../../web/zones.js";
 import { cleanChat, CHAT_EVERY_MS } from "../../web/chat-rules.js";
-import { traitsOf, packTraits, SUPPLY } from "../../web/crafters.js";
+import { traitsOf, packTraits, rarityOf, SUPPLY } from "../../web/crafters.js";
 import { cleanName, nameShown, NAME_EVERY_MS } from "../../web/name-rules.js";
 
 const MAX_SOCKETS = 300;
@@ -47,13 +76,24 @@ const EDIT_CHUNKS_PER_MIN = 12; // distinct chunks one connection may change a m
 const AUTH_EVERY_MS = 5000;
 const CHUNKS = WORLD / CHUNK;
 const DAY_MS = 86_400_000;
-const CAP = toCents(DAILY_EARN_CAP);
+const WORLD_CAP = toUnits(WORLD_DAILY_CAP);
+// The ledger's shards are stored as `${LEDGER}${shard}` and today's world total as WORLD_DAY, in units (rewards.js
+// UNIT). Before boosts they counted hundredths of a $MINE under "led:" and "worldday": those are read once, converted
+// (x100, so every total stays the same in wei and vouchers stay as they were), written under the new keys and deleted.
+const LEDGER = "led2:", WORLD_DAY = "worldday2";
+const OLD_LEDGER = "led:", OLD_WORLD_DAY = "worldday", FROM_CENTS = UNIT / 100;
+const BOOST_RECHECK_MS = 10 * 60_000; // what a player uses is checked again on-chain this often while they earn
+const BOOST_RETRY_MS = 60_000; // and this soon after a read failed
 const CACHE_CHUNKS = 800;
 // Chunk edits are stored as `${EDITS}${cx},${cz}`. The 1024-wide world's edits ("c:") belong to a world that's gone,
 // so the planet's have their own prefix and those are never read.
 const EDITS = "c2:";
 const VOICE_RANGE = 64; // blocks: voice connections are only set up between players this close
 const RTC_PER_MIN = 240; // voice set-up messages a connection may send a minute
+const FLIGHTS = 3, FLIGHT_EVERY_S = 5; // rocket flights a connection may make at once, and one more every few seconds
+const TICKET_AGE_S = 3 * 3600; // seconds: the oldest a ticket's payment can be when it's sent here
+const TICKET_KIND = 1n; // MinePayments' kind for rocket tickets ("ticket": all to the treasury)
+const RECHECKS = 2, RECHECK_EVERY_S = 15; // re-reads of a player's NFTs they may ask for at once, and one more this often
 
 // The game's homes: its own domain (to be decided: add it here), Vercel previews and local development.
 const ORIGINS = [/^https:\/\/(www\.)?mineworldcraft\.fun$/, /^https:\/\/[a-z0-9-]+\.vercel\.app$/, /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/];
@@ -67,8 +107,17 @@ async function sha256(s) {
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 const isInt = (v, lo, hi) => Number.isInteger(v) && v >= lo && v < hi;
+const xyz = (p) => ({ x: p.x, y: p.y, z: p.z });
+const clampHit = (damage) => Math.max(1, Math.min(BEST_DAMAGE, Math.floor(Number(damage)) || 1));
 const num = (v) => typeof v === "number" && Number.isFinite(v);
 const CRAFTERS_ABI = parseAbi(["function ownerOf(uint256) view returns (address)", "function seed() view returns (uint256)"]);
+const PAYMENTS_ABI = parseAbi(["event Paid(address indexed player, uint256 indexed kind, uint256 amount, uint256 burned, bytes32 indexed ref)"]);
+const uintView = new Map(); // view name -> the ABI of `name(uint256) view returns (uint256)` (tierOf, levelOf...)
+const viewAbi = (fn) => uintView.get(fn) ?? uintView.set(fn, parseAbi([`function ${fn}(uint256) view returns (uint256)`])).get(fn);
+/// Whether a contract call failed because the contract said no (a token that doesn't exist), not the RPC.
+const reverted = (e) => e instanceof BaseError && !!e.walk((x) => x instanceof ContractFunctionRevertedError);
+/// The boost from what a player uses (`eq`: slot -> [tokenId, tier, level], as kept on the attachment).
+const boostOfEq = (eq) => boostOf(Object.fromEntries(Object.entries(eq ?? {}).map(([slot, [, tier, level]]) => [slot, { tier, level }])));
 const HASH = { keccak256, encodeAbiParameters };
 /// A token bucket kept on the attachment: refills `per` units a second up to `max`; takes `cost` if it can.
 function bucket(a, key, max, per, cost, now) {
@@ -80,6 +129,20 @@ function bucket(a, key, max, per, cost, now) {
   return true;
 }
 
+/// What a beaten player's game says they carried, cleaned up: at most PVP.maxStacks stacks of [item, count, wear],
+/// real items only, counts within a stack's size and wear within the item's durability. (Inventories live in the
+/// browser, so the items are the game's own report; this only keeps them well-formed.)
+function cleanItems(items) {
+  const out = [];
+  for (const s of Array.isArray(items) ? items : []) {
+    if (out.length >= PVP.maxStacks || !Array.isArray(s)) break;
+    const [id, n, d] = s;
+    if (!isInt(id, 1, 256) || itemName(id) === "?" || id === WATER || id === BEDROCK || !isInt(n, 1, stackSize(id) + 1)) continue;
+    out.push(damageable(id) ? [id, 1, isInt(d, 0, maxDurability(id)) ? d : 0] : [id, n]);
+  }
+  return out;
+}
+
 export class World extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
@@ -88,8 +151,9 @@ export class World extends DurableObject {
     this.edits = new Map(); // chunk key -> Map(index -> block)
     this.dirtyChunks = new Set();
     this.saving = new Set(); // chunk keys being written right now (kept in the cache until they are)
-    this.shards = new Map(); // "0".."f" -> { wallet: { total, day, today } }
+    this.shards = new Map(); // "0".."f" -> { wallet: { total, day, today } } (in units, rewards.js UNIT)
     this.dirtyShards = new Set();
+    this.oldKeys = new Set(); // the ledger's old keys (hundredths), deleted once their converted copies are written
     this.flushTimer = null;
     this.flushing = null;
     this.nextId = null;
@@ -118,11 +182,11 @@ export class World extends DurableObject {
   send(ws, msg) {
     try { ws.send(JSON.stringify(msg)); } catch {}
   }
-  /// To every player within `range` blocks of (x, z), except `skip`.
-  near(x, z, msg, skip, range = NEAR) {
+  /// To every player on `zone` within `range` blocks of (x, z), except `skip`.
+  near(zone, x, z, msg, skip, range = NEAR) {
     const s = JSON.stringify(msg);
     for (const [ws, a] of this.players()) {
-      if (ws === skip) continue;
+      if (ws === skip || a.zone !== zone) continue;
       if (Math.abs(wrapDelta(a.x - x)) > range || Math.abs(wrapDelta(a.z - z)) > range) continue;
       try { ws.send(s); } catch {}
     }
@@ -130,6 +194,19 @@ export class World extends DurableObject {
   everyone(msg, skip) {
     const s = JSON.stringify(msg);
     for (const [ws] of this.players()) if (ws !== skip) try { ws.send(s); } catch {}
+  }
+  /// The players on `zone`.
+  onZone(zone) {
+    return this.players().filter(([, a]) => a.zone === zone);
+  }
+  /// To every player on `zone`, except `skip`.
+  zoneCast(zone, msg, skip) {
+    const s = JSON.stringify(msg);
+    for (const [ws] of this.onZone(zone)) if (ws !== skip) try { ws.send(s); } catch {}
+  }
+  /// How a player is shown to others: [id, name, look, x, y, z, yaw, gear].
+  shown(a) {
+    return [a.id, a.name, a.look, a.x, a.y, a.z, a.yaw, a.gear ?? null];
   }
 
   async fetch(req) {
@@ -148,9 +225,12 @@ export class World extends DurableObject {
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server);
     const now = Date.now();
+    // `eq`: the NFTs this player uses, slot -> [tokenId, tier, level] (boosts.js), as checked on-chain; `local`: the
+    // connection came to wrangler dev on this machine (the dev hooks need it).
     const a = {
-      id: this.nextId++, name: "", ip, wallet: null, look: null, x: SPAWN.x, y: SPAWN.y, z: SPAWN.z, yaw: 0, ready: false,
-      mobs: [], mobSeq: 0, credit: 0, creditAt: now, suspect: now + SETTLE_MS,
+      id: this.nextId++, name: "", ip, wallet: null, look: null, zone: "home", ...xyz(spawnOf("home")), yaw: 0, ready: false,
+      mobs: [], mobSeq: 0, credit: 0, creditAt: now, suspect: now + SETTLE_MS, eq: {},
+      local: /^(localhost|127\.0\.0\.1|\[::1\])$/.test(url.hostname),
     };
     a.name = `Guest-${a.id}`;
     this.atts.set(server, a);
@@ -166,22 +246,31 @@ export class World extends DurableObject {
     const a = this.att(ws);
     try {
       switch (m[0]) {
-        case "hello": return this.hello(ws, a);
+        case "hello": return await this.hello(ws, a, m[1]);
+        case "zone": return await this.fly(ws, a, m[1]);
         case "p": return await this.position(ws, a, m);
         case "chunks": return await this.chunks(ws, a, m[1]);
         case "break": return await this.breakBlock(ws, a, m[1], m[2], m[3]);
         case "place": return await this.place(ws, a, m[1], m[2], m[3], m[4]);
         case "hit": return await this.hit(ws, a, m[1], m[2]);
         case "gone": return this.gone(ws, a, m[1]);
-        case "act": if (a.ready) this.near(a.x, a.z, ["act", a.id, m[1] ? 1 : 0], ws); return;
-        case "respawn": a.x = SPAWN.x; a.y = SPAWN.y; a.z = SPAWN.z; a.pAt = Date.now(); a.mobs = []; this.save(ws, a); return;
+        case "act": if (a.ready) this.near(a.zone, a.x, a.z, ["act", a.id, m[1] ? 1 : 0], ws); return;
+        case "respawn": return this.respawn(ws, a);
+        case "bosshit": return await this.bossHit(ws, a, m[1]);
+        case "pvp": return this.pvpHit(ws, a, m[1], m[2]);
+        case "pvpdead": return await this.pvpDead(ws, a, m[1], m[2]);
+        case "loot": return await this.loot(ws, a, m[1]);
         case "chat": return this.chat(ws, a, m[1]);
         case "auth": return this.auth(ws, a, m[1]);
         case "signin": return await this.signIn(ws, a, m[1]);
         case "resume": return await this.resume(ws, a, m[1], m[2]);
-        case "signout": a.wallet = null; a.nick = null; this.rename(ws, a); return;
+        case "signout": a.wallet = null; a.nick = null; a.eq = {}; this.rename(ws, a); return;
         case "voucher": return await this.voucher(ws, a);
         case "wear": return await this.wear(ws, a, m[1]);
+        case "equip": return await this.equip(ws, a, m[1], m[2]);
+        case "recheck": return await this.recheckNow(ws, a);
+        case "ticket": return await this.buyTicket(ws, a, m[1], m[2]);
+        case "dev": return await this.dev(ws, a, m[1], m[2]);
         case "gear": return this.gear(ws, a, m[1]);
         case "setname": return await this.setName(ws, a, m[1]);
         case "voice": return this.voice(ws, a, m[1]);
@@ -201,24 +290,36 @@ export class World extends DurableObject {
   leave(ws) {
     const a = this.att(ws);
     this.atts.delete(ws);
-    if (a.ready) this.everyone(["leave", a.id], ws);
+    if (a.ready) {
+      this.zoneCast(a.zone, ["leave", a.id], ws);
+      this.everyone(["count", this.players().filter(([w]) => w !== ws).length], ws);
+    }
     try { ws.close(1000, "bye"); } catch {}
   }
 
-  hello(ws, a) {
+  /// A game joins (or rejoins after a dropped connection). Where it starts is the room's call: home, or, while trips
+  /// are free (zones.js TICKETS_FREE), the planet the game says it's on (`info.zone`). A wallet's own zone is
+  /// remembered here and it's put back there when it signs in (signedIn), tickets or not.
+  async hello(ws, a, info) {
     if (a.ready) return;
+    const zone = isZone(info?.zone) && (info.zone === "home" || TICKETS_FREE) ? info.zone : "home";
+    if (zone !== a.zone) this.arrive(a, zone, Date.now());
     a.ready = true;
     this.save(ws, a);
-    const list = this.players().filter(([w]) => w !== ws).map(([, o]) => [o.id, o.name, o.look, o.x, o.y, o.z, o.yaw, o.gear ?? null]);
-    this.send(ws, ["welcome", a.id, Date.now(), list, list.length + 1]);
+    const here = this.onZone(a.zone).filter(([w]) => w !== ws);
+    const total = this.players().length;
+    this.send(ws, ["welcome", a.id, Date.now(), here.map(([, o]) => this.shown(o)), total, a.zone]);
     const voices = this.players().filter(([w, o]) => w !== ws && o.voice).map(([, o]) => o.id);
     if (voices.length) this.send(ws, ["voices", voices]);
-    this.everyone(["join", a.id, a.name, a.look, a.x, a.y, a.z, a.yaw, a.gear ?? null], ws);
+    this.zoneCast(a.zone, ["join", ...this.shown(a)], ws);
+    this.everyone(["count", total], ws);
+    await this.zoneNews(ws, a);
   }
+  /// A new name or look: the others on the same planet redraw them.
   rename(ws, a) {
     a.name = a.wallet ? (a.nick && nameShown(a.nick) ? a.nick : short(a.wallet)) : `Guest-${a.id}`;
     this.save(ws, a);
-    if (a.ready) this.everyone(["join", a.id, a.name, a.look, a.x, a.y, a.z, a.yaw, a.gear ?? null], ws);
+    if (a.ready) this.zoneCast(a.zone, ["join", ...this.shown(a)], ws);
   }
 
   async position(ws, a, m) {
@@ -233,7 +334,16 @@ export class World extends DurableObject {
     const dy = y - a.y;
     if (wrapDist(x, z, a.x, a.z) / dt > 40 || dy / dt > 20 || -dy / dt > 80) a.suspect = now + SETTLE_MS;
     a.x = x; a.y = y; a.z = z; a.yaw = yaw; a.pAt = now;
-    this.near(x, z, ["p", a.id, x, y, z, yaw, num(pitch) ? pitch : 0], ws);
+    this.near(a.zone, x, z, ["p", a.id, x, y, z, yaw, num(pitch) ? pitch : 0], ws);
+    // Deepvein grows back on Mondays: anyone there when the week turns gets the new week's world.
+    if (zoneOf(a.zone).weekly && a.week !== weekOf(now)) {
+      a.week = weekOf(now);
+      this.send(ws, ["regrow", a.zone]);
+    }
+    if (a.zone === "boss") {
+      if (wrapDist(x, z, ARENA.x, ARENA.z) < BOSS.engage) await this.bossWake(now);
+      else this.bossTidy(now); // (back after its rest, even if nobody's at the arena yet)
+    }
     await this.maybeMob(ws, a, now);
     this.save(ws, a);
   }
@@ -251,10 +361,29 @@ export class World extends DurableObject {
 
   // ---------------------------------------------------------------- the world's edits
 
+  /// Where zone `zone`'s chunk edits are stored: home's as they always were, each zone under its own prefix, and a
+  /// weekly zone's under that week's (so it starts afresh every Monday; the weeks before are cleared out).
+  editPrefix(zone, now = Date.now()) {
+    if (zone === "home") return EDITS;
+    if (!zoneOf(zone).weekly) return `z${zone}:`;
+    const prefix = `z${zone}${weekOf(now)}:`;
+    if (this.cleaned?.[zone] !== prefix) this.clearOldWeeks(zone, prefix).catch((e) => console.log("clearing old weeks failed", e?.message ?? e));
+    return prefix;
+  }
+  async clearOldWeeks(zone, prefix) {
+    (this.cleaned ??= {})[zone] = prefix;
+    const old = [...(await this.ctx.storage.list({ prefix: `z${zone}`, limit: 2048 })).keys()].filter((k) => !k.startsWith(prefix));
+    for (let i = 0; i < old.length; i += 128) await this.ctx.storage.delete(old.slice(i, i + 128));
+    for (const k of [...this.edits.keys()]) {
+      if (k.startsWith(`z${zone}`) && !k.startsWith(prefix) && !this.dirtyChunks.has(k) && !this.saving.has(k)) this.edits.delete(k);
+    }
+  }
+
+  /// A chunk's edits, by its storage key (editPrefix + "cx,cz").
   async chunkEdits(key) {
     let e = this.edits.get(key);
     if (e) return e;
-    const raw = await this.ctx.storage.get(`${EDITS}${key}`);
+    const raw = await this.ctx.storage.get(key);
     e = this.edits.get(key); // (filled by another message meanwhile)
     if (e) return e;
     e = new Map();
@@ -271,8 +400,8 @@ export class World extends DurableObject {
   }
 
   async chunks(ws, a, keys) {
-    if (!Array.isArray(keys)) return;
-    const seen = new Set();
+    if (!Array.isArray(keys) || !a.ready) return;
+    const seen = new Set(), prefix = this.editPrefix(a.zone);
     for (const k of keys.slice(0, 48)) {
       if (typeof k !== "string" || !/^\d{1,2},\d{1,2}$/.test(k)) continue;
       const [cx, cz] = k.split(",").map(Number);
@@ -280,35 +409,36 @@ export class World extends DurableObject {
       if (cx >= CHUNKS || cz >= CHUNKS || seen.has(key)) continue;
       seen.add(key);
       if (!bucket(a, "keys", CHUNK_KEYS_PER_MIN, CHUNK_KEYS_PER_MIN / 60, 1, Date.now())) break;
-      const e = await this.chunkEdits(key);
-      this.send(ws, ["edits", key, [...e]]);
+      const e = await this.chunkEdits(prefix + key);
+      this.send(ws, ["edits", key, [...e], a.zone]);
     }
     this.save(ws, a);
   }
 
-  /// The block at (x, y, z) now, and whether a player put it there. x and z wrap round (a neighbour of x = 0 is 511).
-  async blockAt(x, y, z) {
+  /// The block at (x, y, z) on `zone` now, and whether a player put it there. x and z wrap round (a neighbour of
+  /// x = 0 is 511).
+  async blockAt(zone, x, y, z) {
     if (!Number.isInteger(x) || !Number.isInteger(z) || y < 0 || y >= HEIGHT) return { block: y < 0 ? BEDROCK : AIR, placed: false };
     x = wrap(x);
     z = wrap(z);
-    const key = `${Math.floor(x / CHUNK)},${Math.floor(z / CHUNK)}`;
+    const key = `${this.editPrefix(zone)}${Math.floor(x / CHUNK)},${Math.floor(z / CHUNK)}`;
     const e = await this.chunkEdits(key);
     const i = blockIndex(x % CHUNK, y, z % CHUNK);
     const placed = e.has(i);
-    return { key, e, i, placed, block: placed ? e.get(i) : naturalBlock(x, y, z) };
+    return { key, e, i, placed, block: placed ? e.get(i) : naturalBlock(x, y, z, zone) };
   }
-  async solidAt(x, y, z) {
-    return !!BLOCKS[(await this.blockAt(x, y, z)).block]?.solid;
+  async solidAt(zone, x, y, z) {
+    return !!BLOCKS[(await this.blockAt(zone, x, y, z)).block]?.solid;
   }
   /// Whether a player could stand where they say: their feet and head are not inside solid blocks.
   async standing(a) {
     const x = Math.floor(a.x), y = Math.floor(a.y), z = Math.floor(a.z);
-    return !(await this.solidAt(x, y, z)) && !(await this.solidAt(x, y + 1, z));
+    return !(await this.solidAt(a.zone, x, y, z)) && !(await this.solidAt(a.zone, x, y + 1, z));
   }
   /// Whether a block has a side open to air or water (anything else couldn't have been reached).
-  async exposed(x, y, z) {
+  async exposed(zone, x, y, z) {
     for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
-      if (!(await this.solidAt(x + dx, y + dy, z + dz))) return true;
+      if (!(await this.solidAt(zone, x + dx, y + dy, z + dz))) return true;
     }
     return false;
   }
@@ -320,11 +450,11 @@ export class World extends DurableObject {
     a.editMin.keys.push(key);
     return true;
   }
-  setBlock(at, b, x, y, z, ws) {
+  setBlock(zone, at, b, x, y, z, ws) {
     at.e.set(at.i, b);
     this.dirtyChunks.add(at.key);
     this.scheduleFlush();
-    this.near(x, z, ["set", x, y, z, b], ws, NEAR_EDITS);
+    this.near(zone, x, z, ["set", x, y, z, b], ws, NEAR_EDITS);
   }
   inReach(a, x, y, z) {
     return Math.hypot(wrapDelta(x + 0.5 - a.x), y + 0.5 - (a.y + 1.62), wrapDelta(z + 0.5 - a.z)) <= ROOM_REACH;
@@ -332,47 +462,57 @@ export class World extends DurableObject {
 
   async breakBlock(ws, a, x, y, z) {
     if (!a.ready || !isInt(x, 0, WORLD) || !isInt(z, 0, WORLD) || !isInt(y, 1, HEIGHT)) return;
-    const at = await this.blockAt(x, y, z);
+    const zone = a.zone;
+    const at = await this.blockAt(zone, x, y, z);
     const cur = at.block;
     const undo = () => this.send(ws, ["set", x, y, z, cur]);
     const now = Date.now();
-    if (cur === AIR || cur === WATER || cur === BEDROCK || protectedAt(x, z) || !this.inReach(a, x, y, z)) return undo();
-    if (!(await this.exposed(x, y, z)) || !(await this.standing(a)) || !this.editAllowed(a, at.key, now)) { this.save(ws, a); return undo(); }
-    // Breaking takes time: a player banks up to BREAK_CREDIT seconds and each block costs what the best pickaxe needs.
-    if (!bucket(a, "credit", BREAK_CREDIT, 1, fastestBreak(cur) * 0.85, now)) { this.save(ws, a); return undo(); }
-    this.setBlock(at, AIR, x, y, z, ws);
+    if (cur === AIR || cur === WATER || cur === BEDROCK || protectedIn(zone, x, z) || !this.inReach(a, x, y, z)) return undo();
+    if (!(await this.exposed(zone, x, y, z)) || !(await this.standing(a)) || !this.editAllowed(a, at.key, now)) { this.save(ws, a); return undo(); }
+    // Breaking takes time: a player banks up to BREAK_CREDIT seconds and each block costs what the best pickaxe needs,
+    // less their NFT speed boost (boosts.js: a +50% miner breaks in two thirds of the time).
+    const cost = withSpeed(fastestBreak(cur), this.boost(a).speed) * 0.85;
+    if (!bucket(a, "credit", BREAK_CREDIT, 1, cost, now)) { this.save(ws, a); return undo(); }
+    this.setBlock(zone, at, AIR, x, y, z, ws);
     const reward = BLOCK_REWARDS[cur];
-    if (!at.placed && reward && a.wallet && !(a.suspect > now)) await this.credit(ws, a, toCents(reward), cur);
+    if (!at.placed && reward && a.wallet && !(a.suspect > now)) await this.earn(ws, a, reward, cur);
     this.save(ws, a);
   }
 
   async place(ws, a, x, y, z, b) {
     if (!a.ready || !isInt(x, 0, WORLD) || !isInt(z, 0, WORLD) || !isInt(y, 1, HEIGHT) || !isInt(b, 1, 64)) return;
-    const at = await this.blockAt(x, y, z);
+    const zone = a.zone;
+    const at = await this.blockAt(zone, x, y, z);
     const cur = at.block;
     const undo = () => this.send(ws, ["set", x, y, z, cur]);
     const now = Date.now();
-    if (!BLOCKS[b]?.placeable || (cur !== AIR && cur !== WATER && !BLOCKS[cur]?.plant) || protectedAt(x, z) || !this.inReach(a, x, y, z)) return undo();
+    if (!BLOCKS[b]?.placeable || (cur !== AIR && cur !== WATER && !BLOCKS[cur]?.plant) || protectedIn(zone, x, z) || !this.inReach(a, x, y, z)) return undo();
     if (!this.editAllowed(a, at.key, now) || !bucket(a, "pcredit", PLACE_PER_S, PLACE_PER_S, 1, now)) { this.save(ws, a); return undo(); }
-    this.setBlock(at, b, x, y, z, ws);
+    this.setBlock(zone, at, b, x, y, z, ws);
     this.save(ws, a);
   }
 
   // ---------------------------------------------------------------- monsters
 
+  /// A monster for this player, now and then: at night or underground (in Deepvein, any time), more and tougher
+  /// where the zone says (zones.js), never near the town, a pad or Cinderfall's arena.
   async maybeMob(ws, a, now) {
+    const M = zoneOf(a.zone).mobs;
     a.mobs = (a.mobs ?? []).filter((m) => now - m.at < MOB_LIFE_MS);
-    if (a.mobs.length >= MOBS_PER_PLAYER || now < (a.nextMob ?? 0)) return;
+    if (a.mobs.length >= M.max || now < (a.nextMob ?? 0)) return;
     const under = a.y < UNDERGROUND_Y;
-    if (!under && !isNight(now)) return;
-    if (wrapDist(a.x, a.z, TOWN.x, TOWN.z) < PROTECT_R + 16) return;
-    a.nextMob = now + MOB_EVERY_MS * (0.8 + Math.random() * 0.4);
+    if (!under && !M.always && !isNight(now)) return;
+    if (calmAt(a.zone, a.x, a.z)) return;
+    a.nextMob = now + M.everyMs * (0.8 + Math.random() * 0.4);
     // Underground means really in a cave: not claiming a spot inside the rock.
     if (under && !(await this.standing(a))) return;
     const r = Math.random();
     const kind = under && a.y < 30 && r < 0.2 ? "golem" : r < 0.45 ? "mudling" : r < 0.75 ? "rattler" : "crawler";
     const ang = Math.random() * Math.PI * 2, d = 10 + Math.random() * 6;
-    const mob = { i: ++a.mobSeq, k: kind, x: wrap(Math.round(a.x + Math.cos(ang) * d)), y: Math.round(a.y), z: wrap(Math.round(a.z + Math.sin(ang) * d)), hp: MOBS[kind].hp, at: now };
+    this.addMob(ws, a, kind, a.x + Math.cos(ang) * d, a.y, a.z + Math.sin(ang) * d, now);
+  }
+  addMob(ws, a, kind, x, y, z, now) {
+    const mob = { i: ++a.mobSeq, k: kind, x: wrap(Math.round(x)), y: Math.round(y), z: wrap(Math.round(z)), hp: Math.round(MOBS[kind].hp * zoneOf(a.zone).mobs.hp), at: now };
     a.mobs.push(mob);
     this.send(ws, ["mob", mob.i, kind, mob.x, mob.y, mob.z]);
   }
@@ -386,11 +526,11 @@ export class World extends DurableObject {
     if (wrapDist(a.x, a.z, m.x, m.z) > reach) return;
     // A sword swings every ATTACK_MS; the bucket lets two hits through close together (network jitter), no more.
     if (!bucket(a, "hits", 2, 1000 / HIT_EVERY_MS, 1, now)) { this.save(ws, a); return; }
-    m.hp -= Math.max(1, Math.min(BEST_DAMAGE, Math.floor(Number(damage)) || 1));
+    m.hp -= clampHit(damage);
     if (m.hp <= 0) {
       a.mobs = a.mobs.filter((o) => o !== m);
       this.send(ws, ["mobdead", m.i]);
-      if (a.wallet && !(a.suspect > now)) await this.credit(ws, a, toCents(MOB_REWARDS[m.k] ?? 0), m.k);
+      if (a.wallet && !(a.suspect > now)) await this.earn(ws, a, MOB_REWARDS[m.k] ?? 0, m.k);
     }
     this.save(ws, a);
   }
@@ -401,15 +541,434 @@ export class World extends DurableObject {
     if (a.mobs.length !== before) this.save(ws, a);
   }
 
+  // ---------------------------------------------------------------- the rocket's zones (web/zones.js)
+
+  /// Puts player `a` on `zone`, standing on its landing pad (no message: the callers tell whoever needs to know).
+  arrive(a, zone, now) {
+    a.zone = zone;
+    Object.assign(a, xyz(landing(zone)));
+    a.pAt = now;
+    a.suspect = Math.max(a.suspect ?? 0, now + SETTLE_MS); // (a flight is a teleport: nothing is earned for a moment)
+    a.mobs = [];
+    a.dead = false;
+    a.lastHit = null;
+    a.week = weekOf(now);
+  }
+  /// The rocket: the player flies to `zone`. A trip out (from home to a zone, or from a zone to another) uses a
+  /// ticket (useTicket); the way home never does. If the flight is refused (no ticket, or too many too fast), they're
+  /// told which planet they're still on, and their game goes back there.
+  async fly(ws, a, zone) {
+    if (!a.ready || !isZone(zone)) return;
+    const now = Date.now();
+    if (!bucket(a, "flights", FLIGHTS, 1 / FLIGHT_EVERY_S, 1, now)) {
+      this.save(ws, a);
+      this.send(ws, ["err", "The rocket needs a moment between flights."]);
+      return this.zoned(ws, a);
+    }
+    if (zone !== "home" && zone !== a.zone && !(await this.useTicket(ws, a, zone))) {
+      const Z = zoneOf(zone), price = `${Z.ticket.toLocaleString("en-US")} $MINE`;
+      this.send(ws, ["err", a.wallet
+        ? `A trip to ${Z.name} needs a ticket (${price}): buy one at the rocket. The way home is free.`
+        : `A trip to ${Z.name} needs a ticket (${price}): sign in to earn (M) to buy one. The way home is free.`]);
+      return this.zoned(ws, a);
+    }
+    await this.move(ws, a, zone, now);
+  }
+  /// A ticket for player `a`'s trip out to `to`, used up on departure: true if they may go. While TICKETS_FREE
+  /// (zones.js) every trip is free; otherwise it takes one of the signed-in wallet's tickets to `to` (bought with
+  /// buyTicket; guests have none). A ticket has no time limit (a zone can be stayed in as long as you like), and the
+  /// way home never needs one.
+  async useTicket(ws, a, to) {
+    if (TICKETS_FREE) return true;
+    if (!a.wallet) return false;
+    const t = await this.ticketsOf(a.wallet);
+    if (!(t[to] > 0)) return false;
+    if (--t[to] === 0) delete t[to];
+    await this.ctx.storage.put(`tix:${a.wallet}`, t);
+    this.send(ws, ["tickets", t]);
+    return true;
+  }
+  /// A wallet's tickets, as kept (`tix:<wallet>`): zone -> how many.
+  async ticketsOf(wallet) {
+    return (await this.ctx.storage.get(`tix:${wallet}`)) ?? {};
+  }
+  /// ["ticket", txHash, zone]: a ticket to `zone`, bought with that transaction. It counts only if the transaction
+  /// succeeded, holds a Paid event from MinePayments (PAYMENTS_ADDRESS) by this player's signed-in wallet for kind 1
+  /// (tickets) and at least the zone's `ticket` price, is at most TICKET_AGE_S old, and hasn't bought a ticket before
+  /// (`tixTx:<hash>`, kept for good). The wallet then has one more ticket there. Answers ["ticketok", zone, count,
+  /// hash] and ["tickets", all], or ["ticketno", zone, why, hash, retry] (retry 1: the chain couldn't be read, so the
+  /// same hash may do later; 0: it never will).
+  async buyTicket(ws, a, hash, zone) {
+    const env = this.env, now = Date.now();
+    const no = (why, retry = false) =>
+      this.send(ws, ["ticketno", isZone(zone) ? zone : null, why, typeof hash === "string" ? hash : null, retry ? 1 : 0]);
+    if (!a.ready) return;
+    if (!isZone(zone) || !zoneOf(zone).ticket) return no("The rocket sells no tickets there.");
+    if (TICKETS_FREE) return no("Tickets are free right now: no need to buy one.");
+    if (!a.wallet) return no("Sign in to earn (M) first, so the world server knows your wallet.");
+    if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash)) return no("That isn't a transaction.");
+    if (!env.PAYMENTS_ADDRESS || !env.CHAIN_RPC) return no("Tickets can't be bought yet.");
+    if (!bucket(a, "tix", 4, 1 / 5, 1, now)) {
+      this.save(ws, a);
+      return no("One ticket at a time: try again in a few seconds.", true);
+    }
+    this.save(ws, a);
+    const key = `tixTx:${hash.toLowerCase()}`;
+    this.ticketChecks ??= new Set(); // (hashes being checked right now: the same one sent twice is checked once)
+    if (this.ticketChecks.has(key) || (await this.ctx.storage.get(key))) return no("That payment has already bought a ticket.");
+    this.ticketChecks.add(key);
+    const wallet = a.wallet, Z = zoneOf(zone);
+    try {
+      const pub = this.chainClient();
+      let receipt = null;
+      for (let i = 0; i < 5 && !receipt; i++) {
+        receipt = await pub.getTransactionReceipt({ hash }).catch(() => null);
+        if (!receipt && i < 4) await new Promise((r) => setTimeout(r, 1500));
+      }
+      if (!receipt) return no("Couldn't find that payment on the chain yet. Try again in a moment.", true);
+      if (receipt.status !== "success") return no("That transaction failed, so it paid nothing.");
+      const paid = parseEventLogs({ abi: PAYMENTS_ABI, logs: receipt.logs, eventName: "Paid" })
+        .filter((l) => l.address.toLowerCase() === env.PAYMENTS_ADDRESS.toLowerCase());
+      if (!paid.length) return no("That transaction isn't a payment to the game.");
+      const theirs = paid.filter((l) => getAddress(l.args.player) === wallet);
+      if (!theirs.length) return no("That payment came from another wallet: buy tickets from the wallet you signed in with.");
+      const tickets = theirs.filter((l) => l.args.kind === TICKET_KIND);
+      if (!tickets.length) return no("That payment wasn't for a rocket ticket.");
+      const price = BigInt(Z.ticket) * 10n ** 18n;
+      if (!tickets.some((l) => l.args.amount >= price)) {
+        return no(`A ticket to ${Z.name} costs ${Z.ticket.toLocaleString("en-US")} $MINE: that payment was less.`);
+      }
+      const block = await pub.getBlock({ blockNumber: receipt.blockNumber });
+      if (now / 1000 - Number(block.timestamp) > TICKET_AGE_S) return no("That payment is too old to buy a ticket (over 3 hours).");
+      const t = await this.ticketsOf(wallet);
+      t[zone] = (t[zone] ?? 0) + 1;
+      await this.ctx.storage.put({ [key]: wallet, [`tix:${wallet}`]: t });
+      this.send(ws, ["ticketok", zone, t[zone], hash]);
+      if (a.wallet === wallet) this.send(ws, ["tickets", t]);
+    } catch (e) {
+      console.log("ticket check failed", e?.shortMessage ?? e?.message ?? e);
+      no("Couldn't check that payment right now. Try again in a moment.", true);
+    } finally {
+      this.ticketChecks.delete(key);
+    }
+  }
+  /// The chain, read through CHAIN_RPC.
+  chainClient() {
+    return (this.pub ??= createPublicClient({ transport: http(this.env.CHAIN_RPC) }));
+  }
+  /// Puts the player on `zone`'s pad: the others on the planet they left see them go, those on the new one see them
+  /// land, and the player gets who's there (and the boss, or the loot chests). A signed-in wallet's zone is kept, so a
+  /// reload or a dropped connection lands it back there.
+  async move(ws, a, zone, now = Date.now()) {
+    const from = a.zone;
+    if (from !== zone) this.zoneCast(from, ["leave", a.id, zone], ws);
+    this.arrive(a, zone, now);
+    this.save(ws, a);
+    this.zoned(ws, a);
+    this.zoneCast(zone, ["join", ...this.shown(a), from !== zone ? "landed" : null], ws);
+    if (a.wallet) {
+      this.send(ws, this.boostMsg(a)); // (the daily cap there is the zone's: zones.js capMul)
+      await this.keepZone(a.wallet, zone);
+    }
+    await this.zoneNews(ws, a);
+  }
+  /// Remembers the zone a wallet is on (home is forgotten: it's where everyone starts).
+  async keepZone(wallet, zone) {
+    if (zone === "home") await this.ctx.storage.delete(`zone:${wallet}`);
+    else await this.ctx.storage.put(`zone:${wallet}`, zone);
+  }
+  /// Tells a player which planet they're on and who else is there.
+  zoned(ws, a) {
+    const here = this.onZone(a.zone).filter(([w]) => w !== ws).map(([, o]) => this.shown(o));
+    this.send(ws, ["zoned", a.zone, here, xyz(a)]);
+  }
+  /// What a player arriving on a zone needs besides the players: the boss in Cinderfall, the loot chests in a PvP zone.
+  async zoneNews(ws, a) {
+    if (a.zone === "boss") {
+      await this.bossState();
+      this.bossTidy(Date.now());
+      this.send(ws, this.bossMsg(this.boss)); // (tidying may have brought a fresh one back)
+    }
+    if (zoneOf(a.zone).pvp) {
+      const now = Date.now();
+      const list = [...(await this.chestList()).values()].filter((c) => c.zone === a.zone && c.until > now);
+      this.send(ws, ["chests", list.map((c) => [c.id, c.x, c.y, c.z, c.until, c.who])]);
+    }
+  }
+  /// Back on your feet after being knocked out: at the town square at home, or on the zone's pad.
+  respawn(ws, a) {
+    Object.assign(a, xyz(spawnOf(a.zone)));
+    a.pAt = Date.now();
+    a.mobs = [];
+    a.dead = false;
+    a.lastHit = null;
+    this.save(ws, a);
+  }
+
+  // ---------------------------------------------------------------- the boss (Cinderfall)
+  // One boss, in memory: { hp, act, t0, ms, from, to, target, aim, down, dmg, lastFight, summonAt }. Every move goes
+  // to everyone in Cinderfall as one message ["boss", ...]; their games animate it from t0, and work out for
+  // themselves whether its slam or its thrown rock caught them (so nothing is sent while it moves, and nothing per
+  // frame). A loop of timers picks its moves only while someone is in the fight; left alone, it stands still, and
+  // after BOSS.healMs it heals (or, if the room has slept meanwhile, it simply starts fresh). Only when it was beaten
+  // (and so when it's back) is written down.
+
+  async bossState() {
+    if (this.boss) return this.boss;
+    const down = (await this.ctx.storage.get("bossdown")) ?? 0;
+    this.boss ??= this.freshBoss(down > Date.now() ? down : 0);
+    return this.boss;
+  }
+  freshBoss(down = 0) {
+    const at = [ARENA.x + 0.5, ARENA.z + 0.5];
+    return { hp: BOSS.hp, act: down ? "down" : "idle", t0: Date.now(), ms: 0, from: at, to: at, target: null, aim: null, down, dmg: new Map(), lastFight: 0, summonAt: 0 };
+  }
+  /// The message every game draws the boss from.
+  bossMsg(B) {
+    return ["boss", B.hp, BOSS.hp, B.act, B.t0, B.ms, B.from[0], B.from[1], B.to[0], B.to[1], B.target, B.aim, B.down];
+  }
+  /// Back after its rest, or healed after being left alone.
+  bossTidy(now) {
+    const B = this.boss;
+    if (!B) return;
+    if (B.down && now >= B.down) {
+      this.boss = this.freshBoss();
+      this.ctx.storage.delete("bossdown").catch(() => {});
+      this.zoneCast("boss", this.bossMsg(this.boss));
+      this.zoneCast("boss", ["sys", `${BOSS.name} is back in the arena.`]);
+    } else if (!B.down && B.hp < BOSS.hp && now - B.lastFight > BOSS.healMs) {
+      Object.assign(B, { hp: BOSS.hp, dmg: new Map(), summonAt: 0 });
+      this.zoneCast("boss", this.bossMsg(B));
+    }
+  }
+  /// Someone came near the arena (or hit the boss): get its loop going if it isn't.
+  async bossWake(now) {
+    await this.bossState();
+    this.bossTidy(now);
+    if (this.bossTimer || this.boss.down) return;
+    this.bossTimer = setTimeout(() => this.bossThink(), 300);
+  }
+  /// The players in the fight: in Cinderfall, near the arena, not knocked out.
+  fighters() {
+    return this.onZone("boss").filter(([, o]) => !o.dead && wrapDist(o.x, o.z, ARENA.x, ARENA.z) < BOSS.engage);
+  }
+  /// Picks the boss's next move and tells everyone in Cinderfall; runs again when the move is done.
+  bossThink() {
+    this.bossTimer = null;
+    const B = this.boss, now = Date.now();
+    if (!B || B.down) return;
+    const pos = bossAt(B, now), here = [pos.x, pos.z];
+    const fighters = this.fighters();
+    if (!fighters.length) {
+      // Nobody to fight: stand where it is, and the loop stops (bossWake starts it again).
+      if (B.act !== "idle") {
+        Object.assign(B, { act: "idle", t0: now, ms: 0, from: here, to: here, target: null, aim: null });
+        this.zoneCast("boss", this.bossMsg(B));
+      }
+      return;
+    }
+    B.lastFight = now;
+    // Mostly the nearest, sometimes anyone.
+    const by = fighters.map(([, o]) => ({ o, d: wrapDist(o.x, o.z, pos.x, pos.z) })).sort((p, q) => p.d - q.d);
+    const { o: t, d } = Math.random() < 0.65 ? by[0] : by[Math.floor(Math.random() * by.length)];
+    const move = (act, ms, extra = {}) => Object.assign(B, { act, t0: now, ms, from: here, to: here, target: t.id, aim: null, ...extra });
+    if (B.hp < BOSS.hp * BOSS.summon.below && now - B.summonAt > BOSS.summon.everyMs) {
+      move("summon", BOSS.summon.ms);
+      B.summonAt = now;
+      this.bossMinions(fighters, pos, now);
+    } else if (d > BOSS.slam.radius - 1 && Math.random() < 0.45) {
+      // Walk towards them (stopping a stride short of its own body), staying in the arena.
+      const k = Math.max(0, d - BOSS.body - 2.5) / (d || 1);
+      let tx = pos.x + wrapDelta(t.x - pos.x) * k, tz = pos.z + wrapDelta(t.z - pos.z) * k;
+      const r = Math.hypot(tx - ARENA.x - 0.5, tz - ARENA.z - 0.5);
+      if (r > BOSS.roam) { tx = ARENA.x + 0.5 + ((tx - ARENA.x - 0.5) * BOSS.roam) / r; tz = ARENA.z + 0.5 + ((tz - ARENA.z - 0.5) * BOSS.roam) / r; }
+      const len = Math.hypot(tx - pos.x, tz - pos.z);
+      if (len > 1) move("walk", Math.round(Math.min(3500, Math.max(600, (len / BOSS.walkSpeed) * 1000))), { to: [tx, tz] });
+      else move("rock", BOSS.rock.ms, { aim: [t.x, t.y, t.z] });
+    } else if (d <= BOSS.slam.radius - 0.5 && Math.random() < 0.75) move("slam", BOSS.slam.ms);
+    else move("rock", BOSS.rock.ms, { aim: [Math.round(t.x * 10) / 10, Math.round(t.y * 10) / 10, Math.round(t.z * 10) / 10] });
+    this.zoneCast("boss", this.bossMsg(B));
+    const [lo, hi] = BOSS.restMs;
+    this.bossTimer = setTimeout(() => this.bossThink(), B.ms + lo + Math.random() * (hi - lo));
+  }
+  /// It calls up monsters: one for each of a few fighters, beside the boss (each game runs its own, as always).
+  bossMinions(fighters, pos, now) {
+    const kinds = ["mudling", "rattler", "crawler"];
+    for (let i = 0; i < Math.min(BOSS.summon.count, fighters.length * 2); i++) {
+      const [ws, o] = fighters[i % fighters.length];
+      const ang = Math.random() * Math.PI * 2, r = 4 + Math.random() * 3;
+      this.addMob(ws, o, kinds[i % kinds.length], pos.x + Math.cos(ang) * r, ARENA.y + 1, pos.z + Math.sin(ang) * r, now);
+      this.save(ws, o);
+    }
+  }
+  /// A hit on the boss: only from Cinderfall, close enough to it, no faster than a sword and no harder than the best
+  /// one, and not just after a teleport. Everyone there sees its health; a refused hit just tells the hitter the
+  /// real health again.
+  async bossHit(ws, a, damage) {
+    const now = Date.now();
+    if (!a.ready || a.zone !== "boss") return;
+    await this.bossState();
+    this.bossTidy(now);
+    const B = this.boss;
+    const no = () => this.send(ws, ["bosshp", B.hp, a.id, 0]);
+    if (B.down || a.dead || a.suspect > now) return no();
+    const p = bossAt(B, now);
+    if (wrapDist(a.x, a.z, p.x, p.z) > BOSS.hitRange || a.y < ARENA.y - 4 || a.y > ARENA.y + BOSS.height + 4) return no();
+    if (!bucket(a, "hits", 2, 1000 / HIT_EVERY_MS, 1, now)) { this.save(ws, a); return no(); }
+    this.save(ws, a);
+    const d = Math.min(B.hp, clampHit(damage));
+    B.hp -= d;
+    B.lastFight = now;
+    const key = a.wallet ? `w:${a.wallet}` : `g:${a.id}`;
+    const rec = B.dmg.get(key) ?? { d: 0, wallet: a.wallet, id: a.id, name: a.name };
+    // (What they use as of their last hit: their share gets that boost, even if they've left by the end.)
+    Object.assign(rec, { d: rec.d + d, id: a.id, name: a.name, eq: a.wallet ? { ...a.eq } : null });
+    B.dmg.set(key, rec);
+    this.zoneCast("boss", ["bosshp", B.hp, a.id, 1]);
+    if (B.hp <= 0) await this.bossDown(now);
+    else await this.bossWake(now);
+  }
+  /// Beaten: the pool is shared by the signed-in players who hit it, by the damage each did (each share with that
+  /// player's earn boost, through the ledger and its daily caps), everyone who did a fair share gets some loot, and
+  /// it's back after BOSS.respawnMs.
+  async bossDown(now) {
+    const B = this.boss;
+    clearTimeout(this.bossTimer);
+    this.bossTimer = null;
+    const here = [bossAt(B, now).x, bossAt(B, now).z];
+    Object.assign(B, { hp: 0, act: "down", t0: now, ms: 0, from: here, to: here, target: null, aim: null, down: now + BOSS.respawnMs });
+    await this.ctx.storage.put("bossdown", B.down);
+    this.zoneCast("boss", this.bossMsg(B));
+    const all = [...B.dmg.values()].sort((p, q) => q.d - p.d);
+    B.dmg = new Map();
+    const total = all.reduce((t, r) => t + r.d, 0) || 1;
+    const signed = all.filter((r) => r.wallet).reduce((t, r) => t + r.d, 0);
+    const pool = toUnits(BOSS_POOL);
+    const conns = this.players();
+    for (const [i, r] of all.entries()) {
+      // Their connection now: the same one, or the same wallet's.
+      const c = conns.find(([, o]) => o.id === r.id) ?? (r.wallet ? conns.find(([, o]) => o.wallet === r.wallet) : null);
+      const ws = c?.[0] ?? null;
+      let units = 0;
+      if (r.wallet && signed) {
+        const b = boostOfEq(r.eq);
+        units = await this.creditWallet(r.wallet, withEarn(Math.floor((pool * r.d) / signed), b.earn), "boss", ws, dailyCap(b.cap, "boss"));
+      }
+      const share = r.d / total;
+      const loot = new Map();
+      const give = (list) => { for (const [id, n] of list) loot.set(id, (loot.get(id) ?? 0) + n); };
+      if (share >= 0.05) give(BOSS.loot);
+      if (i === 0 && share >= 0.05) {
+        give(BOSS.topLoot);
+        if (Math.random() < BOSS.rareLoot[1]) give([[BOSS.rareLoot[0], 1]]);
+      }
+      if (ws) this.send(ws, ["bossreward", units, Math.round(share * 1000) / 10, [...loot], !!r.wallet]);
+    }
+    const top = all.slice(0, 3).map((r) => `${r.name} ${Math.round((r.d / total) * 100)}%`).join(", ");
+    const paid = signed ? `${fmtMine(pool)} $MINE shared by damage` : "Nobody who hit it was signed in, so no $MINE this time";
+    this.zoneCast("boss", ["sys", `${BOSS.name} is beaten! ${paid}${top ? ` (${top})` : ""}. Back in ${Math.round(BOSS.respawnMs / 60_000)} minutes.`]);
+  }
+
+  // ---------------------------------------------------------------- PvP (Red Mesa)
+
+  /// A hit on another player: only when both are in the same PvP zone (zones.js `pvp`), neither on its pad, close
+  /// enough (by where the server last heard they were), no sooner than a swing after the last one, no harder than the
+  /// best weapon, and not from someone who has just teleported or is knocked out. Passed to the one hit, whose game
+  /// takes their armor off it. A refused hit is answered ["pvpno", target, why].
+  pvpHit(ws, a, targetId, damage) {
+    if (!a.ready) return;
+    const now = Date.now();
+    const no = (why) => this.send(ws, ["pvpno", targetId, why]);
+    const t = Number.isInteger(targetId) && targetId !== a.id ? this.players().find(([, o]) => o.id === targetId) : null;
+    if (!t) return no("gone");
+    const [tws, o] = t;
+    if (!zoneOf(a.zone).pvp || o.zone !== a.zone) return no("nopvp");
+    if (onPad(a.zone, a.x, a.z) || onPad(o.zone, o.x, o.z)) return no("safe");
+    if (a.dead || o.dead) return no("down");
+    if (a.suspect > now) return no("settling"); // (just landed, joined or moved faster than anyone can)
+    if (wrapDist(a.x, a.z, o.x, o.z) > PVP.reach || Math.abs(a.y - o.y) > 4) return no("far");
+    if (now - (a.pvpAt ?? 0) < PVP.everyMs) return no("fast");
+    a.pvpAt = now;
+    this.save(ws, a);
+    o.lastHit = { by: a.id, at: now };
+    this.save(tws, o);
+    const dx = wrapDelta(o.x - a.x), dz = wrapDelta(o.z - a.z), len = Math.hypot(dx, dz) || 1;
+    this.send(tws, ["pvphit", a.id, clampHit(damage), Math.round((dx / len) * 100) / 100, Math.round((dz / len) * 100) / 100]);
+  }
+  /// The chests left by beaten players: id -> { id, zone, x, y, z, until, who, items }, kept in storage too (the room
+  /// may sleep between a knock-out and the looting).
+  async chestList() {
+    if (!this.chests) {
+      const list = (await this.ctx.storage.get("chests")) ?? [];
+      this.chests ??= new Map(list.map((c) => [c.id, c]));
+    }
+    const now = Date.now();
+    for (const [id, c] of this.chests) if (c.until <= now) this.chests.delete(id);
+    return this.chests;
+  }
+  async saveChests() {
+    await this.ctx.storage.put("chests", [...this.chests.values()]);
+  }
+  /// A player's game says they were knocked out by player `killer` in a PvP zone, carrying `items`. It counts only
+  /// right after a checked hit from that player, and once per knock-out (they're down until they respawn on the
+  /// pad): then everything they carried waits in a chest where they fell, for the first to open it.
+  async pvpDead(ws, a, killer, items) {
+    if (!a.ready) return;
+    const now = Date.now();
+    if (!zoneOf(a.zone).pvp || a.dead || !a.lastHit || a.lastHit.by !== killer || now - a.lastHit.at > PVP.killMs) {
+      return this.send(ws, ["dropno", "That wasn't a knock-out by another player."]);
+    }
+    const stacks = cleanItems(items);
+    a.dead = true;
+    a.lastHit = null;
+    this.save(ws, a);
+    const chests = await this.chestList();
+    const c = { id: crypto.getRandomValues(new Uint32Array(1))[0] >>> 1, zone: a.zone, x: Math.round(a.x * 10) / 10, y: Math.round(a.y * 10) / 10, z: Math.round(a.z * 10) / 10, until: now + PVP.chestMs, who: a.name, items: stacks };
+    if (stacks.length) {
+      chests.set(c.id, c);
+      await this.saveChests();
+      this.zoneCast(a.zone, ["chest", c.id, c.x, c.y, c.z, c.until, c.who]);
+    }
+    this.send(ws, ["dropped", stacks.length ? c.id : 0]);
+    const k = this.players().find(([, o]) => o.id === killer)?.[1];
+    this.zoneCast(a.zone, ["sys", `${k?.name ?? "Someone"} beat ${a.name}${stacks.length ? ": their loot chest waits where they fell" : ""}.`]);
+  }
+  /// Opening a loot chest: the first player close enough takes everything in it, once.
+  async loot(ws, a, id) {
+    if (!a.ready) return;
+    const chests = await this.chestList();
+    const c = chests.get(id);
+    if (!c || c.zone !== a.zone) return this.send(ws, ["lootno", id, "That chest is gone."]);
+    if (a.dead || wrapDist(a.x, a.z, c.x, c.z) > PVP.chestReach || Math.abs(a.y - c.y) > 5) return this.send(ws, ["lootno", id, "Get closer to the chest."]);
+    chests.delete(id); // (before anything waits: a second try finds nothing)
+    this.send(ws, ["looted", id, c.items, c.who]);
+    this.zoneCast(c.zone, ["chestgone", id, a.name], ws);
+    await this.saveChests();
+  }
+
   // ---------------------------------------------------------------- the $MINE ledger
 
+  /// A ledger shard (wallets by their address's first hex digit), in units. One still under the old key, in
+  /// hundredths, is converted here and written under the new one at the next flush (which then deletes the old).
   async shard(wallet) {
     const s = wallet[2].toLowerCase();
     let sh = this.shards.get(s);
     if (!sh) {
-      const stored = (await this.ctx.storage.get(`led:${s}`)) ?? {};
-      sh = this.shards.get(s) ?? stored;
-      this.shards.set(s, sh);
+      let stored = await this.ctx.storage.get(`${LEDGER}${s}`), old = null;
+      if (stored === undefined) {
+        old = await this.ctx.storage.get(`${OLD_LEDGER}${s}`);
+        if (old) stored = Object.fromEntries(Object.entries(old).map(([w, l]) => [w, { ...l, total: l.total * FROM_CENTS, today: l.today * FROM_CENTS }]));
+      }
+      sh = this.shards.get(s); // (loaded by another message meanwhile)
+      if (!sh) {
+        sh = stored ?? {};
+        this.shards.set(s, sh);
+        if (old) {
+          this.oldKeys.add(`${OLD_LEDGER}${s}`);
+          this.dirtyShards.add(s);
+          this.scheduleFlush();
+        }
+      }
     }
     return [s, sh];
   }
@@ -420,16 +979,51 @@ export class World extends DurableObject {
     if (l.day !== day) { l.day = day; l.today = 0; }
     return [s, l];
   }
-  async credit(ws, a, cents, what) {
-    if (!cents) return;
-    const [s, l] = await this.ledger(a.wallet);
-    const c = Math.min(cents, CAP - l.today);
-    if (c <= 0) return this.send(ws, ["earn", 0, l.today, l.total, "cap"]);
+  /// Everyone's earnings today (kept with the ledger, written in the same flush), in units.
+  async worldToday() {
+    const day = Math.floor(Date.now() / DAY_MS);
+    if (!this.world) {
+      let w = await this.ctx.storage.get(WORLD_DAY);
+      if (w === undefined) {
+        const old = await this.ctx.storage.get(OLD_WORLD_DAY);
+        if (old && !this.world) {
+          w = { day: old.day, total: old.total * FROM_CENTS };
+          this.oldKeys.add(OLD_WORLD_DAY);
+          this.dirtyWorld = true;
+          this.scheduleFlush();
+        }
+      }
+      this.world ??= w ?? { day, total: 0 };
+    }
+    if (this.world.day !== day) this.world = { day, total: 0 };
+    return this.world;
+  }
+  /// Player `a` did something worth `mine` $MINE at home's rate: it's counted times their zone's rate (rewards.js
+  /// ZONE_PAY) and their earn boost, within their daily cap (with their cap boost, in this zone) and everyone's.
+  async earn(ws, a, mine, what) {
+    const b = this.boost(a);
+    this.recheck(ws, a);
+    return this.creditWallet(a.wallet, withEarn(toUnits(mine) * (ZONE_PAY[a.zone] ?? 1), b.earn), what, ws, dailyCap(b.cap, a.zone));
+  }
+  /// Counts `units` for `wallet` (within its daily cap `cap` and everyone's), and tells its game (`ws`, if it's here).
+  /// Returns what was counted.
+  async creditWallet(wallet, units, what, ws, cap) {
+    if (!units || !wallet) return 0;
+    const [s, l] = await this.ledger(wallet);
+    const w = await this.worldToday();
+    const c = Math.min(units, cap - l.today, WORLD_CAP - w.total);
+    if (c <= 0) {
+      if (ws) this.send(ws, ["earn", 0, l.today, l.total, w.total >= WORLD_CAP ? "worldcap" : "cap"]);
+      return 0;
+    }
     l.today += c;
     l.total += c;
+    w.total += c;
     this.dirtyShards.add(s);
+    this.dirtyWorld = true;
     this.scheduleFlush();
-    this.send(ws, ["earn", c, l.today, l.total, what]);
+    if (ws) this.send(ws, ["earn", c, l.today, l.total, what]);
+    return c;
   }
 
   scheduleFlush() {
@@ -441,10 +1035,11 @@ export class World extends DurableObject {
     if (this.flushing) await this.flushing;
     clearTimeout(this.flushTimer);
     this.flushTimer = null;
-    const chunks = [...this.dirtyChunks], shards = [...this.dirtyShards];
-    if (!chunks.length && !shards.length) return;
+    const chunks = [...this.dirtyChunks], shards = [...this.dirtyShards], world = this.dirtyWorld;
+    if (!chunks.length && !shards.length && !world) return;
     this.dirtyChunks.clear();
     this.dirtyShards.clear();
+    this.dirtyWorld = false;
     for (const k of chunks) this.saving.add(k);
     const out = {};
     for (const k of chunks) {
@@ -452,18 +1047,25 @@ export class World extends DurableObject {
       const raw = new Uint8Array(e.size * 3);
       let j = 0;
       for (const [i, b] of e) { raw[j++] = i & 255; raw[j++] = i >> 8; raw[j++] = b; }
-      out[`${EDITS}${k}`] = raw;
+      out[k] = raw;
     }
-    for (const s of shards) out[`led:${s}`] = this.shards.get(s);
+    for (const s of shards) out[`${LEDGER}${s}`] = this.shards.get(s);
+    if (world) out[WORLD_DAY] = this.world;
+    const old = [...this.oldKeys]; // (their converted copies are in this write)
     this.flushing = (async () => {
       try {
         const keys = Object.keys(out);
         for (let i = 0; i < keys.length; i += 128) {
           await this.ctx.storage.put(Object.fromEntries(keys.slice(i, i + 128).map((k) => [k, out[k]])));
         }
+        if (old.length) {
+          await this.ctx.storage.delete(old);
+          for (const k of old) this.oldKeys.delete(k);
+        }
       } catch (e) {
         for (const k of chunks) this.dirtyChunks.add(k);
         for (const s of shards) this.dirtyShards.add(s);
+        if (world) this.dirtyWorld = true;
         this.scheduleFlush();
         throw e;
       } finally {
@@ -511,15 +1113,26 @@ export class World extends DurableObject {
     for (const [w, o] of this.players()) {
       if (w === ws || o.wallet !== wallet) continue;
       o.wallet = null;
+      o.eq = {};
       this.rename(w, o);
       this.send(w, ["signinfail", "You signed in somewhere else, so earnings count there now."]);
     }
     a.wallet = wallet;
     a.suspect = Math.max(a.suspect ?? 0, Date.now() + SETTLE_MS);
+    // No boost until this wallet's own NFTs are checked: the game wears its Crafter again once it's signed in.
+    a.eq = {};
     a.nick = (await this.ctx.storage.get(`name:${wallet}`))?.name ?? null;
     this.rename(ws, a);
     const [, l] = await this.ledger(wallet);
-    this.send(ws, ["signedin", wallet, token, l.today, l.total, CAP, a.nick && nameShown(a.nick) ? a.nick : null]);
+    this.send(ws, ["signedin", wallet, token, l.today, l.total, dailyCap(0, a.zone), a.nick && nameShown(a.nick) ? a.nick : null]);
+    if (!TICKETS_FREE) this.send(ws, ["tickets", await this.ticketsOf(wallet)]);
+    // Back on the zone this wallet was on (its ticket has no time limit). A game in a zone already (a guest's free
+    // trip, only possible while tickets are free) keeps its place, and that becomes the wallet's zone.
+    const kept = (await this.ctx.storage.get(`zone:${wallet}`)) ?? "home";
+    if (kept !== a.zone && a.ready) {
+      if (a.zone === "home" && isZone(kept)) await this.move(ws, a, kept);
+      else await this.keepZone(wallet, a.zone);
+    }
   }
 
   /// A voucher for the wallet's lifetime earnings, which MiningSites.claim pays (less what it has already paid).
@@ -531,7 +1144,7 @@ export class World extends DurableObject {
     await this.flush();
     const [, l] = await this.ledger(a.wallet);
     if (!l.total) return this.send(ws, ["voucher", null, 0, null, "Nothing earned yet: mine blocks and defeat monsters first."]);
-    const total = centsToWei(l.total);
+    const total = unitsToWei(l.total);
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
     const signature = await privateKeyToAccount(env.MINING_KEY).signTypedData({
       domain: { name: "MineWorldCraft Mining", version: "1", chainId: Number(env.CHAIN_ID), verifyingContract: env.MINING_ADDRESS },
@@ -548,7 +1161,7 @@ export class World extends DurableObject {
     if (!bucket(a, "gears", 4, 1, 1, Date.now())) return;
     a.gear = tiers;
     this.save(ws, a);
-    this.everyone(["gear", a.id, tiers], ws);
+    this.zoneCast(a.zone, ["gear", a.id, tiers], ws);
   }
 
   // ---------------------------------------------------------------- names
@@ -588,37 +1201,199 @@ export class World extends DurableObject {
     if (!a.voice || !Number.isInteger(to) || data === null || typeof data !== "object") return;
     if (!bucket(a, "rtcs", RTC_PER_MIN, RTC_PER_MIN / 60, 1, Date.now())) return;
     const target = this.players().find(([, o]) => o.id === to);
-    if (!target || !target[1].voice) return;
+    if (!target || !target[1].voice || target[1].zone !== a.zone) return;
     const o = target[1];
     if (Math.abs(wrapDelta(o.x - a.x)) > VOICE_RANGE || Math.abs(wrapDelta(o.z - a.z)) > VOICE_RANGE || Math.abs(o.y - a.y) > VOICE_RANGE) return;
     this.send(target[0], ["rtc", a.id, data]);
   }
 
+  // ---------------------------------------------------------------- NFTs: looks and boosts (web/boosts.js)
+
   /// Wear a MineWorld Crafter (or null for the Rookie): only once the chain says the signed-in wallet owns it. Its
-  /// traits come from the revealed seed (web/crafters.js, the same rules as the contract) and go to everyone.
+  /// traits come from the revealed seed (web/crafters.js, the same rules as the contract) and go to everyone; its
+  /// rarity and level (CrafterLevels) are the player's Crafter boost.
   async wear(ws, a, tokenId) {
     const env = this.env;
     const now = Date.now();
     if (tokenId === null) {
       a.look = null;
+      const had = !!a.eq?.crafter;
+      if (a.eq) delete a.eq.crafter;
       this.save(ws, a);
-      return this.everyone(["look", a.id, null]);
+      this.zoneCast(a.zone, ["look", a.id, null]);
+      if (had) this.send(ws, this.boostMsg(a));
+      return;
     }
     if (!a.wallet || !env.CRAFTERS_ADDRESS || !env.CHAIN_RPC || !isInt(tokenId, 1, SUPPLY + 1) || now - (a.wearAt ?? 0) < 3000) return;
     a.wearAt = now;
     this.save(ws, a);
+    const wallet = a.wallet;
+    const r = await this.readItem("crafter", tokenId, wallet).catch((e) => ({ failed: e }));
+    if (r.failed) return this.chainDown(ws, r.failed);
+    if (r.sealed) return this.send(ws, ["err", "The Crafters aren't revealed yet."]);
+    if (!r.mine) return this.send(ws, ["err", "That Crafter isn't in your wallet."]);
+    if (a.wallet !== wallet) return; // (signed out meanwhile)
+    a.look = packTraits(r.traits);
+    this.zoneCast(a.zone, ["look", a.id, a.look]);
+    this.equipped(ws, a, "crafter", [tokenId, r.tier, r.level], r.levelOk);
+  }
+
+  /// Use (or, with null, stop using) token `tokenId` of a boost slot's collection (boosts.js SLOTS): only once the
+  /// chain says the signed-in wallet owns it, and its tier is read from the collection. The Crafter slot is `wear`.
+  /// A slot whose collection isn't out yet (no address) says so.
+  async equip(ws, a, slot, tokenId) {
+    if (!isSlot(slot)) return;
+    if (slot === "crafter") return this.wear(ws, a, tokenId);
+    const S = SLOTS[slot], what = S.name.toLowerCase();
+    if (tokenId === null) {
+      if (a.eq?.[slot]) {
+        delete a.eq[slot];
+        this.save(ws, a);
+        this.send(ws, this.boostMsg(a));
+      }
+      return;
+    }
+    if (!a.wallet) return this.send(ws, ["err", `Sign in to earn (M) to use a ${what}.`]);
+    if (!Number.isSafeInteger(tokenId) || tokenId < 0) return;
+    if (!bucket(a, "equips", 3, 1 / 3, 1, Date.now())) { this.save(ws, a); return this.send(ws, ["err", "One change every few seconds."]); }
+    this.save(ws, a);
+    const wallet = a.wallet;
+    const r = await this.readItem(slot, tokenId, wallet).catch((e) => ({ failed: e }));
+    if (r.failed) return this.chainDown(ws, r.failed);
+    if (r.off) return this.send(ws, ["err", `${S.name}s aren't out yet: coming soon.`]);
+    if (!r.mine) return this.send(ws, ["err", `That ${what} isn't in your wallet.`]);
+    if (!isInt(r.tier, 0, S.tiers.length)) return this.send(ws, ["err", `That ${what}'s tier isn't one the game knows yet.`]);
+    if (a.wallet !== wallet) return;
+    this.equipped(ws, a, slot, [tokenId, r.tier, r.level], r.levelOk);
+  }
+  chainDown(ws, e) {
+    console.log("chain read failed", e?.shortMessage ?? e?.message ?? e);
+    this.send(ws, ["err", "The chain didn't answer. Try again in a moment."]);
+  }
+  /// Player `a` now uses `item` ([tokenId, tier, level]) in `slot`: their boost changes, and they're told. It's checked
+  /// again later (sooner if the level couldn't be read: until it is, it counts as level 1).
+  equipped(ws, a, slot, item, levelOk) {
+    (a.eq ??= {})[slot] = item;
+    a.eqAt = Date.now() + (levelOk ? BOOST_RECHECK_MS : BOOST_RETRY_MS);
+    this.save(ws, a);
+    this.send(ws, this.boostMsg(a));
+  }
+
+  /// What the chain says about token `id` of slot `slot`'s collection for `wallet`: { off } while the collection has
+  /// no address; { sealed } while the Crafters aren't revealed; { mine: false } if it isn't the wallet's (or doesn't
+  /// exist); else { mine, tier, level, levelOk, traits }. Throws if the chain can't be read.
+  async readItem(slot, id, wallet) {
+    const S = SLOTS[slot], env = this.env;
+    const address = env[S.env] || S.contract;
+    if (!address || !env.CHAIN_RPC) return { off: true };
     const pub = createPublicClient({ transport: http(env.CHAIN_RPC) });
-    const c = { address: env.CRAFTERS_ADDRESS, abi: CRAFTERS_ABI };
-    if (!this.crafterSeed) {
-      const seed = await pub.readContract({ ...c, functionName: "seed" });
-      if (seed === 0n) return this.send(ws, ["err", "The Crafters aren't revealed yet."]);
+    if (S.tierOf === "rarity" && !this.crafterSeed) {
+      const seed = await pub.readContract({ address, abi: CRAFTERS_ABI, functionName: "seed" });
+      if (seed === 0n) return { sealed: true };
       this.crafterSeed = seed;
     }
-    const owner = await pub.readContract({ ...c, functionName: "ownerOf", args: [BigInt(tokenId)] });
-    if (getAddress(owner) !== a.wallet) return this.send(ws, ["err", "That Crafter isn't in your wallet."]);
-    a.look = packTraits(traitsOf(this.crafterSeed, tokenId, HASH));
+    const owner = await pub.readContract({ address, abi: CRAFTERS_ABI, functionName: "ownerOf", args: [BigInt(id)] })
+      .catch((e) => { if (reverted(e)) return null; throw e; }); // (a token that doesn't exist reverts)
+    if (!owner || getAddress(owner) !== wallet) return { mine: false };
+    let traits = null, tier;
+    if (S.tierOf === "rarity") {
+      traits = traitsOf(this.crafterSeed, id, HASH);
+      tier = rarityOf(traits);
+    } else tier = Number(await pub.readContract({ address, abi: viewAbi(S.tierOf), functionName: S.tierOf, args: [BigInt(id)] }));
+    const lv = S.levels ? await this.readLevel(pub, S.levels, id) : { level: 1, ok: true };
+    return { mine: true, tier, level: lv.level, levelOk: lv.ok, traits };
+  }
+  /// A token's level from its levels contract (CrafterLevels.levelOf). Level 1 while that contract has no address;
+  /// level 1 for now if the chain can't be read (ok: false, so it's tried again a minute later).
+  async readLevel(pub, L, id) {
+    const address = this.env[L.env] || L.contract;
+    if (!address) return { level: 1, ok: true };
+    try {
+      const v = await pub.readContract({ address, abi: viewAbi(L.fn), functionName: L.fn, args: [BigInt(id)] });
+      return { level: Math.max(1, Math.min(255, Number(v))), ok: true };
+    } catch (e) {
+      console.log("level read failed", e?.shortMessage ?? e?.message ?? e);
+      return { level: 1, ok: false };
+    }
+  }
+
+  /// A player's boost (boosts.js): from what they use, checked on-chain; none for a guest.
+  boost(a) {
+    return a.wallet ? boostOfEq(a.eq) : NO_BOOST;
+  }
+  /// What the game is told: ["boost", speed, earn, cap, move, sources, the wallet's daily cap here in units].
+  boostMsg(a) {
+    const b = this.boost(a);
+    return ["boost", ...packBoost(b), dailyCap(b.cap, a.zone)];
+  }
+  /// Every BOOST_RECHECK_MS while a player earns (a minute after a read failed), what they use is checked again,
+  /// alongside the credit and never holding it up: a token that's no longer theirs stops boosting (and a Crafter stops
+  /// showing), and a level bought meanwhile starts counting. If the chain can't be read, what was known stays.
+  recheck(ws, a) {
+    const now = Date.now();
+    if (!a.wallet || !a.eq || !Object.keys(a.eq).length || now < (a.eqAt ?? 0)) return;
+    a.eqAt = now + BOOST_RETRY_MS; // (one check at a time)
     this.save(ws, a);
-    this.everyone(["look", a.id, a.look]);
+    this.checkAgain(ws, a, a.wallet).catch((e) => console.log("boost check failed", e?.message ?? e));
+  }
+  /// ["recheck"]: read what the player uses again now, rather than at the next check (the game asks right after its
+  /// player levels up the Crafter they wear). A few at most (RECHECKS, then one every RECHECK_EVERY_S); the player
+  /// gets their ["boost", ...] back either way.
+  async recheckNow(ws, a) {
+    if (!a.wallet || !a.eq || !Object.keys(a.eq).length) return;
+    const now = Date.now();
+    if (!bucket(a, "rechecks", RECHECKS, 1 / RECHECK_EVERY_S, 1, now)) return this.save(ws, a);
+    a.eqAt = now + BOOST_RETRY_MS; // (and no regular check meanwhile)
+    this.save(ws, a);
+    await this.checkAgain(ws, a, a.wallet, true);
+  }
+  async checkAgain(ws, a, wallet, answer = false) {
+    let ok = true, changed = false;
+    for (const [slot, item] of Object.entries(a.eq)) {
+      const r = await this.readItem(slot, item[0], wallet).catch(() => null);
+      if (a.wallet !== wallet || a.eq[slot]?.[0] !== item[0]) continue; // (they changed it meanwhile)
+      if (!r) { ok = false; continue; }
+      if (r.off || !r.mine) {
+        delete a.eq[slot];
+        changed = true;
+        if (slot === "crafter") {
+          a.look = null;
+          this.zoneCast(a.zone, ["look", a.id, null]);
+        }
+        this.send(ws, ["err", `Your ${slot === "crafter" ? "Crafter" : SLOTS[slot].name.toLowerCase()} isn't in this wallet any more, so its boost is off.`]);
+        continue;
+      }
+      const level = r.levelOk ? r.level : item[2];
+      if (!r.levelOk) ok = false;
+      if (r.tier !== item[1] || level !== item[2]) {
+        a.eq[slot] = [item[0], r.tier, level];
+        changed = true;
+      }
+    }
+    if (a.wallet !== wallet) return;
+    a.eqAt = Date.now() + (ok ? BOOST_RECHECK_MS : BOOST_RETRY_MS);
+    this.save(ws, a);
+    if (changed || answer) this.send(ws, this.boostMsg(a));
+  }
+
+  // ---------------------------------------------------------------- local testing only
+
+  /// Dev hooks, for trying the daily caps without mining for hours: ["dev", "today", mine] sets the signed-in wallet's
+  /// earnings today, ["dev", "world", mine] everyone's. Only when the room runs under `wrangler dev --var DEV_HOOKS:1`
+  /// (never put DEV_HOOKS in wrangler.toml) and the connection came to it on this machine, so never in production.
+  async dev(ws, a, what, mine) {
+    if (this.env.DEV_HOOKS !== "1" || !a.local || !num(mine) || mine < 0) return;
+    if (what === "today" && a.wallet) {
+      const [s, l] = await this.ledger(a.wallet);
+      l.today = toUnits(mine);
+      this.dirtyShards.add(s);
+    } else if (what === "world") {
+      (await this.worldToday()).total = toUnits(mine);
+      this.dirtyWorld = true;
+    } else return;
+    this.scheduleFlush();
+    const l = a.wallet ? (await this.ledger(a.wallet))[1] : null;
+    this.send(ws, ["dev", what, l?.today ?? 0, (await this.worldToday()).total]);
   }
 }
 

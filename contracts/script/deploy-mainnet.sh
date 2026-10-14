@@ -1,20 +1,32 @@
 #!/usr/bin/env bash
 # Deploy MineWorldCraft to Robinhood Chain, with the settings in launch.env.
 #
-#   ./script/deploy-mainnet.sh launch                    # dry run against a fork: hook, $MINE, MiningSites, pool
+#   ./script/deploy-mainnet.sh launch                    # dry run against a fork: hook, $MINE, the game, the pool
 #   MINING_SIGNER=0x... ./script/deploy-mainnet.sh launch --broadcast --browser --browser-disable-open
 #   ./script/deploy-mainnet.sh crafters                  # dry run of the Crafters collection against a fork
 #   ./script/deploy-mainnet.sh crafters --broadcast --browser --browser-disable-open
+#   ./script/deploy-mainnet.sh levels                    # dry run of CrafterLevels, once $MINE and the Crafters exist
+#   ./script/deploy-mainnet.sh levels --broadcast --browser --browser-disable-open
+#   ./script/deploy-mainnet.sh verify                    # verify every deployed source on Sourcify (as Courier World)
 #
-# launch: MineHook at a mined CREATE2 address (with its two routers), MiningSites, $MINE (500M to the hook, 500M to
-#   MiningSites), the pool opened (the 500M locked for good), then the hook renounced so the fee recipient is final.
-#   MINING_SIGNER is the game server's voucher key's address (never the key).
-# crafters: the on-chain art (CrafterArt) and MineWorld Crafters with the sale closed (open it later with setSaleOpen).
+# launch: MineHook at a mined CREATE2 address (with its two routers); $MINE, as Courier World's $STAMP: 10.5M of its 21M
+#   cap minted to the hook, the rest minted later only by the mining vault; MiningSites (implementation and proxy), the
+#   vault (MineVault, $MINE's one minter: at most 35,000 a day, 10.5M in all), MinePayments (implementation and proxy);
+#   the token's minter set to the vault and its ownership renounced; the pool opened (the 10.5M locked for good), then
+#   the hook renounced so the fee recipient is final. OWNER owns the vault and the proxies from the start.
+#   MINING_SIGNER is the game server's voucher key's address (never the key). With CRAFTERS set (the Crafters came
+#   first), CrafterLevels too.
+# crafters: the on-chain art (CrafterArt) and MineWorld Crafters with the sale closed (open it later with setSaleOpen),
+#   owned by OWNER (handed over in two steps if the deploying wallet sets anything up first: OWNER then accepts).
+# levels: CrafterLevels (implementation and proxy; Crafter upgrades paid in $MINE), for $MINE and the Crafters in
+#   deployments/ (or MINE= and CRAFTERS=), owned by OWNER.
+# Every stage prints each contract's owner, and the calls only OWNER can make that are still to do (acceptOwnership,
+# the Crafters' setAttributesExtension, custom upgrade costs) when the deploying wallet isn't OWNER.
 #
 # Signing: --browser serves a page at http://127.0.0.1:9545 (--browser-disable-open: nothing opens by itself; paste
 # the address into your browser) where you connect your wallet and approve each transaction, so no private key is typed
 # anywhere. Switch the wallet to Robinhood Chain first. Or --account <keystore name> for a Foundry keystore. The wallet
-# that signs owns MiningSites and the Crafters (both hand over in two steps and can't be renounced).
+# that signs only deploys: OWNER (launch.env) owns everything that has an owner.
 #
 # RPC_URL picks the RPC (default: foundry.toml's "robinhood"). The launch mines a CREATE2 salt first, which takes a
 # while, so it needs an RPC that keeps a few minutes of state (Courier's launchpad needed the official RPC for this).
@@ -30,8 +42,8 @@ export PATH="$HOME/.foundry/bin:$PATH"
 STAGE="${1:-}"
 shift || true
 case "$STAGE" in
-  launch | crafters) ;;
-  *) echo "Usage: $0 launch|crafters [--broadcast --browser --browser-disable-open | --account <name>]" >&2; exit 1 ;;
+  launch | crafters | levels | verify) ;;
+  *) echo "Usage: $0 launch|crafters|levels|verify [--broadcast --browser --browser-disable-open | --account <name>]" >&2; exit 1 ;;
 esac
 
 set -a
@@ -44,6 +56,37 @@ for a in "$@"; do [ "$a" = "--broadcast" ] && BROADCAST=1; done
 
 is_address() { [[ "$1" =~ ^0x[0-9a-fA-F]{40}$ ]] && [ "$1" != "0x0000000000000000000000000000000000000000" ]; }
 
+if [ "$STAGE" = verify ]; then
+  # Sourcify, as Courier World's contracts are verified. Each record's contracts, with their sources.
+  PROXY=lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy
+  verify() { # <record> <key> <path:Name>
+    [ -f "$1" ] || return 0
+    local a
+    a=$(jq -r ".$2 // empty" "$1")
+    [ -n "$a" ] || return 0
+    echo "Verifying $2 ($a) as $3"
+    forge verify-contract "$a" "$3" --chain 4663 --verifier sourcify --rpc-url "$RPC" --watch \
+      || echo "  (not verified: check it on https://sourcify.dev)" >&2
+  }
+  G=deployments/robinhood.json C=deployments/robinhood-crafters.json L=deployments/robinhood-levels.json
+  verify $G mine src/MineToken.sol:MineToken
+  verify $G vault src/MineVault.sol:MineVault
+  verify $G sitesImplementation src/MiningSites.sol:MiningSites
+  verify $G sites "$PROXY"
+  verify $G paymentsImplementation src/MinePayments.sol:MinePayments
+  verify $G payments "$PROXY"
+  verify $G hook src/MineHook.sol:MineHook
+  verify $G router src/MineRouter.sol:MineRouter
+  verify $G ethRouter src/MineEthRouter.sol:MineEthRouter
+  verify $G levelsImplementation src/CrafterLevels.sol:CrafterLevels
+  verify $G levels "$PROXY"
+  verify $C art src/CrafterArt.sol:CrafterArt
+  verify $C crafters src/MineWorldCrafters.sol:MineWorldCrafters
+  verify $L levelsImplementation src/CrafterLevels.sol:CrafterLevels
+  verify $L levels "$PROXY"
+  exit 0
+fi
+
 if [ "$STAGE" = launch ]; then
   if ! is_address "${MINING_SIGNER:-}"; then
     if [ "$BROADCAST" = 1 ]; then
@@ -55,7 +98,20 @@ if [ "$STAGE" = launch ]; then
   fi
   SCRIPT=(script/Deploy.s.sol --sig "run()")
   RECORD=deployments/robinhood.json
-  KEYS=(mine sites hook)
+  KEYS=(mine vault sites sitesImplementation payments paymentsImplementation hook)
+  if [ -n "${CRAFTERS:-}" ]; then
+    is_address "$CRAFTERS" || { echo "CRAFTERS isn't an address." >&2; exit 1; }
+    KEYS+=(levels levelsImplementation)
+  fi
+elif [ "$STAGE" = levels ]; then
+  MINE="${MINE:-$(jq -r '.mine // empty' deployments/robinhood.json 2>/dev/null || true)}"
+  CRAFTERS="${CRAFTERS:-$(jq -r '.crafters // empty' deployments/robinhood-crafters.json 2>/dev/null || true)}"
+  is_address "${MINE:-}" || { echo "No \$MINE yet: run the launch first (or set MINE=0x...)." >&2; exit 1; }
+  is_address "${CRAFTERS:-}" || { echo "No Crafters yet: deploy them first (or set CRAFTERS=0x...)." >&2; exit 1; }
+  export MINE CRAFTERS TREASURY="${TREASURY:-$FEE_RECIPIENT}"
+  SCRIPT=(script/Deploy.s.sol --sig "runLevels()")
+  RECORD=deployments/robinhood-levels.json
+  KEYS=(levels levelsImplementation)
 else
   SECRET_FILE="${SECRET_FILE:-$HOME/mineworldcraft-crafters-reveal-secret.txt}"
   if [ -z "${SECRET:-}" ]; then
@@ -82,10 +138,14 @@ fi
 if [ "$BROADCAST" = 1 ]; then
   echo "Stage \"$STAGE\" on Robinhood Chain with:"
   if [ "$STAGE" = launch ]; then
-    grep -E '^(FEE_RECIPIENT|TREASURY|START_MCAP_USD|SITE_PRICE|WALLET_DAILY_CAP|DAILY_CAP)=' launch.env | sed 's/^/  /'
+    grep -E '^(OWNER|FEE_RECIPIENT|TREASURY|START_MCAP_USD|SITE_PRICE|WALLET_DAILY_CAP|DAILY_CAP|SITE_UPGRADE_COSTS|CRAFTERS|CRAFTER_UPGRADE_COSTS)=' launch.env | sed 's/^/  /'
     echo "  MINING_SIGNER=$MINING_SIGNER"
+  elif [ "$STAGE" = levels ]; then
+    grep -E '^(OWNER|TREASURY|CRAFTER_UPGRADE_COSTS)=' launch.env | sed 's/^/  /'
+    echo "  MINE=$MINE"
+    echo "  CRAFTERS=$CRAFTERS"
   else
-    grep -E '^(TREASURY|CRAFTERS_[A-Z_]+)=' launch.env | sed 's/^/  /'
+    grep -E '^(OWNER|TREASURY|CRAFTERS_[A-Z_]+)=' launch.env | sed 's/^/  /'
     echo "  SEED_COMMIT=$SEED_COMMIT"
     [ -n "${SECRET_NOTE:-}" ] && echo "  ($SECRET_NOTE; not printed)"
   fi
@@ -102,6 +162,7 @@ if [ "$BROADCAST" = 1 ]; then
     fi
   done
   ./script/export-web.sh
+  echo "Next: ./script/deploy-mainnet.sh verify (Sourcify), and the owner calls printed above, if any."
 else
   forge script "${SCRIPT[@]}" --fork-url "$RPC" "$@"
 fi

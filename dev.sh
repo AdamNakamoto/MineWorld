@@ -3,8 +3,8 @@
 # for the local room, then the site served from web/. Anvil's dev accounts are unlocked, so the page plays as any of
 # them. Ports differ from Courier World's dev setup (Anvil 8610, site 5810), so both can run at once.
 #
-#   ./dev.sh                 # empty chain: $MINE, MiningSites and the Crafters. No Uniswap v4 here, so $MINE's pool
-#                            # half is held by the deployer as a stand-in (no trading)
+#   ./dev.sh                 # empty chain: $MINE, MiningSites, the Crafters and CrafterLevels. No Uniswap v4 here, so
+#                            # $MINE's pool half is held by the deployer as a stand-in (no trading)
 #   ./dev.sh --fork          # fork of Robinhood Chain: the full launch against the real PoolManager, IMD and IMD/ETH
 #                            # pool (hook, routers, pool opened, hook renounced), so trading works (no real money)
 #   ./dev.sh --wallet        # log in with your own browser wallet (MetaMask...) as on mainnet. The chain gets its own
@@ -13,10 +13,11 @@
 #                            # account 0, reveals with chain.json's devSecret). Without it the players get Crafters at
 #                            # once and the collection is revealed.
 #
-# Accounts: 0 deploys, and owns MiningSites and the Crafters; 1 is the treasury and the fee recipient; 2-9 are
-# players, each with some $MINE (100,000 from the stand-in on the empty chain; bought with 0.01 ETH through the pool on
-# a fork) and, without --sale, two Crafters. The voucher key MiningSites trusts is a throwaway made here for this chain
-# only; it goes into multiplayer/.dev.vars and is never printed.
+# Accounts: 0 deploys, and owns the vault, the proxies (MiningSites, MinePayments, CrafterLevels) and the Crafters; 1 is
+# the treasury and the fee recipient; 2-9 are players, each with some $MINE (1,000,000 from the stand-in on the empty
+# chain, enough to try the upgrades; bought with 0.01 ETH through the pool on a fork) and, without --sale, two Crafters.
+# The voucher key MiningSites trusts is a throwaway made here for this chain only; it goes into multiplayer/.dev.vars
+# and is never printed.
 set -euo pipefail
 cd "$(dirname "$0")"
 export PATH="$HOME/.foundry/bin:$PATH"
@@ -104,9 +105,9 @@ if [ "$FORK" = 1 ]; then
 else
   deploy script/Deploy.s.sol --sig "runLocal()"
 fi
-MINE=$(addr MineToken) SITES=$(addr MiningSites)
+MINE=$(addr MineToken) SITES=$(addr MiningSites) VAULT=$(addr MineVault) PAYMENTS=$(addr MinePayments)
 HOOK=$(addr MineHook) ROUTER=$(addr Router) ETH_ROUTER=$(addr EthRouter)
-[ -n "$MINE" ] && [ -n "$SITES" ] || { echo "$OUT"; exit 1; }
+[ -n "$MINE" ] && [ -n "$SITES" ] && [ -n "$VAULT" ] && [ -n "$PAYMENTS" ] || { echo "$OUT"; exit 1; }
 
 # The Crafters (and their on-chain art), committed to this chain's throwaway secret, with the sale open. Free, as at
 # launch (CRAFTERS_PRICE=<wei> ./dev.sh to try a paid mint).
@@ -115,6 +116,11 @@ SEED_COMMIT=$(cast keccak "$(cast abi-encode "f(uint256)" "$SECRET")") OPEN_SALE
   deploy script/DeployCrafters.s.sol
 CRAFTERS=$(addr Crafters)
 [ -n "$CRAFTERS" ] || { echo "$OUT"; exit 1; }
+
+# CrafterLevels: Crafter upgrades paid in $MINE, wired to the Crafters at once (the deployer owns both here).
+MINE=$MINE CRAFTERS=$CRAFTERS deploy script/Deploy.s.sol --sig "runLevels()"
+LEVELS=$(addr CrafterLevels)
+[ -n "$LEVELS" ] || { echo "$OUT"; exit 1; }
 
 if [ "$FORK" = 1 ]; then
   # $MINE for the players, bought with 0.01 ETH each through the real IMD/ETH pool and the $MINE pool (4% fee included).
@@ -148,16 +154,20 @@ if [ "$WALLET" = 1 ]; then
   [ "$FORK" = 1 ] && NAME="MineWorldCraft practice (Robinhood fork)"
 fi
 
-# `npx wrangler dev` in multiplayer/ reads these: it signs vouchers for this chain's MiningSites and reads the Crafters.
+# `npx wrangler dev` in multiplayer/ reads these: it signs vouchers for this chain's MiningSites, reads the Crafters and
+# their levels, and checks rocket tickets paid through MinePayments.
 mkdir -p multiplayer
-(umask 077 && printf 'MINING_KEY=%s\nMINING_ADDRESS=%s\nCHAIN_ID=%s\nCHAIN_RPC=%s\nCRAFTERS_ADDRESS=%s\n' \
-  "$MINING_KEY" "$SITES" "$CHAIN_ID" "$RPC" "$CRAFTERS" > multiplayer/.dev.vars)
+(umask 077 && printf 'MINING_KEY=%s\nMINING_ADDRESS=%s\nCHAIN_ID=%s\nCHAIN_RPC=%s\nCRAFTERS_ADDRESS=%s\nLEVELS_ADDRESS=%s\nPAYMENTS_ADDRESS=%s\n' \
+  "$MINING_KEY" "$SITES" "$CHAIN_ID" "$RPC" "$CRAFTERS" "$LEVELS" "$PAYMENTS" > multiplayer/.dev.vars)
 
 # web/chain.json: what the game reads to find this chain and its contracts.
 mkdir -p web
-contracts=$(jq -n --arg mine "$MINE" --arg sites "$SITES" --arg crafters "$CRAFTERS" '{mine: $mine, sites: $sites, crafters: $crafters}')
-abis=$(jq -n --argjson mine "$(abi MineToken)" --argjson sites "$(abi MiningSites)" --argjson crafters "$(abi MineWorldCrafters)" \
-  '{mine: $mine, sites: $sites, crafters: $crafters}')
+contracts=$(jq -n --arg mine "$MINE" --arg vault "$VAULT" --arg sites "$SITES" --arg payments "$PAYMENTS" \
+  --arg crafters "$CRAFTERS" --arg levels "$LEVELS" \
+  '{mine: $mine, vault: $vault, sites: $sites, payments: $payments, crafters: $crafters, levels: $levels}')
+abis=$(jq -n --argjson mine "$(abi MineToken)" --argjson vault "$(abi MineVault)" --argjson sites "$(abi MiningSites)" \
+  --argjson payments "$(abi MinePayments)" --argjson crafters "$(abi MineWorldCrafters)" --argjson levels "$(abi CrafterLevels)" \
+  '{mine: $mine, vault: $vault, sites: $sites, payments: $payments, crafters: $crafters, levels: $levels}')
 if [ "$FORK" = 1 ]; then
   # Robinhood Chain addresses, as in contracts/script/export-web.sh.
   contracts=$(echo "$contracts" | jq --arg hook "$HOOK" --arg router "$ROUTER" --arg ethRouter "$ETH_ROUTER" \
@@ -175,13 +185,16 @@ jq -n --arg rpc "$RPC" --argjson chainId "$CHAIN_ID" --arg name "$NAME" --arg se
   > web/chain.json
 
 echo "MineToken   $MINE"
+echo "MineVault   $VAULT"
 echo "MiningSites $SITES"
+echo "Payments    $PAYMENTS"
 if [ "$FORK" = 1 ]; then
   echo "MineHook    $HOOK"
   echo "Router      $ROUTER"
   echo "EthRouter   $ETH_ROUTER"
 fi
 echo "Crafters    $CRAFTERS ($([ "$SALE" = 1 ] && echo "sale open, sealed" || echo "revealed, 2 per player"))"
+echo "Levels      $LEVELS (CrafterLevels, wired to the Crafters)"
 echo "Chain       $RPC ($NAME, chain ID $CHAIN_ID)"
 echo "Wrote       web/chain.json, multiplayer/.dev.vars"
 echo "Game        http://localhost:$WEB_PORT"

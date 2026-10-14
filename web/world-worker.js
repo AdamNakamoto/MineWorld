@@ -4,6 +4,10 @@
 // makes them, and messages are handled in that order. Jobs (generate, mesh) wait in a queue; urgent meshes (after an
 // edit) jump it, and changes are applied the moment they arrive, so a mesh always reflects every change sent before it.
 //
+// It builds one planet at a time (the zone the player is on, zones.js): a "zone" message drops everything it holds
+// and the jobs still waiting, and everything after it is for the new planet. Every reply carries the number of the
+// last message it had seen, so world.js can tell a reply from before the change and ignore it.
+//
 // world.js runs this module as a Web Worker; if a browser can't, it runs the same jobs on the main thread instead.
 
 import { generateChunk, naturalBlock, index, CHUNKS } from "./worldgen.js";
@@ -20,6 +24,8 @@ export function startWorldJobs(send) {
   const urgent = [], normal = [];
   let lastSeq = 0; // the last message received (every change up to it is applied)
   let version = 0; // counts changes to which chunks this copy holds
+  let zone = "home";
+  const natural = (x, y, z) => naturalBlock(x, y, z, zone);
 
   function set({ x, y, z, b }) {
     x = wrap(x);
@@ -41,13 +47,13 @@ export function startWorldJobs(send) {
     edits.set(id, m);
     const c = chunks.get(id);
     if (!c) return;
-    const r = patchEdits(c.blocks, c.cx * CHUNK, c.cz * CHUNK, prev, m, naturalBlock);
+    const r = patchEdits(c.blocks, c.cx * CHUNK, c.cz * CHUNK, prev, m, natural);
     for (const i of r.changed) c.tops[i & 255] = columnTop(c.blocks, i & 15, (i >> 4) & 15);
     if (r.lit) c.lights = chunkLights(c.blocks);
   }
 
   function gen({ id, cx, cz }) {
-    const blocks = generateChunk(cx, cz);
+    const blocks = generateChunk(cx, cz, zone);
     const e = edits.get(id);
     if (e) for (const [i, b] of e) blocks[i] = b;
     const c = { cx, cz, blocks, tops: chunkTops(blocks), lights: chunkLights(blocks) };
@@ -61,7 +67,7 @@ export function startWorldJobs(send) {
     const blocks = [], tops = [], lights = [];
     for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
       const n = chunks.get(idOf(cx + dx, cz + dz));
-      if (!n) return send({ t: "mesh", id, fail: true });
+      if (!n) return send({ t: "mesh", id, fail: true, seq: lastSeq });
       blocks.push(n.blocks);
       tops.push(n.tops);
       for (const [lx, y, lz, s] of n.lights) lights.push([lx + dx * CHUNK, y, lz + dz * CHUNK, s]);
@@ -73,10 +79,10 @@ export function startWorldJobs(send) {
   }
 
   /// The planet seen from above (planet-map.js), for the title screen's globe.
-  async function map({ w, h }) {
+  async function map({ w, h, zone: z }) {
     try {
       const { planetMap } = await import("./planet-map.js");
-      const data = planetMap(w, h);
+      const data = planetMap(w, h, z ?? "home");
       send({ t: "map", w, h, data }, [data.buffer]);
     } catch (err) {
       send({ t: "error", message: String(err?.stack ?? err) });
@@ -97,7 +103,7 @@ export function startWorldJobs(send) {
       else mesh(job);
     } catch (err) {
       send({ t: "error", message: String(err?.stack ?? err) });
-      send({ t: job.t, id: job.id, fail: true });
+      send({ t: job.t, id: job.id, fail: true, seq: lastSeq });
     }
     schedule();
   };
@@ -113,6 +119,16 @@ export function startWorldJobs(send) {
       case "set": set(m); break;
       case "edits": setEdits(m); break;
       case "drop": if (chunks.delete(m.id)) version++; break;
+      case "zone": {
+        // Another planet: forget this one's chunks, edits and waiting jobs (but not a globe picture being made).
+        zone = m.zone;
+        chunks.clear();
+        edits.clear();
+        normal.length = 0;
+        urgent.splice(0, urgent.length, ...urgent.filter((j) => j.t === "map"));
+        version++;
+        break;
+      }
       case "gen": normal.push(m); break;
       case "mesh": (m.urgent ? urgent : normal).push(m); break;
       case "map": urgent.push(m); break;

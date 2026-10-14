@@ -430,7 +430,10 @@ contract MineWorldCraftersTest is Test {
         assertEq(vm.parseJsonString(json, ".attributes[0].value"), art.traitName(0, t.background));
         assertEq(vm.parseJsonString(json, ".attributes[7].trait_type"), "Outfit");
         assertEq(vm.parseJsonString(json, ".attributes[7].value"), art.traitName(7, t.outfit));
-        assertTrue(Json.has(json, "Cosmetic only"));
+        assertEq(vm.parseJsonString(json, ".attributes[8].trait_type"), "Rarity");
+        assertFalse(vm.keyExistsJson(json, ".attributes[9]"), "no extra traits without an extension");
+        assertTrue(Json.has(json, "boosts its owner's mining in MineWorldCraft by its rarity and level"));
+        assertFalse(Json.has(json, "Cosmetic"));
         vm.expectRevert(abi.encodeWithSelector(IERC721Errors.ERC721NonexistentToken.selector, 2));
         crafters.tokenURI(2);
     }
@@ -457,7 +460,8 @@ contract MineWorldCraftersTest is Test {
         assertFalse(Json.has(json, "banner_image"));
         assertFalse(Json.has(json, "Website:"));
         assertFalse(Json.has(json, "Social:"));
-        assertTrue(Json.has(json, 'never changes what you earn."'));
+        assertTrue(Json.has(json, 'Each Crafter boosts its owner\'s mining in MineWorldCraft by its rarity and level: faster mining, more $MINE per block and a higher daily cap, for active play only."'));
+        assertFalse(Json.has(json, "Cosmetic"));
         assertEq(crafters.website(), "");
         assertEq(crafters.social(), "");
         assertEq(crafters.collectionImage(), "");
@@ -474,7 +478,7 @@ contract MineWorldCraftersTest is Test {
         crafters.setLinks("https://mineworldcraft.fun/", "https://x.com/MineWorldCraft");
         string memory json = Json.decodeURI(crafters.contractURI());
         assertEq(vm.parseJsonString(json, ".external_link"), "https://mineworldcraft.fun/");
-        assertTrue(Json.has(json, "earn. Website: https://mineworldcraft.fun/ Social: https://x.com/MineWorldCraft\""));
+        assertTrue(Json.has(json, "play only. Website: https://mineworldcraft.fun/ Social: https://x.com/MineWorldCraft\""));
 
         // Later: a new domain, no social link.
         vm.prank(owner);
@@ -490,7 +494,7 @@ contract MineWorldCraftersTest is Test {
         json = Json.decodeURI(crafters.contractURI());
         assertFalse(Json.has(json, "external_link"));
         assertFalse(Json.has(json, "Website:"));
-        assertTrue(Json.has(json, "earn. Social: https://discord.gg/mineworldcraft\""));
+        assertTrue(Json.has(json, "play only. Social: https://discord.gg/mineworldcraft\""));
 
         // Links still change after the reveal.
         _mint(alice, 1);
@@ -588,6 +592,82 @@ contract MineWorldCraftersTest is Test {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
         crafters.setContractURI("x");
+    }
+
+    /// The links, pictures and page never lock: the owner changes them after the whole collection is minted and
+    /// revealed, and the 5% royalty and its enforcement are just as they were.
+    function test_LinksStayChangeableAndRoyaltyEnforcedWhenSoldOut() public {
+        vm.prank(owner);
+        crafters.setWalletLimit(50);
+        for (uint256 w; w < 67; w++) {
+            address who = address(uint160(0x10000 + w));
+            for (uint256 i; i < 10 && crafters.totalMinted() < 3333; i++) {
+                uint256 n = 3333 - crafters.totalMinted();
+                _mint(who, n < 5 ? n : 5);
+            }
+        }
+        assertEq(crafters.totalMinted(), crafters.MAX_SUPPLY());
+        vm.prank(alice);
+        vm.expectRevert(MineWorldCrafters.SoldOut.selector);
+        crafters.mint(1);
+        _reveal();
+
+        vm.startPrank(owner);
+        crafters.setLinks("https://mineworldcraft.fun/", "https://x.com/MineWorldCraft");
+        crafters.setCollectionImages("https://mineworldcraft.fun/c.png", "https://mineworldcraft.fun/b.png");
+        crafters.setLinks("https://play.mineworldcraft.xyz/", "");
+        crafters.setContractURI("ipfs://collection.json");
+        crafters.setContractURI("");
+        vm.stopPrank();
+        string memory json = Json.decodeURI(crafters.contractURI());
+        assertEq(vm.parseJsonString(json, ".external_link"), "https://play.mineworldcraft.xyz/");
+        assertEq(vm.parseJsonString(json, ".image"), "https://mineworldcraft.fun/c.png");
+        assertEq(vm.parseJsonString(json, ".banner_image"), "https://mineworldcraft.fun/b.png");
+
+        // The royalty: 5% to the treasury, wherever it moves.
+        (address to, uint256 amount) = crafters.royaltyInfo(3333, 1 ether);
+        assertEq(to, treasury);
+        assertEq(amount, 0.05 ether);
+        address next = makeAddr("next");
+        vm.prank(owner);
+        crafters.setTreasury(next);
+        (to, amount) = crafters.royaltyInfo(1, 2 ether);
+        assertEq(to, next);
+        assertEq(amount, 0.1 ether);
+        // Its enforcement: holders move their own, marketplaces only through the fee check.
+        address holder = address(uint160(0x10000));
+        vm.prank(holder);
+        crafters.transferFrom(holder, bob, 1);
+        vm.prank(bob);
+        crafters.setApprovalForAll(market, true);
+        vm.prank(market);
+        vm.expectRevert(StrictValidator.UnauthorizedTransfer.selector);
+        crafters.transferFrom(bob, alice, 1);
+        validator.authorize(market, true);
+        vm.prank(market);
+        crafters.transferFrom(bob, alice, 1);
+        assertEq(crafters.getTransferValidator(), address(validator));
+        vm.prank(owner);
+        vm.expectRevert(MineWorldCrafters.NotAContract.selector);
+        crafters.setTransferValidator(address(0));
+    }
+
+    /// Rarity once revealed, from the background and hat (CrafterArt.t.sol checks it against the JS for every one).
+    function test_RarityOf() public {
+        _mint(alice, 5);
+        vm.expectRevert(MineWorldCrafters.NotRevealed.selector);
+        crafters.rarityOf(1);
+        _reveal();
+        for (uint256 id = 1; id <= 5; id++) {
+            Traits memory t = crafters.traitsOf(id);
+            uint8 r = crafters.rarityOf(id);
+            assertEq(r, art.rarityOf(t));
+            assertEq(r, t.background == 7 ? 2 : (t.background == 6 || t.hat >= 7 ? 1 : 0));
+            string memory json = Json.decodeURI(crafters.tokenURI(id));
+            assertEq(vm.parseJsonString(json, ".attributes[8].value"), art.traitName(8, r));
+        }
+        vm.expectRevert(abi.encodeWithSelector(IERC721Errors.ERC721NonexistentToken.selector, 6));
+        crafters.rarityOf(6);
     }
 
     // ---------------------------------------------------------------- royalty
@@ -765,6 +845,8 @@ contract MineWorldCraftersTest is Test {
         crafters.setContractURI("");
         vm.expectRevert(notOwner);
         crafters.reveal(SECRET);
+        vm.expectRevert(notOwner);
+        crafters.setAttributesExtension(address(0));
         vm.stopPrank();
     }
 }

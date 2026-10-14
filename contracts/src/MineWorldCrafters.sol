@@ -8,6 +8,7 @@ import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {CrafterArt, CrafterRules, Traits} from "./CrafterArt.sol";
 import {FastBase64} from "./lib/FastBase64.sol";
+import {ICrafterAttributes, ICrafterMetadata} from "./ICrafterAttributes.sol";
 
 /// @notice The creator token standard (ERC721-C) that marketplaces read to find a collection's transfer rules.
 interface ICreatorToken {
@@ -25,22 +26,31 @@ interface ITransferValidator721 {
 
 /// @title MineWorldCrafters
 /// @notice 3,333 MineWorld Crafters: pixel-art characters for MineWorldCraft, drawn and stored entirely on chain
-///         (CrafterArt). Cosmetic only; they never change what anyone earns. Minted blind (free at launch), then
+///         (CrafterArt). In the game each one boosts its holder's mining by its rarity and level (the game's server
+///         applies it to what it counts as earned; every payout stays within MiningSites' and the vault's limits).
+///         Minted blind (free at launch), then
 ///         revealed: each token's hair, outfit, eyes and gaze come from a keyed shuffle of the token ids, so no two
 ///         Crafters share that combination, and its background, skin, hat and blush are weighted picks from its own
 ///         hash. The rules are the same as web/crafters.js, so the game and the chain agree on every Crafter.
+///         Each one's rarity shows in its picture: Legendary with the gold background, Rare with the night background
+///         or a hard hat, Common otherwise (about 6%, 25% and 69% of them), and it's listed as a trait. More traits
+///         can come from an attributes extension the owner points the collection at (`setAttributesExtension`): at
+///         launch CrafterLevels, which keeps each Crafter's "Level" (bought with $MINE; it stays with the token when
+///         the Crafter changes hands). New stats can show on marketplaces that way without touching this contract.
 ///
 ///         The 5% royalty is enforced. Every transfer is checked by a transfer validator (OpenSea's creator fee
 ///         enforcement registry at launch), so marketplaces can only move Crafters in sales that pay it. Holders can
 ///         always move their own Crafters between wallets. The validator can be replaced (if marketplaces move to a
 ///         new one) but never removed, and the 5% rate is fixed.
 /// @dev Trust: the owner sets the price (0 allowed), the per-wallet mint limit, the treasury (mint money and the
-///      royalty), the collection's website and social links, its picture and banner and its page (contractURI), and
-///      the transfer validator, which decides which transfers between wallets go through: it can't move anyone's
-///      Crafters, but a bad one could hold transfers up (mints never touch it). The art can't be changed. The owner
+///      royalty), the collection's website and social links, its picture and banner and its page (contractURI), the
+///      attributes extension (its traits are added to every token's metadata as it writes them), and the transfer
+///      validator, which decides which transfers between wallets go through: it can't move anyone's Crafters, but a
+///      bad one could hold transfers up (mints never touch it). The links, pictures and extension can be changed at
+///      any time, sold out or not. The art, the rarity and the 5% royalty can't be changed. The owner
 ///      reveals with the committed secret and can't pick looks (see `reveal`). Ownership moves in two steps and can't
 ///      be renounced, so the links can always be updated. Holders' Crafters and ETH are never within the owner's reach.
-contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken {
+contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICrafterMetadata {
     using Strings for uint256;
 
     uint256 public constant MAX_SUPPLY = CrafterRules.SUPPLY;
@@ -82,6 +92,8 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken {
     string public bannerImage;
     /// @dev Replaces the built-in collection metadata when set (see contractURI).
     string private customContractURI;
+    /// @notice Adds traits to every Crafter's metadata (CrafterLevels at launch, for "Level"); none: no extra traits.
+    address public attributesExtension;
 
     event Revealed(uint256 seed);
     event SaleOpen(bool open);
@@ -92,8 +104,11 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken {
     event CollectionImagesSet(string image, string banner);
     /// @notice ERC-7572: marketplaces re-read contractURI when they see this.
     event ContractURIUpdated();
+    /// @notice ERC-4906: marketplaces re-read this token's metadata.
+    event MetadataUpdate(uint256 _tokenId);
     /// @notice ERC-4906: marketplaces re-read these tokens' metadata.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
+    event AttributesExtensionSet(address indexed extension);
 
     error SaleClosed();
     error BadQuantity();
@@ -115,6 +130,8 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken {
     error BadLink();
     /// @notice Ownership can only be handed over (two-step), never renounced: the links must stay updatable.
     error CannotRenounce();
+    /// @notice Only the attributes extension or the owner can ask marketplaces to re-read metadata.
+    error NotAllowed();
 
     constructor(
         address owner_,
@@ -182,6 +199,26 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken {
         return _traitsFor(seed, tokenId);
     }
 
+    /// @notice A Crafter's rarity once revealed: 0 Common, 1 Rare, 2 Legendary (rarityOf in web/crafters.js; names
+    ///         from CrafterArt.traitName(8, rarity)).
+    function rarityOf(uint256 tokenId) external view returns (uint8) {
+        if (seed == 0) revert NotRevealed();
+        _requireOwned(tokenId);
+        Traits memory t = _traitsFor(seed, tokenId);
+        return CrafterRules.rarity(t.background, t.hat);
+    }
+
+    /// @notice The extra traits the attributes extension gives `tokenId`, as JSON objects separated by commas ("" with
+    ///         no extension, or if it can't be read: the metadata never breaks for it).
+    function extraAttributes(uint256 tokenId) public view returns (string memory extra) {
+        _requireOwned(tokenId);
+        address x = attributesExtension;
+        if (x == address(0)) return "";
+        try ICrafterAttributes(x).attributesOf(tokenId) returns (string memory a) {
+            extra = a;
+        } catch {}
+    }
+
     /// @dev traitsOf in web/crafters.js. The token's place in the shuffled run gives a combination of hair, outfit,
     ///      eyes and gaze (spread over all COMBOS, a different one for every token); its own hash gives the weighted
     ///      picks.
@@ -231,9 +268,11 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken {
 
     // ---------------------------------------------------------------- metadata
 
-    /// @notice Metadata and picture, all on chain: the SVG drawn by CrafterArt, the traits as attributes.
+    /// @notice Metadata and picture, all on chain: the SVG drawn by CrafterArt, the traits (rarity included) as
+    ///         attributes, then the attributes extension's (the level, at launch).
     function tokenURI(uint256 tokenId) public view override returns (string memory) {
-        _requireOwned(tokenId);
+        bytes memory extra = bytes(extraAttributes(tokenId));
+        bytes memory end = extra.length == 0 ? bytes("]") : abi.encodePacked(",", extra, "]");
         bytes memory json;
         if (seed == 0) {
             json = abi.encodePacked(
@@ -241,17 +280,25 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken {
                 tokenId.toString(),
                 '","description":"A sealed MineWorld Crafter. Its look is revealed after the mint.","image":"data:image/svg+xml;base64,',
                 FastBase64.encode(bytes(art.sealedSvg())),
-                '","attributes":[{"trait_type":"Status","value":"Sealed"}]}'
+                '","attributes":[{"trait_type":"Status","value":"Sealed"}',
+                end,
+                "}"
             );
         } else {
             Traits memory t = _traitsFor(seed, tokenId);
+            bytes memory attributes = bytes(art.attributes(t));
+            // Its closing "]" makes way for the extension's traits.
+            assembly ("memory-safe") {
+                mstore(attributes, sub(mload(attributes), 1))
+            }
             json = abi.encodePacked(
                 '{"name":"MineWorld Crafter #',
                 tokenId.toString(),
-                '","description":"A pixel-art character for MineWorldCraft, drawn and stored entirely on chain. No two Crafters look alike. Cosmetic only: it changes how you look, never what you earn.","image":"data:image/svg+xml;base64,',
+                '","description":"A pixel-art character for MineWorldCraft, drawn and stored entirely on chain. No two Crafters look alike. Each Crafter boosts its owner\'s mining in MineWorldCraft by its rarity and level: faster mining, more $MINE per block and a higher daily cap, for active play only.","image":"data:image/svg+xml;base64,',
                 FastBase64.encode(bytes(art.render(t))),
                 '","attributes":',
-                art.attributes(t),
+                attributes,
+                end,
                 "}"
             );
         }
@@ -266,7 +313,7 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken {
         if (bytes(website).length != 0) links = string.concat(" Website: ", website);
         if (bytes(social).length != 0) links = string.concat(links, " Social: ", social);
         string memory json = string.concat(
-            '{"name":"MineWorld Crafters","description":"3,333 pixel-art characters for MineWorldCraft, a blocky mining world on Robinhood Chain. Every Crafter is drawn and stored entirely on chain, and no two look alike. Cosmetic only: everyone in the game sees yours, and it never changes what you earn.',
+            '{"name":"MineWorld Crafters","description":"3,333 pixel-art characters for MineWorldCraft, a blocky mining world on Robinhood Chain. Every Crafter is drawn and stored entirely on chain, and no two look alike. Each Crafter boosts its owner\'s mining in MineWorldCraft by its rarity and level: faster mining, more $MINE per block and a higher daily cap, for active play only.',
             links,
             '"'
         );
@@ -382,6 +429,27 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken {
             bytes1 c = b[i];
             if (c < 0x20 || c == 0x7f || c == '"' || c == "\\") revert BadLink();
         }
+    }
+
+    /// @notice Where extra traits come from: a contract with `attributesOf(tokenId)` (ICrafterAttributes;
+    ///         CrafterLevels at launch), or none. Its JSON goes into every token's metadata as it is, so only point
+    ///         this at a contract you trust. Marketplaces are told to re-read every Crafter (ERC-4906).
+    function setAttributesExtension(address extension) external onlyOwner {
+        if (extension != address(0) && extension.code.length == 0) revert NotAContract();
+        attributesExtension = extension;
+        emit AttributesExtensionSet(extension);
+        if (totalMinted != 0) emit BatchMetadataUpdate(1, totalMinted);
+    }
+
+    /// @notice Ask marketplaces to re-read Crafters `fromTokenId` to `toTokenId` (ERC-4906), when the attributes
+    ///         extension's traits for them changed (a level bought, say). The extension or the owner only.
+    function refreshMetadata(uint256 fromTokenId, uint256 toTokenId) external {
+        if (msg.sender != attributesExtension && msg.sender != owner()) revert NotAllowed();
+        if (toTokenId > totalMinted) toTokenId = totalMinted;
+        if (fromTokenId == 0) fromTokenId = 1;
+        if (fromTokenId > toTokenId) return;
+        if (fromTokenId == toTokenId) emit MetadataUpdate(fromTokenId);
+        else emit BatchMetadataUpdate(fromTokenId, toTokenId);
     }
 
     /// @notice Point the collection's metadata somewhere else (a JSON URL), or back to the built-in one ("").

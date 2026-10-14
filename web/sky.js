@@ -1,5 +1,6 @@
 // The sky: its colour through the day, a square sun and moon, stars at night, and the daylight the block shader
-// uses. The day follows the clock (rules.js), so everyone shares the same sunset.
+// uses. The day follows the clock (rules.js), so everyone shares the same sunset. Each planet the rocket flies to
+// (zones.js) has its own colours: Deepvein's grey haze, Cinderfall's smoky red, Red Mesa's dust.
 
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { dayTime } from "./rules.js";
@@ -42,6 +43,8 @@ export function createSky(scene) {
   scene.background = bg;
 
   return {
+    /// The planet's colours (zones.js sky: { day, dusk, night }).
+    setColours({ day, dusk, night }) { DAY.setHex(day); DUSK.setHex(dusk); NIGHT.setHex(night); },
     /// `ms`: the clock; `cam`: the camera; `under`: how deep in a cave the eye is (0 open air .. 1 deep).
     update(ms, cam, under = 0) {
       const t = dayTime(ms);

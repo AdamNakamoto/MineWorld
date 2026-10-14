@@ -7,6 +7,9 @@
 // every noise lattice has a whole number of cells across the world and its corners are hashed modulo that number,
 // the tree and plant grids divide WORLD, and the per-block hashes take wrapped coordinates. naturalBlock wraps what
 // it's given; generateChunk takes chunk numbers 0..CHUNKS-1 (others are wrapped too).
+//
+// This is the home planet; the rocket's zones (zones.js) are their own worlds, made in zonegen.js. naturalBlock,
+// generateChunk and column take the zone as a last argument ("home" if it's left out).
 
 import {
   AIR, GRASS, DIRT, STONE, SAND, GRAVEL, LOG, LEAVES, PLANKS, BEDROCK, WATER, COAL_ORE, IRON_ORE, GOLD_ORE,
@@ -15,81 +18,11 @@ import {
 } from "./blocks.js";
 import { WORLD, CHUNK, HEIGHT, SEA, TOWN, wrap, wrapDelta } from "./rules.js";
 import { TOWN_R, TOWN_FLAT, TOWN_BLEND, townBlock } from "./town.js";
+import { hash, rand, fade, mod, noise2, fbm2, noise3 } from "./noise.js";
+import { zoneBlock, zoneChunk, zoneColumn } from "./zonegen.js";
 
 // ---------------------------------------------------------------- noise
-
-function hash(x, y, z, s) {
-  let h = Math.imul(x | 0, 0x27d4eb2d) ^ Math.imul(y | 0, 0x165667b1) ^ Math.imul(z | 0, 0x1b873593) ^ Math.imul(s, 0x85ebca6b);
-  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
-  h = Math.imul(h ^ (h >>> 12), 0x297a2d39);
-  return (h ^ (h >>> 15)) >>> 0;
-}
-const rand = (x, y, z, s) => hash(x, y, z, s) / 4294967296;
-const fade = (t) => t * t * t * (t * (t * 6 - 15) + 10);
-const lerp = (a, b, t) => a + (b - a) * t;
-
-const mod = (v, p) => ((v % p) + p) % p;
-
-// Gradient noise that repeats every WORLD blocks in x and z: `p` lattice cells across the world (a whole number), at
-// block (x, z). (x * p is a whole number and WORLD a power of two, so the lattice position is exact wherever x is
-// written: x and x + WORLD land on the same cell at the same place in it.)
-const G2 = [[1, 1], [-1, 1], [1, -1], [-1, -1], [1, 0], [-1, 0], [0, 1], [0, -1]];
-function noise2(x, z, p, s) {
-  const X = (x * p) / WORLD, Z = (z * p) / WORLD;
-  const x0 = Math.floor(X), z0 = Math.floor(Z);
-  const fx = X - x0, fz = Z - z0;
-  const i0 = mod(x0, p), j0 = mod(z0, p);
-  const i1 = i0 + 1 === p ? 0 : i0 + 1, j1 = j0 + 1 === p ? 0 : j0 + 1;
-  const g = (ix, iz, dx, dz) => {
-    const v = G2[hash(ix, iz, 0, s) & 7];
-    return v[0] * dx + v[1] * dz;
-  };
-  const u = fade(fx), v = fade(fz);
-  return lerp(
-    lerp(g(i0, j0, fx, fz), g(i1, j0, fx - 1, fz), u),
-    lerp(g(i0, j1, fx, fz - 1), g(i1, j1, fx - 1, fz - 1), u),
-    v,
-  );
-}
-/// Octaves of noise2, each with twice the cells of the last (so each still wraps).
-function fbm2(x, z, p, s, octaves) {
-  let sum = 0, amp = 1, norm = 0;
-  for (let i = 0; i < octaves; i++) {
-    sum += noise2(x, z, p << i, s + i * 101) * amp;
-    norm += amp;
-    amp *= 0.5;
-  }
-  return sum / norm;
-}
-
-const G3 = [[1, 1, 0], [-1, 1, 0], [1, -1, 0], [-1, -1, 0], [1, 0, 1], [-1, 0, 1], [1, 0, -1], [-1, 0, -1],
-  [0, 1, 1], [0, -1, 1], [0, 1, -1], [0, -1, -1], [1, 1, 0], [-1, 1, 0], [0, -1, 1], [0, -1, -1]];
-/// 3D noise for caves: `p` cells across the world in x and z (wrapping as noise2), and one cell every `sy` blocks up.
-function noise3(x, y, z, p, sy, s) {
-  const X = (x * p) / WORLD, Y = y / sy, Z = (z * p) / WORLD;
-  const x0 = Math.floor(X), y0 = Math.floor(Y), z0 = Math.floor(Z);
-  const fx = X - x0, fy = Y - y0, fz = Z - z0;
-  const i0 = mod(x0, p), k0 = mod(z0, p);
-  const i1 = i0 + 1 === p ? 0 : i0 + 1, k1 = k0 + 1 === p ? 0 : k0 + 1;
-  const g = (ix, iy, iz, dx, dy, dz) => {
-    const v = G3[hash(ix, iy, iz, s) & 15];
-    return v[0] * dx + v[1] * dy + v[2] * dz;
-  };
-  const u = fade(fx), v = fade(fy), w = fade(fz);
-  return lerp(
-    lerp(
-      lerp(g(i0, y0, k0, fx, fy, fz), g(i1, y0, k0, fx - 1, fy, fz), u),
-      lerp(g(i0, y0 + 1, k0, fx, fy - 1, fz), g(i1, y0 + 1, k0, fx - 1, fy - 1, fz), u),
-      v,
-    ),
-    lerp(
-      lerp(g(i0, y0, k1, fx, fy, fz - 1), g(i1, y0, k1, fx - 1, fy, fz - 1), u),
-      lerp(g(i0, y0 + 1, k1, fx, fy - 1, fz - 1), g(i1, y0 + 1, k1, fx - 1, fy - 1, fz - 1), u),
-      v,
-    ),
-    w,
-  );
-}
+// (noise.js: the same integer hashing and lattices for every world.)
 
 // ---------------------------------------------------------------- columns
 
@@ -122,8 +55,10 @@ function climate(x, z, d) {
   return noise2(x, z, MEADOW_CELLS, 10) > 0.12 ? MEADOW : PLAINS;
 }
 
-/// The ground height and biome at (x, z), and how far it is from the town's centre.
-export function column(x, z) {
+/// The ground height and biome at (x, z), and how far it is from the town's centre. (In a zone: its own column, with
+/// the height as h.)
+export function column(x, z, zone = "home") {
+  if (zone !== "home") return zoneColumn(zone, x, z);
   x = wrap(x);
   z = wrap(z);
   const n = fbm2(x, z, LAND_CELLS, 1, 4);
@@ -450,7 +385,8 @@ export { TOWN_R, OFFICE, townBlock } from "./town.js";
 // ---------------------------------------------------------------- the world
 
 /// What was at (x, y, z) when the world was made. The room uses this for single blocks.
-export function naturalBlock(x, y, z) {
+export function naturalBlock(x, y, z, zone = "home") {
+  if (zone !== "home") return zoneBlock(zone, x, y, z);
   if (y < 0 || y >= HEIGHT) return AIR;
   x = wrap(x);
   z = wrap(z);
@@ -468,7 +404,8 @@ export const index = (lx, y, lz) => (y << 8) | (lz << 4) | lx;
 
 /// A whole chunk (16 x 128 x 16), the same blocks naturalBlock gives one by one. (cx, cz) wrap: chunk -1 is chunk
 /// CHUNKS - 1.
-export function generateChunk(cx, cz) {
+export function generateChunk(cx, cz, zone = "home") {
+  if (zone !== "home") return zoneChunk(zone, cx, cz);
   cx = mod(cx, CHUNKS);
   cz = mod(cz, CHUNKS);
   const out = new Uint8Array(CHUNK * CHUNK * HEIGHT);

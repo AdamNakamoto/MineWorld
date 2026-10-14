@@ -6,6 +6,10 @@ export const AIR = 0, GRASS = 1, DIRT = 2, STONE = 3, COBBLE = 4, SAND = 5, GRAV
   SNOW = 17, SANDSTONE = 18, GLASS = 19, BRICKS = 20, TORCH = 21, CACTUS = 22, LAMP = 23, ROOF = 24,
   TALL_GRASS = 25, FLOWER_YELLOW = 26, FLOWER_RED = 27, FLOWER_BLUE = 28, BERRY_BUSH = 29, RED_MUSHROOM = 30,
   BROWN_MUSHROOM = 31, DARK_LOG = 32, DARK_LEAVES = 33, PINE_LEAVES = 34, FERN = 35, DRY_SHRUB = 36;
+// The rocket's zones (zones.js, zonegen.js): Cinderfall's basalt, ember rock and ash, Red Mesa's red sand and clays,
+// Deepvein's deep rock and glowcaps, and the landing pads' plates.
+export const BASALT = 37, EMBER = 38, ASH = 39, RED_SAND = 40, RED_CLAY = 41, PALE_CLAY = 42, DEEP_ROCK = 43,
+  GLOWCAP = 44, PAD_PLATE = 45;
 
 // Items that aren't blocks start at 64, so an item id below 64 is the block it places.
 export const STICK = 64, COAL = 65, IRON = 66, GOLD = 67, DIAMOND = 68, CRYSTAL = 69,
@@ -73,6 +77,16 @@ for (const b of [
   B(PINE_LEAVES, "Pine needles", { opaque: false, cutout: true, leaves: true, hardness: 0.2, drop: null, tex: ["pine_leaves"] }),
   B(FERN, "Fern", { ...PLANT, drop: null, placeable: false, tex: ["fern"] }),
   B(DRY_SHRUB, "Dry shrub", { ...PLANT, drop: null, placeable: false, tex: ["dry_shrub"] }),
+  B(BASALT, "Basalt", { hardness: 1.8, tier: 1, tex: ["basalt_top", "basalt_side"] }),
+  B(EMBER, "Ember rock", { hardness: 1.5, tier: 1, light: 0.7, tex: ["ember"] }),
+  B(ASH, "Ash", { hardness: 0.5, tex: ["ash"] }),
+  B(RED_SAND, "Red sand", { hardness: 0.5, tex: ["red_sand"] }),
+  B(RED_CLAY, "Red clay", { hardness: 1.2, tier: 1, tex: ["red_clay"] }),
+  B(PALE_CLAY, "Pale clay", { hardness: 1.2, tier: 1, tex: ["pale_clay"] }),
+  // Harder than stone (half as long again to break), so Deepvein's doubled pay takes some digging.
+  B(DEEP_ROCK, "Deep rock", { hardness: 2.25, tier: 1, drop: COBBLE, tex: ["deep_rock"] }),
+  B(GLOWCAP, "Glowcap", { ...PLANT, light: 0.55, tex: ["glowcap"] }),
+  B(PAD_PLATE, "Landing plate", { hardness: 3, tier: 1, drop: null, placeable: false, tex: ["pad_plate"] }),
 ]) BLOCKS[b.id] = b;
 
 /// Pickaxes and swords: tier (what a pickaxe can harvest), speed (how fast it breaks blocks) and damage (per hit).
@@ -122,6 +136,23 @@ export function itemName(id) {
 }
 export const isTool = (id) => !!TOOLS[id];
 export const isArmor = (id) => !!ARMOR[id];
+
+/// Durability, as in the classic block games: how many uses a tool, weapon or piece of armor lasts before it breaks.
+/// A pickaxe wears 1 for each block it breaks (none for blocks that break instantly) and 2 for each hit; a sword 1 for
+/// each hit and 2 for each block; armor wears for each hit taken from a monster (a quarter of the hit, at least 1).
+const TIER_USES = { 1: 59, 2: 131, 3: 250, 4: 1561, 5: 2031 }; // wood, stone, iron, diamond, crystal
+const SWORD_TIER = { [WOOD_SWORD]: 1, [STONE_SWORD]: 2, [IRON_SWORD]: 3, [DIAMOND_SWORD]: 4, [CRYSTAL_SWORD]: 5 };
+const ARMOR_BASE = { head: 11, chest: 16, legs: 15, feet: 13 };
+const ARMOR_FACTOR = [5, 15, 33, 37]; // Padded, Iron, Diamond, Crystal
+export function maxDurability(id) {
+  const t = TOOLS[id], a = ARMOR[id];
+  if (t?.kind === "pick") return TIER_USES[t.tier];
+  if (id === WAR_HAMMER) return 1200;
+  if (t?.kind === "sword") return TIER_USES[SWORD_TIER[id]];
+  if (a) return ARMOR_BASE[a.slot] * ARMOR_FACTOR[a.tier - 1];
+  return 0;
+}
+export const damageable = (id) => maxDurability(id) > 0;
 export const stackSize = (id) => (isTool(id) || isArmor(id) ? 1 : 64);
 
 /// Food: the hunger points (out of 20) each one gives back when eaten.

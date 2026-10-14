@@ -22,16 +22,16 @@ import {MineEthRouter} from "./MineEthRouter.sol";
 import {SafeTransfer} from "./lib/SafeTransfer.sol";
 
 interface IMineSupply {
-    function TOTAL_SUPPLY() external view returns (uint256);
+    function MAX_SUPPLY() external view returns (uint256);
     function balanceOf(address) external view returns (uint256);
 }
 
 /// @title MineHook
 /// @notice Pool owner and Uniswap v4 hook for $MINE (a copy of Courier World's audited StampHook). It opens one
-///         $MINE/IMD pool, once. `launchSupply` $MINE (500M, half the 1B supply) is added as single-sided liquidity
+///         $MINE/IMD pool, once. `launchSupply` $MINE (10.5M, half the 21M supply) is added as single-sided liquidity
 ///         owned by this contract, which has no way to remove it (locked forever). Every swap in the pool pays 4% of
-///         its IMD side, all of it to the protocol (`feeRecipient`). The other half of $MINE's supply sits in
-///         MiningSites and is paid out only to players, for what they earn in the game.
+///         its IMD side, all of it to the protocol (`feeRecipient`). The rest of $MINE's 21M supply is minted by the
+///         mining vault (MineVault) only as players earn it.
 /// @dev Must be deployed at an address whose low 14 bits equal `HOOK_FLAGS` (mine a CREATE2 salt).
 contract MineHook is IHooks, IUnlockCallback {
     using StateLibrary for IPoolManager;
@@ -81,12 +81,13 @@ contract MineHook is IHooks, IUnlockCallback {
     /// @dev Bounds that keep the launch position's liquidity above zero and within what one tick range can hold,
     ///      at every start tick allowed, so a constructor that accepts its arguments always leads to a working
     ///      openPool. At the top tick a whole token buys about 2e9 units of liquidity; at the bottom one the whole
-    ///      1B supply needs about 3.3e33, far below v4's per-tick cap of 3.8e34 (the bounds CourierPad uses for its
-    ///      1B-supply launches).
+    ///      21M supply needs about 6.9e31, far below v4's per-tick cap of 3.8e34. (The tick bounds are CourierPad's,
+    ///      made for 1B-supply launches, which needed 3.3e33 at the bottom: $MINE's 21M has room to spare.)
     int24 internal constant MIN_START_TICK = -300_000;
     int24 internal constant MAX_START_TICK = 400_000;
     uint256 internal constant MIN_LAUNCH_SUPPLY = 1e18;
-    uint256 internal constant MAX_LAUNCH_SUPPLY = 1_000_000_000e18;
+    /// @dev $MINE's whole supply (MineToken.MAX_SUPPLY), as in StampHook.
+    uint256 internal constant MAX_LAUNCH_SUPPLY = 21_000_000e18;
     /// @dev keccak256("Stamp.beforeSwapFee") - transient slot passing the fee from beforeSwap to afterSwap. (StampHook's
     ///      value, kept: transient storage belongs to each contract, so the name doesn't matter.)
     bytes32 internal constant FEE_SLOT = 0x0e7a214e2bfdcb5a3f6eeb3feb3428d747006b85ea848e6432dc8645d4c1524d;
@@ -425,9 +426,9 @@ contract MineHook is IHooks, IUnlockCallback {
             : FullMath.mulDiv(FullMath.mulDiv(1e18, sqrtP, Q96), sqrtP, Q96);
     }
 
-    /// @notice Fully diluted market cap (the whole 1B $MINE) in IMD wei at the current pool price.
+    /// @notice Fully diluted market cap (the whole 21M $MINE cap, MAX_SUPPLY) in IMD wei at the current pool price.
     function marketCap(address t) external view returns (uint256) {
-        return FullMath.mulDiv(price(t), IMineSupply(t).TOTAL_SUPPLY(), 1e18);
+        return FullMath.mulDiv(price(t), IMineSupply(t).MAX_SUPPLY(), 1e18);
     }
 
     // ------------------------------------------------- Disabled hook paths

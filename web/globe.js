@@ -3,6 +3,8 @@
 // (true shapes, the town round), and ice caps over the poles, where the square world runs out (past 85 degrees) and
 // a ragged edge a little further in. Lit from one side, with a soft atmosphere and stars. Cheap to build and to draw
 // (it runs on phones too).
+//
+// The rocket shows it too on the way between planets (zones.js), with the destination's picture, air and polar caps.
 
 import * as THREE from "https://esm.sh/three@0.160.0";
 
@@ -23,6 +25,7 @@ void main() {
 const PLANET_FRAG = `
 uniform sampler2D map;
 uniform vec3 sun;
+uniform vec3 air;
 uniform float ready;
 varying vec2 vUv;
 varying vec3 vN;
@@ -34,11 +37,12 @@ void main() {
   float day = smoothstep(-0.28, 0.4, l);
   vec3 col = c * (0.16 + 0.98 * day);
   float rim = pow(1.0 - max(dot(n, normalize(vV)), 0.0), 2.6);
-  col = mix(col, vec3(0.55, 0.78, 1.0), rim * (0.18 + 0.5 * day));
+  col = mix(col, air * 0.8 + 0.2, rim * (0.18 + 0.5 * day));
   gl_FragColor = vec4(col, 1.0);
 }`;
 const AIR_FRAG = `
 uniform vec3 sun;
+uniform vec3 air;
 varying vec3 vN;
 varying vec3 vV;
 void main() {
@@ -46,7 +50,7 @@ void main() {
   float d = -dot(n, normalize(vV)); // 0 at the outer edge, about 0.42 where it meets the planet
   float glow = pow(clamp(d / 0.42, 0.0, 1.0), 1.8);
   float lit = 0.3 + 0.7 * smoothstep(-0.5, 0.6, dot(n, sun));
-  gl_FragColor = vec4(vec3(0.42, 0.7, 1.0) * glow * lit, 1.0);
+  gl_FragColor = vec4(air * glow * lit, 1.0);
 }`;
 
 export function createGlobe() {
@@ -56,7 +60,7 @@ export function createGlobe() {
 
   const tex = new THREE.DataTexture(new Uint8Array([40, 107, 184, 255]), 1, 1);
   tex.needsUpdate = true;
-  const uniforms = { map: { value: tex }, sun: { value: SUN }, ready: { value: 0 } };
+  const uniforms = { map: { value: tex }, sun: { value: SUN }, ready: { value: 0 }, air: { value: new THREE.Vector3(0.42, 0.7, 1.0) } };
   const planet = new THREE.Mesh(new THREE.SphereGeometry(1, 96, 64),
     new THREE.ShaderMaterial({ uniforms, vertexShader: PLANET_VERT, fragmentShader: PLANET_FRAG }));
   // Turn the town (x = WORLD / 2, the middle of the picture) towards the camera to start with.
@@ -67,7 +71,7 @@ export function createGlobe() {
   tilt.add(planet);
   scene.add(tilt);
   const air = new THREE.Mesh(new THREE.SphereGeometry(1.1, 64, 48), new THREE.ShaderMaterial({
-    uniforms: { sun: uniforms.sun }, vertexShader: PLANET_VERT, fragmentShader: AIR_FRAG,
+    uniforms: { sun: uniforms.sun, air: uniforms.air }, vertexShader: PLANET_VERT, fragmentShader: AIR_FRAG,
     side: THREE.BackSide, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
   }));
   scene.add(air);
@@ -84,8 +88,10 @@ export function createGlobe() {
   let shown = 0;
   return {
     scene, camera, planet, tilt,
-    /// The planet from above (planet-map.js): w x h RGBA rows by latitude, north first. Fades in.
-    setMap(data, w, h) {
+    /// The planet from above (planet-map.js): w x h RGBA rows by latitude, north first. Fades in. `cap`: the polar
+    /// caps' colour (ice at home); `air`: the atmosphere's (r, g, b in 0..1).
+    setMap(data, w, h, cap = ICE, air = [0.42, 0.7, 1.0]) {
+      uniforms.air.value.set(...air);
       const px = new Uint8Array(w * h * 4);
       for (let j = 0; j < h; j++) {
         // Row j goes at the top for the north (the texture's first row is its bottom), and the poles get ice caps
@@ -99,7 +105,7 @@ export function createGlobe() {
           const ice = data[s0 + 3] ? Math.max(0, Math.min(1, (Math.abs(lat) - edge) / 1.5 + 0.5)) : 1;
           const s = s0, k = dst + i * 4;
           const speck = ((i * 7919 + j * 104729) % 23) / 23 * 14;
-          for (let c = 0; c < 3; c++) px[k + c] = data[s + c] + (ICE[c] - speck - data[s + c]) * ice;
+          for (let c = 0; c < 3; c++) px[k + c] = data[s + c] + (cap[c] - speck - data[s + c]) * ice;
           px[k + 3] = 255;
         }
       }
@@ -112,15 +118,16 @@ export function createGlobe() {
       tex.dispose();
       shown = performance.now();
     },
-    /// Each frame on the title screen: turn a little, fit the screen, and draw.
-    render(renderer, dt) {
+    /// Each frame on the title screen (or on the way to another planet): turn a little, fit the screen, and draw.
+    /// `zoom` above 1 comes closer.
+    render(renderer, dt, zoom = 1) {
       planet.rotation.y += dt * 0.06;
       if (shown) uniforms.ready.value = Math.min(1, (performance.now() - shown) / 900);
       const w = renderer.domElement.clientWidth || innerWidth, h = renderer.domElement.clientHeight || innerHeight;
       camera.aspect = w / h;
       // The globe and its air (radius 1.1) fill about three quarters of the narrower side.
       const fit = 1.1 / 0.74 / (Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * Math.min(1, camera.aspect));
-      camera.position.set(0, 0, fit + 0);
+      camera.position.set(0, 0, fit / zoom);
       camera.updateProjectionMatrix();
       renderer.render(scene, camera);
     },
