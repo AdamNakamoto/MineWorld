@@ -12,10 +12,14 @@
 
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { createAvatar } from "./avatar.js";
+import { heldModel } from "./held.js";
 import { unpackTraits } from "./crafters.js";
 import { unpackBoost } from "./boosts.js";
 import { wrap, wrapDelta } from "./rules.js";
 import { place } from "./planet.js";
+
+/// The item in hand from a player's gear as the room relays it ([four armor tiers, item]), 0 for nothing.
+const heldOf = (g) => (Number.isInteger(g?.[4]) && g[4] > 0 && g[4] < 256 ? g[4] : 0);
 
 const MIN_GAP = 0.5; // seconds between position updates, at the most
 const HEARTBEAT = 3; // seconds: while moving the same way
@@ -101,17 +105,21 @@ export function createNet(url, scene, h) {
   /// `look`: the Crafter they wear, as packed traits (checked on-chain by the world server), or null.
   /// `pos` is where they are (flat, kept at the copy nearest you, so distances to it are the short way round);
   /// `holder` stands their avatar there on the curved planet (draw()).
-  /// `gear`: the armor tiers they wear (head, chest, legs, feet), as the room relays them.
+  /// `gear`: the armor tiers they wear (head, chest, legs, feet), then the item in their hand (0: nothing), as the
+  /// room relays them.
   function add(pid, name, look, x, y, z, yaw, gear) {
-    gear = Array.isArray(gear) && gear.length === 4 && gear.every((t) => Number.isInteger(t) && t >= 0 && t <= 4) ? gear : [0, 0, 0, 0];
+    const ok = Array.isArray(gear) && gear.length >= 4 && gear.slice(0, 4).every((t) => Number.isInteger(t) && t >= 0 && t <= 4);
+    const held = ok ? heldOf(gear) : 0;
+    gear = ok ? gear.slice(0, 4) : [0, 0, 0, 0];
     drop(pid);
     const av = createAvatar(unpackTraits(look), gear);
+    av.hold(heldModel(held));
     const tag = nameTag(name);
     av.root.add(tag);
     const holder = new THREE.Group();
     holder.add(av.root);
     scene.add(holder);
-    others.set(pid, { av, tag, holder, name, look, gear, pos: new THREE.Vector3(x, y, z), target: new THREE.Vector3(x, y, z), yaw, tyaw: yaw, act: false, speed: 0 });
+    others.set(pid, { av, tag, holder, name, look, gear, held, pos: new THREE.Vector3(x, y, z), target: new THREE.Vector3(x, y, z), yaw, tyaw: yaw, act: false, speed: 0 });
   }
   function drop(pid) {
     const o = others.get(pid);
@@ -170,12 +178,17 @@ export function createNet(url, scene, h) {
       case "act": { const o = others.get(m[1]); if (o) o.act = !!m[2]; break; }
       case "look": {
         const o = others.get(m[1]);
-        if (o) add(m[1], o.name, m[2], o.target.x, o.target.y, o.target.z, o.tyaw, o.gear);
+        if (o) add(m[1], o.name, m[2], o.target.x, o.target.y, o.target.z, o.tyaw, [...o.gear, o.held]);
         break;
       }
       case "gear": {
-        const o = others.get(m[1]);
-        if (o) add(m[1], o.name, o.look, o.target.x, o.target.y, o.target.z, o.tyaw, m[2]);
+        const o = others.get(m[1]), g = m[2];
+        if (!o) break;
+        // Only the item in hand changed (the usual case: a new hotbar slot): just swap it.
+        if (Array.isArray(g) && g.slice(0, 4).join() === o.gear.join()) {
+          o.held = heldOf(g);
+          o.av.hold(heldModel(o.held));
+        } else add(m[1], o.name, o.look, o.target.x, o.target.y, o.target.z, o.tyaw, g);
         break;
       }
       case "edits": if ((m[3] ?? "home") === zone) h.edits?.(m[1], m[2]); break;

@@ -441,19 +441,26 @@ export function faceTiles(id) {
 
 // ---------------------------------------------------------------- item icons
 
-const iconCache = new Map();
+const iconCache = new Map(), canvasCache = new Map();
 /// A small picture of an item for the hotbar and inventory (a data URL).
 export function iconFor(id, atlas) {
   if (iconCache.has(id)) return iconCache.get(id);
+  const url = iconCanvas(id, atlas).toDataURL();
+  iconCache.set(id, url);
+  return url;
+}
+/// The same picture as a 32 x 32 canvas (items are 16 x 16 pixel art drawn at twice the size): held.js reads its
+/// pixels to give a held item thickness. Shared: don't draw on it.
+export function iconCanvas(id, atlas) {
+  if (canvasCache.has(id)) return canvasCache.get(id);
   const c = document.createElement("canvas");
   c.width = c.height = 32;
   const g = c.getContext("2d");
   g.imageSmoothingEnabled = false;
   if (id < 64) drawBlockIcon(g, id, atlas);
   else drawItemIcon(g, id);
-  const url = c.toDataURL();
-  iconCache.set(id, url);
-  return url;
+  canvasCache.set(id, c);
+  return c;
 }
 
 function drawBlockIcon(g, id, atlas) {

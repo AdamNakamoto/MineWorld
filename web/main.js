@@ -23,6 +23,7 @@ import { createShop } from "./shop.js";
 import { createSky } from "./sky.js";
 import { createNet, short } from "./net.js";
 import { createAvatar } from "./avatar.js";
+import { heldModel, setHeldAtlas, tileUVs } from "./held.js";
 import * as BLK from "./blocks.js";
 import { ICONS, drawRow, createHunger, EXHAUSTION, SPRINT_MIN_FOOD, HEAL_FOOD, EAT_SECONDS, FOOD_MAX } from "./vitals.js";
 import { runCommand } from "./commands.js";
@@ -89,6 +90,7 @@ const HALF = 0.3, TALL = 1.8, EYE = 1.62;
 // you. Mining, placing and fighting always aim from your eyes, whichever view is on.
 const VIEWS = ["First person", "Behind you", "Facing you"];
 let view = 0, myLook = null, me = null;
+let heldNow = 0; // the item in your hand (0: nothing), as your miner and everyone else show it
 try { myLook = unpackTraits(JSON.parse(localStorage.getItem("mwc:wornTraits"))); } catch {}
 const meHolder = new THREE.Group(); // stands your miner on the curved planet (planet.place); me.root turns within it
 scene.add(meHolder);
@@ -97,6 +99,7 @@ function dressMe(traits) {
   if (me) { meHolder.remove(me.root); me.dispose(); }
   myLook = traits ?? null;
   me = createAvatar(myLook, inv.armorTiers());
+  me.hold(heldModel(heldNow));
   me.root.visible = view > 0;
   meHolder.add(me.root);
 }
@@ -209,7 +212,7 @@ inv.onChange = () => {
   wornKey = k;
   drawArmor();
   dressMe(myLook);
-  net?.gear(tiers);
+  sendGear();
 };
 $("inv").addEventListener("click", (e) => {
   if (e.target === $("inv") || e.target.closest("[data-close]")) return closeInventory();
@@ -246,24 +249,27 @@ function closeInventory() { $("inv").hidden = true; }
 
 // ---------------------------------------------------------------- held item, target box, cracks, debris
 const atlasTex = world.uniforms.map.value;
+setHeldAtlas(atlas, atlasTex);
 const heldGroup = new THREE.Group();
 camera.add(heldGroup);
 heldGroup.position.set(0.48, -0.42, -0.78);
 let heldMesh = null, swingT = 0;
-function tileUVs(geo, tilesForFaces) {
-  // BoxGeometry face order: +x, -x, +y, -y, +z, -z; 4 vertices each.
-  const uv = geo.attributes.uv;
-  const s = 1 / ATLAS_TILES;
-  for (let f = 0; f < 6; f++) {
-    const t = tilesForFaces[f], tx = t % ATLAS_TILES, ty = Math.floor(t / ATLAS_TILES);
-    for (let k = 0; k < 4; k++) {
-      const i = f * 4 + k;
-      uv.setXY(i, (tx + uv.getX(i)) * s, 1 - (ty + 1 - uv.getY(i)) * s);
-    }
-  }
-  uv.needsUpdate = true;
+let gearTimer = 0;
+/// Tells the room what you wear and hold (the four armor tiers, then the item in hand), a moment after the last
+/// change, so scrolling through the hotbar sends one message rather than one per slot.
+function sendGear(now = false) {
+  clearTimeout(gearTimer);
+  const go = () => net?.gear([...inv.armorTiers(), heldNow]);
+  if (now) go();
+  else gearTimer = setTimeout(go, 400);
 }
 function updateHeld() {
+  const id = inv.slot(player.sel)?.id ?? 0;
+  if (id !== heldNow) {
+    heldNow = id;
+    me?.hold(heldModel(id));
+    sendGear();
+  }
   if (heldMesh) { heldGroup.remove(heldMesh); heldMesh.geometry.dispose(); heldMesh.material.map !== atlasTex && heldMesh.material.map?.dispose(); heldMesh.material.dispose(); heldMesh = null; }
   const s = inv.slot(player.sel);
   if (!s) return;
@@ -480,7 +486,7 @@ if (url) {
       $("onlineN").textContent = `● ${count} online`;
       if (ledger.wallet) tryResume(ledger.wallet);
       voice?.reconnected();
-      if (inv.armorPoints()) net.gear(inv.armorTiers());
+      if (inv.armorPoints() || heldNow) sendGear(true);
     },
     joined(id, name, landed) { sysLine(landed ? `${name} landed here by rocket` : `${name} joined the game`); },
     left(id, name, to) { sysLine(to ? `${name} flew to ${ZONES[to]?.name ?? "another planet"}` : `${name} left the game`); voice?.left(id); },

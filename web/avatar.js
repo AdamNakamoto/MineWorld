@@ -138,9 +138,19 @@ export function createAvatar(traits, gear = [0, 0, 0, 0]) {
   if (gear[2]) for (const l of legs) plate(gear[2], 4.6, 6, 4.6, 0, -3, 0, l);
   if (gear[3]) for (const l of legs) plate(gear[3], 4.8, 3.2, 5, 0, -10.6, 0.3, l);
 
+  // What's in the hand (held.js): the right hand (the miner faces +z, so its right is -x), the one that swings.
+  const grip = new THREE.Group();
+  grip.position.set(0, -11 * PX, 0.5 * PX);
+  arms[0].add(grip);
+
   let phase = 0, swing = 0;
   return {
     root, head,
+    /// Puts `model` (held.js heldModel, or null for nothing) in the hand, in place of what was there.
+    hold(model) {
+      grip.clear();
+      if (model) grip.add(model);
+    },
     /// speed: metres per second along the ground; swinging: mining or fighting.
     animate(dt, speed, swinging) {
       phase += dt * Math.min(speed, 6) * 2.2;
@@ -150,11 +160,11 @@ export function createAvatar(traits, gear = [0, 0, 0, 0]) {
       arms[0].rotation.x = -a;
       arms[1].rotation.x = a;
       swing = swinging ? (swing + dt * 9) % (Math.PI * 2) : 0;
-      if (swinging) arms[1].rotation.x = -1.2 - Math.sin(swing) * 0.9;
+      if (swinging) arms[0].rotation.x = -1.2 - Math.sin(swing) * 0.9;
     },
     dispose() {
       root.traverse((n) => {
-        if (!n.isMesh) return;
+        if (!n.isMesh || n.userData.shared) return; // (a held item's model is shared: held.js)
         n.geometry.dispose();
         for (const m of [].concat(n.material)) { m.map?.dispose(); m.dispose(); }
       });

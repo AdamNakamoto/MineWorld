@@ -204,7 +204,7 @@ export class World extends DurableObject {
     const s = JSON.stringify(msg);
     for (const [ws] of this.onZone(zone)) if (ws !== skip) try { ws.send(s); } catch {}
   }
-  /// How a player is shown to others: [id, name, look, x, y, z, yaw, gear].
+  /// How a player is shown to others: [id, name, look, x, y, z, yaw, gear] (gear: armor tiers, then the item in hand).
   shown(a) {
     return [a.id, a.name, a.look, a.x, a.y, a.z, a.yaw, a.gear ?? null];
   }
@@ -1155,13 +1155,16 @@ export class World extends DurableObject {
     this.send(ws, ["voucher", total.toString(), Number(deadline), signature]);
   }
 
-  /// The armor a player shows (four tiers 0..4; cosmetic, so it's only checked for shape), at most a few times a second.
-  gear(ws, a, tiers) {
-    if (!a.ready || !Array.isArray(tiers) || tiers.length !== 4 || !tiers.every((t) => isInt(t, 0, 5))) return;
+  /// What a player shows: the armor they wear (four tiers 0..4) and, fifth, the item in their hand (an id, 0 for
+  /// nothing). It's only for looks, so it's only checked for shape; at most a few times a second (the game sends it a
+  /// moment after the last change).
+  gear(ws, a, g) {
+    if (!a.ready || !Array.isArray(g) || (g.length !== 4 && g.length !== 5)) return;
+    if (!g.slice(0, 4).every((t) => isInt(t, 0, 5)) || (g.length === 5 && !isInt(g[4], 0, 256))) return;
     if (!bucket(a, "gears", 4, 1, 1, Date.now())) return;
-    a.gear = tiers;
+    a.gear = g;
     this.save(ws, a);
-    this.zoneCast(a.zone, ["gear", a.id, tiers], ws);
+    this.zoneCast(a.zone, ["gear", a.id, g], ws);
   }
 
   // ---------------------------------------------------------------- names
