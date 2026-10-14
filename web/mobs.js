@@ -1,9 +1,13 @@
 // Monsters: original blocky creatures. The room decides when and where one comes for you (rules.js MOBS); this
 // game moves it, lets it bite, and tells the room about every hit, which the room checks before paying for a win.
+// They move in the flat, wrapping world (their position is kept in 0..WORLD) and are drawn standing on the curved
+// planet (planet.js) by draw(), each frame before the render.
 
 import * as THREE from "https://esm.sh/three@0.160.0";
-import { MOBS, MOB_LIFE_MS } from "./rules.js";
+import { MOBS, MOB_LIFE_MS, wrap, wrapDelta } from "./rules.js";
+import { BLOCKS } from "./blocks.js";
 import { moveBox } from "./physics.js";
+import { place, nearest } from "./planet.js";
 
 const mat = (color, emissive = 0) => new THREE.MeshLambertMaterial({ color, emissive });
 function part(group, w, h, d, color, x, y, z, emissive) {
@@ -89,27 +93,29 @@ export function createMobs(scene, world, hooks) {
       for (let d = 0; d <= 12 && !spot; d++) {
         for (const by of d ? [Math.floor(y) + d, Math.floor(y) - d] : [Math.floor(y)]) {
           if (by < 2) continue;
-          let clear = world.solid(bx, by - 1, bz) && world.get(bx, by - 1, bz) !== 8;
+          let clear = world.solid(bx, by - 1, bz) && !BLOCKS[world.get(bx, by - 1, bz)]?.leaves;
           for (let k = 0; k < tall && clear; k++) clear = !world.solid(bx, by + k, bz) && world.get(bx, by + k, bz) !== 11;
           if (clear) { spot = [bx + 0.5, by, bz + 0.5]; break; }
         }
       }
       if (spot) break;
     }
-    if (!spot) return;
-    const group = new THREE.Group();
+    if (!spot) return hooks.gone?.(id);
+    // holder: stood on the curved ground (planet.place); group: the model, turned and animated within it.
+    const holder = new THREE.Group(), group = new THREE.Group();
     const anim = MODELS[kind](group);
-    group.position.set(...spot);
-    scene.add(group);
+    holder.add(group);
+    scene.add(holder);
     const mob = {
-      id, kind, def, group, anim, hp: def.hp, born: performance.now(),
-      pos: group.position, vel: new THREE.Vector3(), yaw: 0, attackT: 1, hurtT: 0, dead: 0, wanderT: 0, wander: 0,
+      id, kind, def, holder, group, anim, hp: def.hp, born: performance.now(),
+      pos: new THREE.Vector3(wrap(spot[0]), spot[1], wrap(spot[2])), vel: new THREE.Vector3(), yaw: 0, attackT: 1, hurtT: 0,
+      dead: 0, wanderT: 0, wander: 0,
     };
     live.set(id, mob);
   }
 
   function remove(m) {
-    scene.remove(m.group);
+    scene.remove(m.holder);
     m.group.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
     live.delete(m.id);
   }
@@ -132,7 +138,7 @@ export function createMobs(scene, world, hooks) {
         continue;
       }
       const half = m.def.size[0] / 2, h = m.def.size[1];
-      const dx = player.pos.x - m.pos.x, dz = player.pos.z - m.pos.z, dy = player.pos.y - m.pos.y;
+      const dx = wrapDelta(player.pos.x - m.pos.x), dz = wrapDelta(player.pos.z - m.pos.z), dy = player.pos.y - m.pos.y;
       const dist = Math.hypot(dx, dz);
       if (now - m.born > MOB_LIFE_MS || dist > 64) { remove(m); hooks.gone?.(m.id); continue; }
       let tx = 0, tz = 0;
@@ -151,6 +157,8 @@ export function createMobs(scene, world, hooks) {
         m.vel.z += (tz - m.vel.z) * k;
       }
       const r = moveBox(world, m.pos, m.vel, half, h, dt);
+      m.pos.x = wrap(m.pos.x);
+      m.pos.z = wrap(m.pos.z);
       if (r.wall && r.onGround) m.vel.y = 8; // hop up a step
       if (r.water) m.vel.y = Math.max(m.vel.y, 1.5);
       if (Math.abs(m.vel.x) + Math.abs(m.vel.z) > 0.2) m.yaw = Math.atan2(m.vel.x, m.vel.z);
@@ -165,13 +173,19 @@ export function createMobs(scene, world, hooks) {
     }
   }
 
+  /// Stands every monster on the curved ground as seen from the camera (after planet.follow, before the render).
+  function draw() {
+    for (const m of live.values()) place(m.holder, m.pos, 0);
+  }
+
   /// The monster a ray (origin o, unit direction d) hits first within `max`, as { mob, t }.
   function raycast(o, d, max) {
     let best = null;
     for (const m of live.values()) {
       if (m.dead) continue;
       const half = m.def.size[0] / 2 + 0.1, h = m.def.size[1];
-      const min = [m.pos.x - half, m.pos.y, m.pos.z - half], mx = [m.pos.x + half, m.pos.y + h, m.pos.z + half];
+      const px = nearest(m.pos.x, o.x), pz = nearest(m.pos.z, o.z); // (the copy on the ray's side of the seam)
+      const min = [px - half, m.pos.y, pz - half], mx = [px + half, m.pos.y + h, pz + half];
       let t0 = 0, t1 = max;
       const O = [o.x, o.y, o.z], D = [d.x, d.y, d.z];
       let ok = true;
@@ -193,7 +207,7 @@ export function createMobs(scene, world, hooks) {
     m.vel.x = dirX * 7; m.vel.z = dirZ * 7; m.vel.y = 5;
     m.hurtT = 0.25;
     flash(m, true);
-    if (m.hp <= 0) m.dead = 0.4;
+    if (m.hp <= 0) { m.dead = 0.4; hooks.killed?.(m.id); }
   }
   /// The room says it's beaten (or gone).
   function kill(id) {
@@ -202,5 +216,5 @@ export function createMobs(scene, world, hooks) {
   }
   function clear() { for (const m of [...live.values()]) remove(m); }
 
-  return { spawn, update, raycast, hit, kill, clear, count: () => live.size };
+  return { spawn, update, draw, raycast, hit, kill, clear, count: () => live.size };
 }

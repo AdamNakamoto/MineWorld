@@ -1,5 +1,5 @@
 // The on-chain side: log in with a browser wallet, open a mining site (ETH), convert earnings to $MINE with the
-// room's voucher, mint and wear MineWorldCraft Miners, and trade $MINE. Uses web/chain.json from ./dev.sh when
+// room's voucher, mint MineWorld Crafters (and read their traits), and trade $MINE. Uses web/chain.json from ./dev.sh when
 // present, otherwise the mainnet deployment (web/deployments/robinhood.json). Without either, the game plays and the
 // panel says the economy isn't live yet.
 
@@ -8,6 +8,7 @@ import {
   parseSignature, decodeErrorResult, parseAbi, zeroAddress, BaseError, ContractFunctionRevertedError,
 } from "https://esm.sh/viem@2";
 import { pickWallet, wallets, lastWallet, rememberWallet } from "./wallet.js";
+import { traitsOf } from "./crafters.js";
 
 const ERROR_TEXT = {
   NoSite: "Open a mining site first: only wallets with one can convert.",
@@ -18,10 +19,11 @@ const ERROR_TEXT = {
   Paused: "Converting is paused for now. Your earnings stay safe on the ledger.",
   Expired: "That voucher expired. Try again.",
   BadSignature: "The voucher didn't check out. Try again.",
-  SaleClosed: "The Miners mint is closed.",
-  SoldOut: "Sold out: every Miner has been minted.",
-  BadQuantity: "Mint between 1 and 10 at a time.",
-  NotRevealed: "Still sealed: the Miners are revealed after the mint.",
+  SaleClosed: "The Crafters mint is closed.",
+  SoldOut: "Sold out: all 3,333 Crafters have been minted.",
+  BadQuantity: "Mint between 1 and 5 at a time.",
+  WalletLimit: "That's as many Crafters as one wallet can mint.",
+  NotRevealed: "Still sealed: the Crafters are revealed after the mint.",
   Slippage: "The price moved past your slippage limit. Try again, or allow more slippage.",
   PartialFill: "The pool can't fill that much right now. Try a smaller amount.",
   DustSwap: "That amount is too small to trade.",
@@ -92,13 +94,13 @@ export async function connectChain() {
   const pub = createPublicClient({ chain, transport: http(dep.rpcUrl), pollingInterval: 500, batch: { multicall: !!dep.contracts.multicall3 } });
   const test = dep.local ? createTestClient({ chain, mode: "anvil", transport: http(dep.rpcUrl) }) : null;
   const abis = dep.abis;
-  knownErrors = [...abis.mine, ...abis.sites, ...(abis.miners ?? []), ...(abis.hook ?? []), ...(abis.router ?? []), ...(abis.ethRouter ?? []), ...V4_ABI]
+  knownErrors = [...abis.mine, ...abis.sites, ...(abis.crafters ?? []), ...(abis.hook ?? []), ...(abis.router ?? []), ...(abis.ethRouter ?? []), ...V4_ABI]
     .filter((i) => i.type === "error");
   const withErrors = (abi) => [...abi.filter((i) => i.type !== "error"), ...knownErrors];
   const C = {
     mine: { address: dep.contracts.mine, abi: withErrors(abis.mine) },
     sites: { address: dep.contracts.sites, abi: withErrors(abis.sites) },
-    miners: dep.contracts.miners ? { address: dep.contracts.miners, abi: withErrors(abis.miners) } : null,
+    crafters: dep.contracts.crafters ? { address: dep.contracts.crafters, abi: withErrors(abis.crafters) } : null,
   };
   const T = dep.contracts.hook ? {
     hook: { address: dep.contracts.hook, abi: withErrors(abis.hook) },
@@ -147,18 +149,22 @@ export async function connectChain() {
     return receipt;
   }
 
-  const minerDesigns = new Map(); // token id -> design, once revealed
+  const hash = { keccak256, encodeAbiParameters };
+  const crafterTraits = new Map(); // token id -> traits, once revealed (they never change)
+  const has = (c, fn) => c.abi.some((i) => i.type === "function" && i.name === fn);
   async function snapshot() {
     const [sitePrice, paused, walletCap, dailyCap, paidToday, vault] = await Promise.all([
       read(C.sites, "sitePrice"), read(C.sites, "paused"), read(C.sites, "walletDailyCap"), read(C.sites, "dailyCap"),
       read(C.sites, "paidToday"), read(C.sites, "vaultBalance"),
     ]);
     const s = { account, accounts, local: !!dep.local, devAccounts: !browserWallet, explorer: dep.explorer, sitePrice, paused, walletCap, dailyCap, paidToday, vault, trading: !!T };
-    if (C.miners) {
-      const [price, saleOpen, minted, seed, max] = await Promise.all([
-        read(C.miners, "price"), read(C.miners, "saleOpen"), read(C.miners, "totalMinted"), read(C.miners, "seed"), read(C.miners, "MAX_SUPPLY"),
+    if (C.crafters) {
+      const K = C.crafters;
+      const [price, saleOpen, minted, seed, max, limit] = await Promise.all([
+        read(K, "price"), read(K, "saleOpen"), read(K, "totalMinted"), read(K, "seed"), read(K, "MAX_SUPPLY"),
+        has(K, "walletLimit") ? read(K, "walletLimit") : null,
       ]);
-      s.miners = { price, saleOpen, minted: Number(minted), seed, max: Number(max), mine: [] };
+      s.crafters = { price, saleOpen, minted: Number(minted), seed, max: Number(max), limit: limit === null ? null : Number(limit), mine: [] };
     }
     if (!account) return s;
     const [eth, mine, siteAt, claimed, walletPaid, imd] = await Promise.all([
@@ -166,11 +172,15 @@ export async function connectChain() {
       read(C.sites, "claimed", [account]), read(C.sites, "walletPaidToday", [account]), T ? read(T.imd, "balanceOf", [account]) : null,
     ]);
     Object.assign(s, { eth, mine, site: Number(siteAt), claimed, walletPaid, imd });
-    if (C.miners) {
-      const ids = (await read(C.miners, "tokensOfOwner", [account])).map(Number);
-      const design = (id) => minerDesigns.get(id) ?? read(C.miners, "designOf", [BigInt(id)]).then((d) => (minerDesigns.set(id, Number(d)), Number(d)));
-      const designs = s.miners.seed === 0n ? ids.map(() => null) : await Promise.all(ids.map(design));
-      s.miners.mine = ids.map((id, i) => ({ id, design: designs[i] }));
+    if (C.crafters) {
+      const ids = (await read(C.crafters, "tokensOfOwner", [account])).map(Number);
+      const seed = s.crafters.seed;
+      // Traits come from the revealed seed, worked out here exactly as the contract does (crafters.js).
+      s.crafters.mine = ids.map((id) => {
+        if (seed === 0n) return { id, traits: null };
+        if (!crafterTraits.has(id)) crafterTraits.set(id, traitsOf(seed, id, hash));
+        return { id, traits: crafterTraits.get(id) };
+      });
     }
     return s;
   }
@@ -249,7 +259,7 @@ export async function connectChain() {
     browserWallet,
     chainName: dep.chainName,
     explorer: dep.explorer,
-    addresses: { mine: C.mine.address, sites: C.sites.address, miners: C.miners?.address ?? null },
+    addresses: { mine: C.mine.address, sites: C.sites.address, crafters: C.crafters?.address ?? null },
     get account() { return account; },
     set onAccount(f) { onAccount = f; },
     snapshot,
@@ -284,7 +294,7 @@ export async function connectChain() {
     openSite: (price) => send(C.sites, "openSite", [], price),
     claim: (v) => send(C.sites, "claim", [v.total, v.deadline, v.signature]),
     claimable: (total) => read(C.sites, "claimable", [account, total]),
-    mintMiners: (n, price) => send(C.miners, "mint", [BigInt(n)], price * BigInt(n)),
+    mintCrafters: (n, price) => send(C.crafters, "mint", [BigInt(n)], price * BigInt(n)),
     trade: T ? { quote, market, execute: trade } : null,
     /// Local chains only: Anvil gives the logged-in wallet some play ETH.
     async devFund() {

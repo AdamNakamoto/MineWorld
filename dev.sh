@@ -3,20 +3,20 @@
 # for the local room, then the site served from web/. Anvil's dev accounts are unlocked, so the page plays as any of
 # them. Ports differ from Courier World's dev setup (Anvil 8610, site 5810), so both can run at once.
 #
-#   ./dev.sh                 # empty chain: $MINE, MiningSites and the Miners. No Uniswap v4 here, so $MINE's pool half
-#                            # is held by the deployer as a stand-in (no trading)
+#   ./dev.sh                 # empty chain: $MINE, MiningSites and the Crafters. No Uniswap v4 here, so $MINE's pool
+#                            # half is held by the deployer as a stand-in (no trading)
 #   ./dev.sh --fork          # fork of Robinhood Chain: the full launch against the real PoolManager, IMD and IMD/ETH
 #                            # pool (hook, routers, pool opened, hook renounced), so trading works (no real money)
 #   ./dev.sh --wallet        # log in with your own browser wallet (MetaMask...) as on mainnet. The chain gets its own
 #                            # ID, so nothing signed there works elsewhere. Combines with --fork.
-#   ./dev.sh --sale          # leave the Miners' sale open and sealed, to try the mint and the reveal (the owner,
-#                            # account 0, reveals with chain.json's devSecret). Without it the players get miners at
+#   ./dev.sh --sale          # leave the Crafters' sale open and sealed, to try the mint and the reveal (the owner,
+#                            # account 0, reveals with chain.json's devSecret). Without it the players get Crafters at
 #                            # once and the collection is revealed.
 #
-# Accounts: 0 deploys, and owns MiningSites and the Miners; 1 is the treasury and the fee recipient; 2-9 are players,
-# each with some $MINE (100,000 from the stand-in on the empty chain; bought with 0.01 ETH through the pool on a fork)
-# and, without --sale, two miners. The voucher key MiningSites trusts is a throwaway made here for this chain only; it
-# goes into multiplayer/.dev.vars and is never printed.
+# Accounts: 0 deploys, and owns MiningSites and the Crafters; 1 is the treasury and the fee recipient; 2-9 are
+# players, each with some $MINE (100,000 from the stand-in on the empty chain; bought with 0.01 ETH through the pool on
+# a fork) and, without --sale, two Crafters. The voucher key MiningSites trusts is a throwaway made here for this chain
+# only; it goes into multiplayer/.dev.vars and is never printed.
 set -euo pipefail
 cd "$(dirname "$0")"
 export PATH="$HOME/.foundry/bin:$PATH"
@@ -30,7 +30,10 @@ for a in "$@"; do
     *) echo "Unknown option $a (use --fork, --wallet, --sale)" >&2; exit 1 ;;
   esac
 done
-FORK_URL="${FORK_URL:-https://robinhood.drpc.org}"
+# The official RPC keeps the old state a fork reads as it goes (drpc drops it after about a minute). Where a network's
+# DNS blocks its name (Anvil then sees the wrong certificate), run `python3 tools/rpc-relay.py` and fork from it:
+# FORK_URL=http://127.0.0.1:8611 ./dev.sh --fork
+FORK_URL="${FORK_URL:-https://rpc.mainnet.chain.robinhood.com}"
 # Chain ID for --wallet: unused by any public chain and never Robinhood Chain's 4663 (nor Courier's practice chain's
 # 466399), so a transaction or permit signed on the practice chain can't be replayed on a real one.
 PRACTICE_CHAIN_ID="${PRACTICE_CHAIN_ID:-466400}"
@@ -105,12 +108,13 @@ MINE=$(addr MineToken) SITES=$(addr MiningSites)
 HOOK=$(addr MineHook) ROUTER=$(addr Router) ETH_ROUTER=$(addr EthRouter)
 [ -n "$MINE" ] && [ -n "$SITES" ] || { echo "$OUT"; exit 1; }
 
-# The Miners, committed to this chain's throwaway secret, with the sale open.
-MINERS_PRICE=4000000000000000
-SEED_COMMIT=$(cast keccak "$(cast abi-encode "f(uint256)" "$SECRET")") OPEN_SALE=true MINERS_PRICE=$MINERS_PRICE \
-  MINERS_IMAGES="http://localhost:$WEB_PORT/miners/" deploy script/DeployMiners.s.sol
-MINERS=$(addr Miners)
-[ -n "$MINERS" ] || { echo "$OUT"; exit 1; }
+# The Crafters (and their on-chain art), committed to this chain's throwaway secret, with the sale open. Free, as at
+# launch (CRAFTERS_PRICE=<wei> ./dev.sh to try a paid mint).
+CRAFTERS_PRICE="${CRAFTERS_PRICE:-0}"
+SEED_COMMIT=$(cast keccak "$(cast abi-encode "f(uint256)" "$SECRET")") OPEN_SALE=true CRAFTERS_PRICE=$CRAFTERS_PRICE \
+  deploy script/DeployCrafters.s.sol
+CRAFTERS=$(addr Crafters)
+[ -n "$CRAFTERS" ] || { echo "$OUT"; exit 1; }
 
 if [ "$FORK" = 1 ]; then
   # $MINE for the players, bought with 0.01 ETH each through the real IMD/ETH pool and the $MINE pool (4% fee included).
@@ -123,17 +127,17 @@ if [ "$FORK" = 1 ]; then
 fi
 
 if [ "$SALE" = 0 ]; then
-  # Two miners for each player (paid to the treasury, as anyone's mint), then the sale closes and, a block later, the
-  # owner reveals with this chain's secret.
+  # Two Crafters for each player (as anyone mints them), then the sale closes and, a block later, the owner reveals
+  # with this chain's secret.
   HASHES=()
   for p in "${PLAYER_LIST[@]}"; do
-    HASHES+=($(cast send "$MINERS" "mint(uint256)" 2 --value $((MINERS_PRICE * 2)) \
+    HASHES+=($(cast send "$CRAFTERS" "mint(uint256)" 2 --value $((CRAFTERS_PRICE * 2)) \
       --from "$p" --unlocked --rpc-url "$RPC" --async))
   done
   wait_ok "${HASHES[@]}"
-  cast send "$MINERS" "setSaleOpen(bool)" false --from "$DEPLOYER" --unlocked --rpc-url "$RPC" >/dev/null
+  cast send "$CRAFTERS" "setSaleOpen(bool)" false --from "$DEPLOYER" --unlocked --rpc-url "$RPC" >/dev/null
   cast rpc anvil_mine 1 --rpc-url "$RPC" >/dev/null
-  cast send "$MINERS" "reveal(uint256)" "$SECRET" --from "$DEPLOYER" --unlocked --rpc-url "$RPC" >/dev/null
+  cast send "$CRAFTERS" "reveal(uint256)" "$SECRET" --from "$DEPLOYER" --unlocked --rpc-url "$RPC" >/dev/null
 fi
 
 CHAIN_ID=$(cast chain-id --rpc-url "$RPC")
@@ -144,16 +148,16 @@ if [ "$WALLET" = 1 ]; then
   [ "$FORK" = 1 ] && NAME="MineWorldCraft practice (Robinhood fork)"
 fi
 
-# `npx wrangler dev` in multiplayer/ reads these: it signs vouchers for this chain's MiningSites, and reads the Miners.
+# `npx wrangler dev` in multiplayer/ reads these: it signs vouchers for this chain's MiningSites and reads the Crafters.
 mkdir -p multiplayer
-(umask 077 && printf 'MINING_KEY=%s\nMINING_ADDRESS=%s\nCHAIN_ID=%s\nCHAIN_RPC=%s\nMINERS_ADDRESS=%s\n' \
-  "$MINING_KEY" "$SITES" "$CHAIN_ID" "$RPC" "$MINERS" > multiplayer/.dev.vars)
+(umask 077 && printf 'MINING_KEY=%s\nMINING_ADDRESS=%s\nCHAIN_ID=%s\nCHAIN_RPC=%s\nCRAFTERS_ADDRESS=%s\n' \
+  "$MINING_KEY" "$SITES" "$CHAIN_ID" "$RPC" "$CRAFTERS" > multiplayer/.dev.vars)
 
 # web/chain.json: what the game reads to find this chain and its contracts.
 mkdir -p web
-contracts=$(jq -n --arg mine "$MINE" --arg sites "$SITES" --arg miners "$MINERS" '{mine: $mine, sites: $sites, miners: $miners}')
-abis=$(jq -n --argjson mine "$(abi MineToken)" --argjson sites "$(abi MiningSites)" --argjson miners "$(abi MineWorldMiners)" \
-  '{mine: $mine, sites: $sites, miners: $miners}')
+contracts=$(jq -n --arg mine "$MINE" --arg sites "$SITES" --arg crafters "$CRAFTERS" '{mine: $mine, sites: $sites, crafters: $crafters}')
+abis=$(jq -n --argjson mine "$(abi MineToken)" --argjson sites "$(abi MiningSites)" --argjson crafters "$(abi MineWorldCrafters)" \
+  '{mine: $mine, sites: $sites, crafters: $crafters}')
 if [ "$FORK" = 1 ]; then
   # Robinhood Chain addresses, as in contracts/script/export-web.sh.
   contracts=$(echo "$contracts" | jq --arg hook "$HOOK" --arg router "$ROUTER" --arg ethRouter "$ETH_ROUTER" \
@@ -177,7 +181,7 @@ if [ "$FORK" = 1 ]; then
   echo "Router      $ROUTER"
   echo "EthRouter   $ETH_ROUTER"
 fi
-echo "Miners      $MINERS ($([ "$SALE" = 1 ] && echo "sale open, sealed" || echo "revealed, 2 per player"))"
+echo "Crafters    $CRAFTERS ($([ "$SALE" = 1 ] && echo "sale open, sealed" || echo "revealed, 2 per player"))"
 echo "Chain       $RPC ($NAME, chain ID $CHAIN_ID)"
 echo "Wrote       web/chain.json, multiplayer/.dev.vars"
 echo "Game        http://localhost:$WEB_PORT"

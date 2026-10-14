@@ -1,11 +1,11 @@
 // The Mining Site panel: log in, sign in to earn (free), open a mining site (ETH), convert earnings to $MINE, trade
-// $MINE, and mint or wear a MineWorldCraft Miner. Everything about money happens here, in plain words.
+// $MINE, and mint or wear a MineWorld Crafter. Everything about money happens here, in plain words.
 
 import { formatEther } from "https://esm.sh/viem@2";
 import { explain } from "./chain.js";
 import { createTrade } from "./trade.js";
-import { MINERS } from "./miners.js";
-import { minerPicture } from "./portrait.js";
+import { svg, sealedSvg, HAIRS, OUTFITS } from "./crafters.js";
+import { ROOKIE } from "./avatar.js";
 import { fmtMine, BLOCK_REWARDS, MOB_REWARDS, DAILY_EARN_CAP } from "./rewards.js";
 import { itemName } from "./blocks.js";
 import { MOBS } from "./rules.js";
@@ -15,7 +15,7 @@ const eth = (wei) => Number(formatEther(wei)).toLocaleString("en-US", { maximumF
 const mine = (wei) => Number(formatEther(wei)).toLocaleString("en-US", { maximumFractionDigits: 2 });
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-/// `game`: { chain, net, ledger() → { signedIn, wallet, today, total, cap }, signIn(), toast(text, kind), wear(design, id) }.
+/// `game`: { chain, net, ledger() → { signedIn, wallet, today, total, cap }, signIn(), toast(text, kind), wear(traits, id) }.
 export function createPanel(game) {
   const el = document.getElementById("panel");
   const body = document.getElementById("panelBody");
@@ -90,13 +90,13 @@ export function createPanel(game) {
         if (pay === 0n) throw new Error("Nothing to convert right now: today's limits may be reached. They reset at 00:00 UTC.");
         await chain.claim(v);
       });
-      case "mint": return run(`Minting ${data.n} Miner${data.n > 1 ? "s" : ""}`, () => chain.mintMiners(Number(data.n), snap.miners.price));
+      case "mint": return run(`Minting ${data.n} Crafter${data.n > 1 ? "s" : ""}`, () => chain.mintCrafters(Number(data.n), snap.crafters.price));
       case "wear": {
         const id = data.id === "none" ? null : Number(data.id);
         worn = id;
         try { localStorage.setItem("mwc:worn", JSON.stringify(id)); } catch {}
-        const m = snap?.miners?.mine.find((x) => x.id === id);
-        game.wear(id === null ? null : m?.design ?? null, id);
+        const m = snap?.crafters?.mine.find((x) => x.id === id);
+        game.wear(id === null ? null : m?.traits ?? null, id);
         return render();
       }
       case "fund": return run("Adding play ETH", () => chain.devFund());
@@ -166,31 +166,35 @@ export function createPanel(game) {
         <div class="kv"><span>ETH</span><b>${eth(s.eth)}</b></div>
         ${s.imd !== null && s.imd !== undefined ? `<div class="kv"><span>IMD</span><b>${mine(s.imd)}</b></div>` : ""}</section>` : ""}
 
-      ${minersBox(s, acct)}
+      ${craftersBox(s, acct)}
       ${economyBox()}
       ${ratesBox()}`;
     tradeEl.hidden = !chain.trade;
   }
 
-  function minersBox(s, acct) {
-    const M = s?.miners;
+  const pic = (src) => `data:image/svg+xml;utf8,${encodeURIComponent(src)}`;
+  function craftersBox(s, acct) {
+    const M = s?.crafters;
     if (!M) return "";
     const left = M.max - M.minted;
-    const mineList = M.mine ?? [];
+    const mine = M.mine ?? [];
+    const price = M.price === 0n ? "Free (gas only)" : `${eth(M.price)} ETH`;
     return `<section class="box">
-      <h3>MineWorldCraft Miners</h3>
-      <p class="note">${M.max} miner outfits to wear in the world, in ${MINERS.length} designs. Cosmetic only: they change how you look, never what you earn.
-      Minted sealed, revealed after the mint. Resales pay a 5% creator royalty.</p>
-      <div class="kv"><span>Minted</span><b>${M.minted} / ${M.max}</b></div>
-      <div class="kv"><span>Price</span><b>${eth(M.price)} ETH</b></div>
+      <h3>MineWorld Crafters</h3>
+      <p class="note">${M.max.toLocaleString()} characters, drawn and stored fully on-chain: every picture is made by the contract itself, and no two are
+      alike (${HAIRS.length} hairs, ${OUTFITS.length} outfits, hats, skins, eyes, backgrounds). The one you wear is how your miner looks in the world.
+      Cosmetic only: never what you earn. Minted sealed, revealed after the mint. Resales pay a 5% creator royalty.</p>
+      <div class="kv"><span>Minted</span><b>${M.minted.toLocaleString()} / ${M.max.toLocaleString()}</b></div>
+      <div class="kv"><span>Price</span><b>${price}</b></div>
+      ${M.limit ? `<div class="kv"><span>Per wallet</span><b>${M.limit}</b></div>` : ""}
       ${M.saleOpen && left > 0
-        ? `<div class="row-btns">${[1, 3, 5].map((n) => `<button class="btn" data-act="mint" data-n="${n}" ${!acct || busy || n > left ? "disabled" : ""}>Mint ${n}</button>`).join("")}</div>`
+        ? `<div class="row-btns">${[1, 3, 5].map((n) => `<button class="btn${n === 1 ? " gold" : ""}" data-act="mint" data-n="${n}" ${!acct || busy || n > left ? "disabled" : ""}>Mint ${n}</button>`).join("")}</div>`
         : `<p class="note">${left <= 0 ? "Sold out." : "The mint isn't open right now."}</p>`}
-      ${mineList.length ? `<h3>Yours</h3><div class="miners">
-        <button class="miner ${worn === null ? "on" : ""}" data-act="wear" data-id="none"><img src="${minerPicture(null, 96)}" alt="">Rookie</button>
-        ${mineList.map((m) => `<button class="miner ${worn === m.id ? "on" : ""}" data-act="wear" data-id="${m.id}" ${m.design === null ? "disabled" : ""}>
-          <img src="${minerPicture(m.design, 96)}" alt="">${m.design === null ? `#${m.id} sealed` : `${esc(MINERS[m.design].name)} #${m.id}`}</button>`).join("")}
-      </div><p class="note">Others see your outfit once the world server has checked you own it.</p>` : ""}
+      ${mine.length ? `<h3>Yours</h3><div class="miners">
+        <button class="miner ${worn === null ? "on" : ""}" data-act="wear" data-id="none"><img src="${pic(svg(ROOKIE))}" alt="">Rookie</button>
+        ${mine.map((m) => `<button class="miner ${worn === m.id ? "on" : ""}" data-act="wear" data-id="${m.id}" ${m.traits ? "" : "disabled"}>
+          <img src="${pic(m.traits ? svg(m.traits) : sealedSvg())}" alt="">#${m.id}${m.traits ? "" : " sealed"}</button>`).join("")}
+      </div><p class="note">${mine.some((m) => m.traits) ? "Tap one to wear it. Others see it once the world server has checked it's yours." : "Yours are sealed until the reveal."}</p>` : ""}
     </section>`;
   }
 

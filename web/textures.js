@@ -2,7 +2,7 @@
 // Block faces go into one 256 x 256 atlas (16 x 16 tiles of 16 x 16 pixels).
 
 import { BLOCKS, TORCH, STICK, COAL, IRON, GOLD, DIAMOND, CRYSTAL, TOOLS, WOOD_PICK, STONE_PICK, IRON_PICK, DIAMOND_PICK,
-  WOOD_SWORD, STONE_SWORD, IRON_SWORD, DIAMOND_SWORD } from "./blocks.js";
+  WOOD_SWORD, STONE_SWORD, IRON_SWORD, DIAMOND_SWORD, APPLE, BERRIES, MUSHROOM_STEW } from "./blocks.js";
 
 const T = 16;
 export const ATLAS_TILES = 16;
@@ -61,6 +61,18 @@ function oreTile(seed, color, glow = false) {
     }
   }
   return d;
+}
+
+/// A one-pixel line from (x0, y0) to (x1, y1).
+function line(set, x0, y0, x1, y1, c, j = 0) {
+  const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1);
+  for (let k = 0; k <= n; k++) set(Math.round(x0 + ((x1 - x0) * k) / n), Math.round(y0 + ((y1 - y0) * k) / n), c, 255, j);
+}
+/// A plant's stem with a leaf or two on it, from the bottom of the tile up to `top`.
+function stem(set, x, top, leafY = 11) {
+  for (let y = top; y < T; y++) set(x, y, y > 12 ? 0x3c7a26 : 0x4f9a30, 255, 8);
+  for (const [dx, dy] of [[-1, 0], [-2, -1], [-3, -1]]) set(x + dx, leafY + dy, 0x5aa83a, 255, 10);
+  for (const [dx, dy] of [[1, 2], [2, 1], [3, 1]]) set(x + dx, leafY + dy, 0x4a9030, 255, 10);
 }
 
 const TILES = {
@@ -192,6 +204,143 @@ const TILES = {
       set(x, y, seam ? 0x7a2e22 : 0xb2483a, 255, 14);
     }
   }),
+  // Plants: drawn on a clear background, shown as two crossed pictures.
+  tall_grass: () => tile(60, (set, r) => {
+    for (let b = 0; b < 12; b++) {
+      let x = 0.5 + b * 1.25 + r() * 1.2;
+      const h = 7 + ((r() * 9) | 0), lean = (x - 7.5) * 0.04 + (r() - 0.5) * 0.3;
+      for (let k = 0; k < h; k++) {
+        set(Math.round(x), T - 1 - k, k > h - 3 ? 0x8cc456 : k < 3 ? 0x3e7a24 : r() < 0.5 ? 0x5a9c34 : 0x68aa3c, 255, 14);
+        x += lean;
+      }
+    }
+  }),
+  fern: () => tile(61, (set) => {
+    // Five fronds fanning out from the root, each a rib with leaflets that shrink towards its tip.
+    for (const [ex, ey] of [[0, 6], [3, 1], [8, 0], [13, 1], [15, 7]]) {
+      const n = 12;
+      for (let k = 1; k <= n; k++) {
+        const t = k / n;
+        // A gentle arch: the rib rises first, then leans out.
+        const x = 7.5 + (ex - 7.5) * t * t, y = 15 - (15 - ey) * (2 * t - t * t);
+        set(Math.round(x), Math.round(y), 0x2e6a22, 255, 6);
+        if (k % 2 || k < 3) continue;
+        const len = Math.max(1, Math.round((1 - t) * 3));
+        // Leaflets at right angles to the rib.
+        const dx = (ex - 7.5) * 2 * t, dy = -(15 - ey) * (2 - 2 * t);
+        const l = Math.hypot(dx, dy) || 1, px = -dy / l, py = dx / l;
+        for (let i = 1; i <= len; i++) {
+          set(Math.round(x + px * i), Math.round(y + py * i), 0x4a8f34, 255, 12);
+          set(Math.round(x - px * i), Math.round(y - py * i), 0x58a23c, 255, 12);
+        }
+      }
+    }
+  }),
+  flower_yellow: () => tile(62, (set) => {
+    stem(set, 7, 7);
+    // A round, five-petalled bloom with an orange eye.
+    for (let y = 1; y <= 7; y++) for (let x = 4; x <= 11; x++) {
+      const dx = x - 7.5, dy = y - 4;
+      const d = dx * dx + dy * dy;
+      if (d > 11.5) continue;
+      set(x, y, d < 1.8 ? 0xd9821c : (x + y) % 3 === 0 ? 0xfff27e : 0xf2cf2e, 255, 10);
+    }
+  }),
+  flower_red: () => tile(63, (set) => {
+    stem(set, 7, 6, 12);
+    // A flame-shaped bloom: one tall middle petal between two short curled ones.
+    const rows = [
+      "......R.........", ".....RR.........", ".....RhR........", "..R..RhR..R.....", "..RR.RRR.RR.....",
+      "...RRRRRRR......", "...dRRRRRd......", "....ddRdd.......",
+    ];
+    rows.forEach((row, y) => [...row].forEach((ch, x) => {
+      if (ch === "R") set(x + 1, y, 0xd8322a, 255, 12);
+      else if (ch === "h") set(x + 1, y, 0xff7a52, 255, 6);
+      else if (ch === "d") set(x + 1, y, 0x921a16, 255, 6);
+    }));
+  }),
+  flower_blue: () => tile(64, (set) => {
+    // An arching stem with three little bells hanging from it.
+    line(set, 8, 15, 8, 5, 0x3c7a26);
+    line(set, 8, 5, 11, 2, 0x4f9a30); line(set, 11, 2, 13, 3, 0x4f9a30);
+    for (const [dx, dy] of [[-1, 0], [-2, -1]]) set(8 + dx, 12 + dy, 0x5aa83a, 255, 10);
+    for (const [bx, by] of [[5, 6], [9, 5], [13, 5]]) {
+      const pts = [[0, 0, 0x7a96ff], [-1, 1, 0x4a6ae0], [0, 1, 0x5a7af0], [1, 1, 0x4a6ae0], [-1, 2, 0x2e46a8], [0, 2, 0x4a6ae0], [1, 2, 0x2e46a8]];
+      for (const [x, y, c] of pts) set(bx + x, by + y, c, 255, 8);
+      if (bx === 5) line(set, 5, 5, 8, 7, 0x4f9a30);
+    }
+  }),
+  berry_bush: () => tile(65, (set, r) => {
+    for (let y = 3; y < T; y++) for (let x = 0; x < T; x++) {
+      const dx = (x - 7.5) / 7.5, dy = (y - 10) / 6.5;
+      const d = dx * dx + dy * dy;
+      if (d > 1 || (d > 0.7 && r() < 0.45) || r() < 0.08) continue;
+      set(x, y, r() < 0.3 ? 0x24561c : 0x33702a, 255, 18);
+    }
+    for (let i = 0; i < 7; i++) {
+      const x = 2 + ((r() * 11) | 0), y = 5 + ((r() * 8) | 0);
+      set(x, y, 0xc8203a); set(x + 1, y, 0xa01830); set(x, y + 1, 0xa01830); set(x + 1, y + 1, 0x7e1226); set(x, y, 0xff7088);
+    }
+  }),
+  red_mushroom: () => tile(66, (set, r) => {
+    for (let y = 10; y < T; y++) for (let x = 6; x <= 9; x++) set(x, y, x === 9 ? 0xc8bca0 : 0xece2c8, 255, 8);
+    for (let y = 3; y <= 9; y++) for (let x = 2; x <= 13; x++) {
+      const dx = (x - 7.5) / 6, dy = (y - 9.5) / 6.5;
+      if (dx * dx + dy * dy > 1) continue;
+      set(x, y, y === 9 ? 0x8e1a1c : 0xc8262a, 255, 10);
+    }
+    for (const [x, y] of [[5, 5], [6, 5], [9, 4], [10, 6], [11, 6], [4, 7], [7, 7], [8, 7]]) set(x, y, 0xf6f0e4, 255, 6);
+    void r;
+  }),
+  brown_mushroom: () => tile(67, (set) => {
+    for (let y = 11; y < T; y++) for (let x = 7; x <= 8; x++) set(x, y, x === 8 ? 0xc8bca0 : 0xe2d8bc, 255, 8);
+    for (let y = 8; y <= 11; y++) for (let x = 1; x <= 14; x++) {
+      const w = y === 8 ? 4 : y === 9 ? 6 : 7;
+      if (Math.abs(x - 7.5) > w) continue;
+      set(x, y, y === 11 ? 0x6a4a2e : y === 8 ? 0xc29462 : 0xa2724a, 255, 10);
+    }
+  }),
+  dry_shrub: () => tile(68, (set) => {
+    line(set, 8, 15, 8, 9, 0x6e5230); line(set, 8, 11, 4, 6, 0x8a6a3a); line(set, 8, 10, 12, 5, 0x8a6a3a);
+    line(set, 8, 9, 7, 3, 0x7a5c34); line(set, 5, 8, 2, 7, 0x8a6a3a); line(set, 11, 7, 14, 7, 0x7a5c34);
+    line(set, 6, 9, 5, 12, 0x6e5230); line(set, 10, 9, 12, 11, 0x6e5230);
+  }),
+  // The dark forest's giant trees, and pines.
+  dark_log_side: () => tile(69, (set, r) => {
+    for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) set(x, y, r() < 0.15 ? 0x2a2018 : 0x3d2e22, 255, 10);
+    // Deep grooves that wander a little, and a knot.
+    for (const gx of [1, 5, 9, 13]) {
+      let x = gx + (r() < 0.5 ? 0 : 1);
+      for (let y = 0; y < T; y++) {
+        set(x, y, 0x1e1712, 255, 6);
+        set(x + 1, y, 0x4e3c2c, 255, 8);
+        if (r() < 0.18) x += r() < 0.5 ? -1 : 1;
+        x = Math.max(gx - 1, Math.min(gx + 2, x));
+      }
+    }
+    set(10, 7, 0x1a1410); set(11, 7, 0x1a1410); set(10, 8, 0x2a2018); set(11, 8, 0x1a1410);
+  }),
+  dark_log_top: () => tile(70, (set) => {
+    for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) {
+      const d = Math.sqrt((x - 7.5) * (x - 7.5) + (y - 7.5) * (y - 7.5));
+      set(x, y, d > 6.8 ? 0x2a2018 : Math.floor(d * 1.3) % 2 ? 0x6a4c36 : 0x5a3e2c, 255, 8);
+    }
+  }),
+  dark_leaves: () => tile(71, (set, r) => {
+    for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) {
+      if (r() < 0.14) { set(x, y, 0, 0); continue; }
+      const v = r();
+      set(x, y, v < 0.25 ? 0x173a12 : v < 0.8 ? 0x224c1a : 0x2f5e22, 255, 14);
+    }
+  }),
+  pine_leaves: () => tile(72, (set, r) => {
+    for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) {
+      if (r() < 0.12) { set(x, y, 0, 0); continue; }
+      // Needles in little diagonal rows.
+      const needle = (x + y * 2) % 5 === 0 || (x * 2 - y + 32) % 7 === 0;
+      set(x, y, needle ? 0x46785a : r() < 0.3 ? 0x1f4430 : 0x2b5a3e, 255, 10);
+    }
+  }),
   crack0: () => crack(1), crack1: () => crack(2), crack2: () => crack(3), crack3: () => crack(4), crack4: () => crack(5),
 };
 function crack(stage) {
@@ -251,7 +400,7 @@ export function iconFor(id, atlas) {
 function drawBlockIcon(g, id, atlas) {
   const [top, side] = faceTiles(id);
   const src = (i) => [(i % ATLAS_TILES) * T, Math.floor(i / ATLAS_TILES) * T];
-  if (id === TORCH) {
+  if (id === TORCH || BLOCKS[id]?.plant) {
     const [sx, sy] = src(top);
     g.drawImage(atlas, sx, sy, T, T, 0, 0, 32, 32);
     return;
@@ -272,6 +421,28 @@ function drawBlockIcon(g, id, atlas) {
   face(side, 0.35, [1, -0.5, 0, 1, 16, 16]);
 }
 
+// Food, as 16 x 16 pixel pictures ("." is empty).
+const FOOD_ART = {
+  [APPLE]: [[
+    "................", ".......s........", "......s.LL......", "......sLLL......", "...RRRsRRRR.....",
+    "..RRhhRRRRRR....", ".RRhhRRRRRRRR...", ".RRhRRRRRRRRR...", ".RRRRRRRRRRRd...", ".RRRRRRRRRRRd...",
+    ".RRRRRRRRRRdd...", "..RRRRRRRRdd....", "..dRRRRRRRdd....", "...ddRRdddd.....", ".....d..d.......", "................",
+  ], { R: "#d8302c", h: "#ff9a86", d: "#94201c", s: "#6b4a2a", L: "#5aa83a" }],
+  [BERRIES]: [[
+    "................", "........LL......", ".......LLs......", "......s.s.......", ".....s...s......",
+    "...BBB..BBB.....", "..BhBBB.BhBB....", "..BBBBdBBBBd....", "..BBBBdBBBBd....", "...dddBBBddd....",
+    ".......BhBB.....", "......BBBBBd....", "......BBBBBd....", ".......dddd.....", "................", "................",
+  ], { B: "#c42446", h: "#ff8aa0", d: "#7a1430", s: "#4f7a2a", L: "#5aa83a" }],
+  [MUSHROOM_STEW]: [[
+    "................", "................", "................", "................", "................",
+    "..oooooooooooo..", ".oSSrSSSScSSSSo.", ".WSSSScSSSrSSSW.", ".WwSSSSSSSSSSwW.", "..WwwwwwwwwwwW..",
+    "..WWwwwwwwwwWW..", "...WWWwwwwWWW...", "....WWWWWWWW....", ".....kkkkkk.....", "................", "................",
+  ], { o: "#5a3a1e", S: "#b0703a", r: "#d8302c", c: "#f0e2c0", W: "#8a5c32", w: "#a87442", k: "#5a3a1e" }],
+};
+function pixelArt(px, [rows, pal]) {
+  rows.forEach((row, y) => [...row].forEach((ch, x) => { if (ch !== ".") px(x, y, pal[ch]); }));
+}
+
 function drawItemIcon(g, id) {
   const px = (x, y, c) => { g.fillStyle = c; g.fillRect(x * 2, y * 2, 2, 2); };
   const gem = (c1, c2) => {
@@ -286,6 +457,7 @@ function drawItemIcon(g, id) {
   if (id === GOLD) return gem("#f5d33a", "#d1a520");
   if (id === DIAMOND) return gem("#5fe8e0", "#2fb0b0");
   if (id === CRYSTAL) return gem("#d25bff", "#8f2fd0");
+  if (id === APPLE || id === BERRIES || id === MUSHROOM_STEW) return pixelArt(px, FOOD_ART[id]);
   if (tool?.kind === "pick") {
     const c = head[[WOOD_PICK, STONE_PICK, IRON_PICK, DIAMOND_PICK].indexOf(id)];
     for (let i = 0; i < 10; i++) px(4 + i, 13 - i + 0, i % 2 ? "#6b4f2e" : "#7d5d36");

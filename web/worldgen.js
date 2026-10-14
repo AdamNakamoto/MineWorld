@@ -1,13 +1,20 @@
-// The world as it was made: terrain, caves, ores, trees and the town, all from fixed seeds. The game draws chunks
+// The world as it was made: terrain, biomes, caves, ores, trees, plants and the town, all from fixed seeds. The game draws chunks
 // from it, and the multiplayer room asks it what a single block was (`naturalBlock`), so it can tell whether a
 // broken block was really there and what it was worth. Both must agree exactly, so this file uses only integer
 // hashing and plain arithmetic (no Math.random, sin or pow), which give the same answer in every JavaScript engine.
+//
+// The world is a small planet that wraps round in x and z (rules.js), so everything here repeats every WORLD blocks:
+// every noise lattice has a whole number of cells across the world and its corners are hashed modulo that number,
+// the tree and plant grids divide WORLD, and the per-block hashes take wrapped coordinates. naturalBlock wraps what
+// it's given; generateChunk takes chunk numbers 0..CHUNKS-1 (others are wrapped too).
 
 import {
   AIR, GRASS, DIRT, STONE, SAND, GRAVEL, LOG, LEAVES, PLANKS, BEDROCK, WATER, COAL_ORE, IRON_ORE, GOLD_ORE,
-  DIAMOND_ORE, MINE_ORE, SNOW, SANDSTONE, GLASS, BRICKS, CACTUS, LAMP, ROOF,
+  DIAMOND_ORE, MINE_ORE, SNOW, SANDSTONE, GLASS, BRICKS, CACTUS, LAMP, ROOF, TALL_GRASS, FLOWER_YELLOW, FLOWER_RED,
+  FLOWER_BLUE, BERRY_BUSH, RED_MUSHROOM, BROWN_MUSHROOM, DARK_LOG, DARK_LEAVES, PINE_LEAVES, FERN, DRY_SHRUB,
 } from "./blocks.js";
-import { WORLD, CHUNK, HEIGHT, SEA, TOWN, inWorld } from "./rules.js";
+import { WORLD, CHUNK, HEIGHT, SEA, TOWN, wrap, wrapDelta } from "./rules.js";
+import { TOWN_R, TOWN_FLAT, TOWN_BLEND, townBlock } from "./town.js";
 
 // ---------------------------------------------------------------- noise
 
@@ -21,38 +28,49 @@ const rand = (x, y, z, s) => hash(x, y, z, s) / 4294967296;
 const fade = (t) => t * t * t * (t * (t * 6 - 15) + 10);
 const lerp = (a, b, t) => a + (b - a) * t;
 
+const mod = (v, p) => ((v % p) + p) % p;
+
+// Gradient noise that repeats every WORLD blocks in x and z: `p` lattice cells across the world (a whole number), at
+// block (x, z). (x * p is a whole number and WORLD a power of two, so the lattice position is exact wherever x is
+// written: x and x + WORLD land on the same cell at the same place in it.)
 const G2 = [[1, 1], [-1, 1], [1, -1], [-1, -1], [1, 0], [-1, 0], [0, 1], [0, -1]];
-function noise2(x, z, s) {
-  const x0 = Math.floor(x), z0 = Math.floor(z);
-  const fx = x - x0, fz = z - z0;
+function noise2(x, z, p, s) {
+  const X = (x * p) / WORLD, Z = (z * p) / WORLD;
+  const x0 = Math.floor(X), z0 = Math.floor(Z);
+  const fx = X - x0, fz = Z - z0;
+  const i0 = mod(x0, p), j0 = mod(z0, p);
+  const i1 = i0 + 1 === p ? 0 : i0 + 1, j1 = j0 + 1 === p ? 0 : j0 + 1;
   const g = (ix, iz, dx, dz) => {
     const v = G2[hash(ix, iz, 0, s) & 7];
     return v[0] * dx + v[1] * dz;
   };
   const u = fade(fx), v = fade(fz);
   return lerp(
-    lerp(g(x0, z0, fx, fz), g(x0 + 1, z0, fx - 1, fz), u),
-    lerp(g(x0, z0 + 1, fx, fz - 1), g(x0 + 1, z0 + 1, fx - 1, fz - 1), u),
+    lerp(g(i0, j0, fx, fz), g(i1, j0, fx - 1, fz), u),
+    lerp(g(i0, j1, fx, fz - 1), g(i1, j1, fx - 1, fz - 1), u),
     v,
   );
 }
-function fbm2(x, z, s, octaves) {
+/// Octaves of noise2, each with twice the cells of the last (so each still wraps).
+function fbm2(x, z, p, s, octaves) {
   let sum = 0, amp = 1, norm = 0;
   for (let i = 0; i < octaves; i++) {
-    sum += noise2(x, z, s + i * 101) * amp;
+    sum += noise2(x, z, p << i, s + i * 101) * amp;
     norm += amp;
     amp *= 0.5;
-    x *= 2;
-    z *= 2;
   }
   return sum / norm;
 }
 
 const G3 = [[1, 1, 0], [-1, 1, 0], [1, -1, 0], [-1, -1, 0], [1, 0, 1], [-1, 0, 1], [1, 0, -1], [-1, 0, -1],
   [0, 1, 1], [0, -1, 1], [0, 1, -1], [0, -1, -1], [1, 1, 0], [-1, 1, 0], [0, -1, 1], [0, -1, -1]];
-function noise3(x, y, z, s) {
-  const x0 = Math.floor(x), y0 = Math.floor(y), z0 = Math.floor(z);
-  const fx = x - x0, fy = y - y0, fz = z - z0;
+/// 3D noise for caves: `p` cells across the world in x and z (wrapping as noise2), and one cell every `sy` blocks up.
+function noise3(x, y, z, p, sy, s) {
+  const X = (x * p) / WORLD, Y = y / sy, Z = (z * p) / WORLD;
+  const x0 = Math.floor(X), y0 = Math.floor(Y), z0 = Math.floor(Z);
+  const fx = X - x0, fy = Y - y0, fz = Z - z0;
+  const i0 = mod(x0, p), k0 = mod(z0, p);
+  const i1 = i0 + 1 === p ? 0 : i0 + 1, k1 = k0 + 1 === p ? 0 : k0 + 1;
   const g = (ix, iy, iz, dx, dy, dz) => {
     const v = G3[hash(ix, iy, iz, s) & 15];
     return v[0] * dx + v[1] * dy + v[2] * dz;
@@ -60,13 +78,13 @@ function noise3(x, y, z, s) {
   const u = fade(fx), v = fade(fy), w = fade(fz);
   return lerp(
     lerp(
-      lerp(g(x0, y0, z0, fx, fy, fz), g(x0 + 1, y0, z0, fx - 1, fy, fz), u),
-      lerp(g(x0, y0 + 1, z0, fx, fy - 1, fz), g(x0 + 1, y0 + 1, z0, fx - 1, fy - 1, fz), u),
+      lerp(g(i0, y0, k0, fx, fy, fz), g(i1, y0, k0, fx - 1, fy, fz), u),
+      lerp(g(i0, y0 + 1, k0, fx, fy - 1, fz), g(i1, y0 + 1, k0, fx - 1, fy - 1, fz), u),
       v,
     ),
     lerp(
-      lerp(g(x0, y0, z0 + 1, fx, fy, fz - 1), g(x0 + 1, y0, z0 + 1, fx - 1, fy, fz - 1), u),
-      lerp(g(x0, y0 + 1, z0 + 1, fx, fy - 1, fz - 1), g(x0 + 1, y0 + 1, z0 + 1, fx - 1, fy - 1, fz - 1), u),
+      lerp(g(i0, y0, k1, fx, fy, fz - 1), g(i1, y0, k1, fx - 1, fy, fz - 1), u),
+      lerp(g(i0, y0 + 1, k1, fx, fy - 1, fz - 1), g(i1, y0 + 1, k1, fx - 1, fy - 1, fz - 1), u),
       v,
     ),
     w,
@@ -75,21 +93,49 @@ function noise3(x, y, z, s) {
 
 // ---------------------------------------------------------------- columns
 
-export const PLAINS = 0, FOREST = 1, DESERT = 2, SNOWY = 3, PEAKS = 4;
-const TOWN_FLAT = 22; // the town's ground is level out to here
-const TOWN_BLEND = 46; // and blends into the land by here
+export const PLAINS = 0, FOREST = 1, DESERT = 2, SNOWY = 3, PEAKS = 4, MEADOW = 5, DARK_FOREST = 6, TAIGA = 7,
+  BEACH = 8;
+export const BIOME_NAMES = ["Plains", "Forest", "Desert", "Snowy land", "Snowy peaks", "Flower meadow", "Dark forest",
+  "Taiga", "Beach"];
+const DARK_MIN = 120; // no dark forest (giant trees) this close to the town
 
-/// The ground height and biome at (x, z).
+/// How far (x, z) is from the town's centre, the short way round.
+const townDist = (x, z) => {
+  const dx = wrapDelta(x + 0.5 - TOWN.x), dz = wrapDelta(z + 0.5 - TOWN.z);
+  return Math.sqrt(dx * dx + dz * dz);
+};
+
+// Feature sizes, as lattice cells across the world (WORLD / cells blocks each).
+const TEMP_CELLS = 4, FOREST_CELLS = 6, DARK_CELLS = 5, MEADOW_CELLS = 8;
+const LAND_CELLS = 3, HILL_CELLS = 8, MOUNTAIN_CELLS = 4, RIDGE_CELLS = 6, FLOWER_CELLS = 40;
+const CAVE_CELLS = 20, CAVERN_CELLS = 13, SEA_CELLS = 5;
+const MOUNTAIN_FROM = 0.08, MOUNTAIN_H = 130, SEA_FROM = -0.1, SEA_DEPTH = 70;
+
+/// The biome the climate gives (x, z), `d` from the town, before height has its say (peaks, beaches).
+function climate(x, z, d) {
+  const temp = noise2(x, z, TEMP_CELLS, 5);
+  if (d >= TOWN_BLEND && temp > 0.3) return DESERT;
+  if (temp < -0.32) return SNOWY;
+  if (temp < -0.17) return TAIGA;
+  const f = noise2(x, z, FOREST_CELLS, 6);
+  if (f > 0.05) return f > 0.19 && d >= DARK_MIN && noise2(x, z, DARK_CELLS, 9) > -0.1 ? DARK_FOREST : FOREST;
+  return noise2(x, z, MEADOW_CELLS, 10) > 0.12 ? MEADOW : PLAINS;
+}
+
+/// The ground height and biome at (x, z), and how far it is from the town's centre.
 export function column(x, z) {
-  const n = fbm2(x / 220, z / 220, 1, 4);
-  const hills = fbm2(x / 64, z / 64, 2, 3);
-  const mask = noise2(x / 300, z / 300, 3);
-  const ridge = 1 - Math.abs(fbm2(x / 90, z / 90, 4, 3));
+  x = wrap(x);
+  z = wrap(z);
+  const n = fbm2(x, z, LAND_CELLS, 1, 4);
+  const hills = fbm2(x, z, HILL_CELLS, 2, 3);
+  const mask = noise2(x, z, MOUNTAIN_CELLS, 3);
+  const ridge = 1 - Math.abs(fbm2(x, z, RIDGE_CELLS, 4, 3));
   let h = 56 + n * 16 + hills * 6;
-  if (mask > 0.12) h += (mask - 0.12) * ridge * ridge * 110;
-  const temp = noise2(x / 380, z / 380, 5);
-  const dx = x + 0.5 - TOWN.x, dz = z + 0.5 - TOWN.z;
-  const d = Math.sqrt(dx * dx + dz * dz);
+  if (mask > MOUNTAIN_FROM) h += (mask - MOUNTAIN_FROM) * ridge * ridge * MOUNTAIN_H;
+  // Seas: basins pressed down below the waterline, with beaches round them.
+  const basin = noise2(x, z, SEA_CELLS, 8);
+  if (basin < SEA_FROM) h -= (SEA_FROM - basin) * SEA_DEPTH;
+  const d = townDist(x, z);
   if (d < TOWN_BLEND) {
     const k = d < TOWN_FLAT ? 0 : fade((d - TOWN_FLAT) / (TOWN_BLEND - TOWN_FLAT));
     h = TOWN.y + (h - TOWN.y) * k;
@@ -99,10 +145,24 @@ export function column(x, z) {
   if (h > HEIGHT - 12) h = HEIGHT - 12;
   let biome;
   if (h > 96) biome = PEAKS;
-  else if (d >= TOWN_BLEND && temp > 0.3) biome = DESERT;
-  else if (temp < -0.32) biome = SNOWY;
-  else biome = noise2(x / 120, z / 120, 6) > 0.05 ? FOREST : PLAINS;
+  else {
+    biome = climate(x, z, d);
+    if (h <= SEA + 2 && biome !== DESERT && biome !== SNOWY) biome = BEACH;
+  }
   return { h, biome, d };
+}
+
+// The room asks about single blocks (several around each one broken), so the columns and tree spots worked out are
+// kept for a while. Every answer is the same however it's reached: this changes nothing but the speed.
+const colCache = new Map();
+function columnAt(x, z) {
+  const k = x * 4096 + z;
+  let c = colCache.get(k);
+  if (!c) {
+    if (colCache.size > 16384) colCache.clear();
+    colCache.set(k, (c = column(x, z)));
+  }
+  return c;
 }
 
 function ore(x, y, z) {
@@ -117,9 +177,9 @@ function ore(x, y, z) {
 
 function cave(x, y, z, h) {
   if (y < 5 || y > h || h <= SEA + 1) return false;
-  const a = noise3(x / 26, y / 16, z / 26, 11), b = noise3(x / 26, y / 16, z / 26, 12);
+  const a = noise3(x, y, z, CAVE_CELLS, 16, 11), b = noise3(x, y, z, CAVE_CELLS, 16, 12);
   if (a * a + b * b < 0.011) return true;
-  return y < 40 && noise3(x / 40, y / 22, z / 40, 13) > 0.52;
+  return y < 40 && noise3(x, y, z, CAVERN_CELLS, 22, 13) > 0.52;
 }
 
 /// The block at (x, y, z) from the ground alone (no trees, no town).
@@ -131,48 +191,91 @@ export function terrainBlock(x, y, z, col) {
   if (col.d > TOWN_FLAT - 2 && cave(x, y, z, h)) return AIR;
   if (y === h) {
     if (h < SEA) return h >= SEA - 3 ? SAND : GRAVEL;
-    if (h <= SEA + 1 || biome === DESERT) return SAND;
+    if (h <= SEA + 1 || biome === DESERT || biome === BEACH) return SAND;
     if (biome === SNOWY || biome === PEAKS) return SNOW;
     return GRASS;
   }
   if (y > h - 4) {
     if (biome === DESERT) return y > h - 3 ? SAND : SANDSTONE;
-    if (h <= SEA + 1) return SAND;
+    if (h <= SEA + 1 || biome === BEACH) return SAND;
     if (biome === PEAKS) return STONE;
     return DIRT;
   }
   return ore(x, y, z);
 }
 
-// ---------------------------------------------------------------- trees and cacti
+// ---------------------------------------------------------------- trees, cacti and plants
 
-const CELL = 5;
-/// The tree (or cactus) whose cell is (i, j), if it has one: { x, z, base, height, cactus }.
-function plantIn(i, j) {
-  const r = hash(i, j, 0, 41);
-  const x = i * CELL + (r & 3), z = j * CELL + ((r >> 2) & 3);
-  if (!inWorld(x, z)) return null;
-  const col = column(x, z);
-  if (col.d < TOWN_FLAT + 4 || col.h <= SEA + 1) return null;
-  const p = rand(i, j, 0, 42);
-  if (col.biome === DESERT) {
-    if (p > 0.06 || terrainBlock(x, col.h, z, col) !== SAND) return null;
-    return { x, z, base: col.h, height: 1 + ((r >> 4) % 3), cactus: true };
-  }
-  const chance = col.biome === FOREST ? 0.55 : col.biome === PLAINS ? 0.06 : col.biome === SNOWY ? 0.12 : 0;
-  if (p > chance) return null;
-  const top = terrainBlock(x, col.h, z, col);
-  if (top !== GRASS && top !== SNOW) return null;
-  return { x, z, base: col.h, height: 4 + ((r >> 4) % 3), cactus: false };
+const OAK = 0, PINE = 1, CACTUS_PLANT = 2, GIANT = 3;
+const TRUNK = new Uint8Array(256);
+TRUNK[LOG] = TRUNK[DARK_LOG] = TRUNK[CACTUS] = 1;
+
+// Small trees: at most one in each 4 x 4 cell (WORLD / 4 cells a side, so the grid wraps), somewhere in its first 3 x 3.
+// What grows there, and how likely, by biome.
+const CELL = 4, CELLS = WORLD / CELL;
+const SMALL_REACH = 3; // the furthest a small tree's leaves reach from its trunk (a big pine's lowest ring)
+const SMALL = [];
+SMALL[FOREST] = [OAK, 0.35]; SMALL[PLAINS] = [OAK, 0.04]; SMALL[MEADOW] = [OAK, 0.016]; SMALL[DARK_FOREST] = [OAK, 0.13];
+SMALL[SNOWY] = [PINE, 0.09]; SMALL[TAIGA] = [PINE, 0.27]; SMALL[PEAKS] = [PINE, 0.032]; SMALL[DESERT] = [CACTUS_PLANT, 0.04];
+const SMALL_MAX = 0.35, PEAK_CHANCE = 0.032;
+
+/// Cell (i, j) of a grid with `n` cells a side, from a tree finder that works on cells 0..n-1: the same tree wherever
+/// the grid is entered, moved to the side of the seam the caller is on (so a tree near x = 0 reaches over to 511).
+function wrappedCell(find, n, size, i, j) {
+  const wi = mod(i, n), wj = mod(j, n);
+  const t = find(wi, wj);
+  if (!t || (wi === i && wj === j)) return t;
+  return { ...t, x: t.x + (i - wi) * size, z: t.z + (j - wj) * size };
 }
 
-/// What tree `t` puts at (x, y, z): LOG, LEAVES, CACTUS or AIR.
-function plantBlock(t, x, y, z) {
+const treeCache = new Map();
+/// The small tree (or cactus) whose cell is (i, j), if it has one: { kind, x, z, base, height, lo, top }.
+function treeIn(i, j) {
+  const k = i * 4096 + j;
+  let t = treeCache.get(k);
+  if (t === undefined) {
+    if (treeCache.size > 16384) treeCache.clear();
+    treeCache.set(k, (t = findTree(i, j)));
+  }
+  return t;
+}
+function findTree(i, j) {
+  const r = hash(i, j, 0, 41), at = hash(i, j, 0, 45);
+  const x = i * CELL + ((at & 255) % 3), z = j * CELL + (((at >>> 8) & 255) % 3);
+  const p = rand(i, j, 0, 42);
+  if (p > SMALL_MAX) return null;
+  const d = townDist(x, z);
+  if (d < TOWN_FLAT + 4) return null;
+  // The climate alone rules most cells out before the (slower) height is worked out. Height can only turn a spot into
+  // peaks or a beach, so the chance here is never below the real one.
+  const c = SMALL[climate(x, z, d)];
+  if (p > Math.max(c ? c[1] : 0, PEAK_CHANCE)) return null;
+  const col = columnAt(x, z);
+  if (col.h <= SEA + 1) return null;
+  const grow = SMALL[col.biome];
+  if (!grow || p > grow[1]) return null;
+  const top = terrainBlock(x, col.h, z, col);
+  const base = col.h;
+  if (grow[0] === CACTUS_PLANT) {
+    if (top !== SAND) return null;
+    const height = 1 + ((r >> 4) % 3);
+    return { kind: CACTUS_PLANT, x, z, base, height, lo: base + 1, top: base + height };
+  }
+  if (top !== GRASS && top !== SNOW) return null;
+  if (grow[0] === PINE) {
+    const height = 6 + ((r >>> 4) % 5);
+    return { kind: PINE, x, z, base, height, lo: base + 1, top: base + height + 1 };
+  }
+  // (r >> 4 can be negative, so some oaks are only 2 or 3 tall, their leaves reaching the ground: bushes.)
+  const height = 4 + ((r >> 4) % 3);
+  return { kind: OAK, x, z, base, height, lo: base + Math.min(1, height - 2), top: base + height + 1 };
+}
+
+/// An oak: a short trunk and a rounded crown (the first trees this world had, unchanged).
+function oakBlock(t, x, y, z) {
   const dy = y - t.base;
-  if (x === t.x && z === t.z && dy >= 1 && dy <= t.height) return t.cactus ? CACTUS : LOG;
-  if (t.cactus) return AIR;
-  const top = t.height; // leaves from top-2 to top+1
-  const ly = dy - top;
+  if (x === t.x && z === t.z && dy >= 1 && dy <= t.height) return LOG;
+  const ly = dy - t.height; // leaves from top-2 to top+1
   if (ly < -2 || ly > 1) return AIR;
   const ax = Math.abs(x - t.x), az = Math.abs(z - t.z);
   const r = ly <= -1 ? 2 : 1;
@@ -182,106 +285,199 @@ function plantBlock(t, x, y, z) {
   return LEAVES;
 }
 
-/// Trees whose crowns could reach the box [x0, x1] x [z0, z1].
-function plantsNear(x0, z0, x1, z1) {
+/// A pine: a tall trunk in a cone of needles, ring over ring, each wide ring with a narrower one above it.
+function pineBlock(t, x, y, z) {
+  const dy = y - t.base;
+  if (x === t.x && z === t.z && dy >= 1 && dy <= t.height) return LOG;
+  const ly = t.height + 1 - dy; // 0 at the tip
+  if (ly < 0 || dy < 2) return AIR;
+  const ax = x - t.x, az = z - t.z, d2 = ax * ax + az * az;
+  let r2;
+  if (ly <= 1) r2 = ly;
+  else {
+    const maxR = t.height >= 9 ? 3 : 2;
+    const level = Math.min(maxR, (ly + 1) >> 1);
+    const wide = (t.height - 1 - ly) % 2 === 0; // the lowest ring is a wide one
+    const r = wide ? level : level - 1;
+    r2 = Math.max(1, r * r + r);
+  }
+  if (d2 > r2) return AIR;
+  if (d2 === r2 && d2 > 1 && rand(x, y, z, 44) < 0.35) return AIR;
+  return PINE_LEAVES;
+}
+
+function smallBlock(t, x, y, z) {
+  if (t.kind === OAK) return oakBlock(t, x, y, z);
+  if (t.kind === PINE) return pineBlock(t, x, y, z);
+  return x === t.x && z === t.z && y > t.base && y <= t.base + t.height ? CACTUS : AIR;
+}
+
+// Giant trees grow only in the dark forest: at most one in each 8 x 8 cell (the grid wraps), a 2 x 2 trunk of dark
+// wood 14-22 tall under a wide, flat crown of dark leaves, with a few branches.
+const GCELL = 8, GCELLS = WORLD / GCELL;
+const GIANT_CHANCE = 0.42;
+const GIANT_REACH_LO = 6, GIANT_REACH_HI = 7; // its crown spans x - 6 .. x + 7 (the trunk is x, x + 1)
+const giantCache = new Map();
+function giantIn(i, j) {
+  const k = i * 4096 + j;
+  let t = giantCache.get(k);
+  if (t === undefined) {
+    if (giantCache.size > 16384) giantCache.clear();
+    giantCache.set(k, (t = findGiant(i, j)));
+  }
+  return t;
+}
+function findGiant(i, j) {
+  const r = hash(i, j, 0, 51);
+  const x = i * GCELL + 2 + (r % 5), z = j * GCELL + 2 + ((r >>> 3) % 5); // the trunk stays in its cell (2..7)
+  if (rand(i, j, 0, 52) > GIANT_CHANCE) return null;
+  const d = townDist(x, z);
+  if (d < DARK_MIN || climate(x, z, d) !== DARK_FOREST) return null;
+  const col = columnAt(x, z);
+  if (col.biome !== DARK_FOREST || terrainBlock(x, col.h, z, col) !== GRASS) return null;
+  const height = 14 + ((r >>> 6) % 9);
+  const base = col.h;
+  // Branches: up to four, one per side, from just under the crown.
+  return { kind: GIANT, x, z, base, height, wide: 5 + ((r >>> 10) & 1), branches: (r >>> 12) & 15, lo: base - 6, top: base + height + 2 };
+}
+
+function giantBlock(t, x, y, z) {
+  const ix = x - t.x, iz = z - t.z;
+  const ly = y - t.base - t.height; // 0 at the top of the trunk
+  if (ix >= 0 && ix <= 1 && iz >= 0 && iz <= 1) return ly <= 0 && y >= t.lo ? DARK_LOG : ly <= 2 ? DARK_LEAVES : AIR;
+  if (ly < -4 || ly > 2) return AIR;
+  // Branches reach out three blocks from the trunk, two or three below its top.
+  if (ly === -3 || ly === -2) {
+    const b = t.branches;
+    const side = ly === -3 ? 0 : 1; // alternate sides at alternate heights
+    if ((b & 1) && side === 0 && ix >= 2 && ix <= 4 && iz === 0) return DARK_LOG;
+    if ((b & 2) && side === 0 && ix <= -1 && ix >= -3 && iz === 1) return DARK_LOG;
+    if ((b & 4) && side === 1 && iz >= 2 && iz <= 4 && ix === 1) return DARK_LOG;
+    if ((b & 8) && side === 1 && iz <= -1 && iz >= -3 && ix === 0) return DARK_LOG;
+  }
+  if (ly < -3) return AIR;
+  // The crown, in half blocks from the trunk's middle (so the sums stay whole numbers).
+  const ex = 2 * ix - 1, ez = 2 * iz - 1, d2 = ex * ex + ez * ez;
+  const w = t.wide;
+  const R = ly === 2 ? 5 : ly === 1 ? 2 * w - 3 : ly >= -1 ? 2 * w + 1 : ly === -2 ? 2 * w - 1 : 2 * w - 5;
+  if (d2 > R * R) return AIR;
+  if (d2 > (R - 2) * (R - 2) && rand(x, y, z, 53) < 0.4) return AIR; // a ragged edge
+  return DARK_LEAVES;
+}
+
+const treeBlock = (t, x, y, z) => (t.kind === GIANT ? giantBlock(t, x, y, z) : smallBlock(t, x, y, z));
+/// The lowest block tree `t` can put in column (x, z) (only its trunk goes all the way down).
+function treeBottom(t, x, z) {
+  if (t.kind === GIANT) return x - t.x >= 0 && x - t.x <= 1 && z - t.z >= 0 && z - t.z <= 1 ? t.lo : t.base + t.height - 3;
+  if (x === t.x && z === t.z) return t.lo;
+  return t.kind === OAK ? t.base + t.height - 2 : t.base + 2;
+}
+const reachLo = (t) => (t.kind === GIANT ? GIANT_REACH_LO : t.kind === CACTUS_PLANT ? 0 : t.kind === OAK ? 2 : SMALL_REACH);
+const reachHi = (t) => (t.kind === GIANT ? GIANT_REACH_HI : t.kind === CACTUS_PLANT ? 0 : t.kind === OAK ? 2 : SMALL_REACH);
+
+/// Trees that could reach the box [x0, x1] x [z0, z1]: the giants first, then the small ones, each in cell order (the
+/// order decides overlaps, so it must be the same for a whole chunk and for a single block).
+/// Trees that could reach the box [x0, x1] x [z0, z1]: the giants first, then the small ones, each in cell order (the
+/// order decides overlaps, so it must be the same for a whole chunk and for a single block). Cells past the seam are
+/// the ones from the other side, moved over (wrappedCell), so a box at the edge sees the trees across it.
+function treesNear(x0, z0, x1, z1) {
   const out = [];
-  for (let i = Math.floor((x0 - 5) / CELL); i <= Math.floor((x1 + 2) / CELL); i++) {
-    for (let j = Math.floor((z0 - 5) / CELL); j <= Math.floor((z1 + 2) / CELL); j++) {
-      const t = plantIn(i, j);
-      if (t && t.x >= x0 - 2 && t.x <= x1 + 2 && t.z >= z0 - 2 && t.z <= z1 + 2) out.push(t);
+  for (let i = Math.floor((x0 - GIANT_REACH_HI - 7) / GCELL); i <= Math.floor((x1 + GIANT_REACH_LO - 2) / GCELL); i++) {
+    for (let j = Math.floor((z0 - GIANT_REACH_HI - 7) / GCELL); j <= Math.floor((z1 + GIANT_REACH_LO - 2) / GCELL); j++) {
+      const t = wrappedCell(giantIn, GCELLS, GCELL, i, j);
+      if (t && t.x + GIANT_REACH_HI >= x0 && t.x - GIANT_REACH_LO <= x1 && t.z + GIANT_REACH_HI >= z0 && t.z - GIANT_REACH_LO <= z1) out.push(t);
+    }
+  }
+  for (let i = Math.floor((x0 - SMALL_REACH - 2) / CELL); i <= Math.floor((x1 + SMALL_REACH) / CELL); i++) {
+    for (let j = Math.floor((z0 - SMALL_REACH - 2) / CELL); j <= Math.floor((z1 + SMALL_REACH) / CELL); j++) {
+      const t = wrappedCell(treeIn, CELLS, CELL, i, j);
+      if (t && t.x + reachHi(t) >= x0 && t.x - reachLo(t) <= x1 && t.z + reachHi(t) >= z0 && t.z - reachLo(t) <= z1) out.push(t);
     }
   }
   return out;
 }
 
-/// Trunks win over leaves wherever two trees overlap; plants only grow into open air above the ground.
-function plantAt(plants, x, y, z) {
-  let leaves = false;
-  for (const t of plants) {
-    const b = plantBlock(t, x, y, z);
-    if (b === LOG || b === CACTUS) return b;
-    if (b === LEAVES) leaves = true;
+/// Where trees overlap, the first trunk (in treesNear's order) wins, and otherwise the last leaves.
+function treeAt(trees, x, y, z) {
+  let leaves = AIR;
+  for (const t of trees) {
+    if (y > t.top || y < t.lo) continue;
+    const b = treeBlock(t, x, y, z);
+    if (b === AIR) continue;
+    if (TRUNK[b]) return b;
+    leaves = b;
   }
-  return leaves ? LEAVES : AIR;
+  return leaves;
+}
+
+// Plants on the ground: grass tufts, flowers, ferns, mushrooms and berry bushes, by biome. Each row is the chance of
+// each kind on a grassy spot (a flower's colour is picked separately).
+const FLOWER = -1;
+const GROUND = [];
+GROUND[MEADOW] = [[FLOWER, 0.2], [TALL_GRASS, 0.26], [BERRY_BUSH, 0.008]];
+GROUND[PLAINS] = [[TALL_GRASS, 0.3], [FLOWER, 0.03], [BERRY_BUSH, 0.006]];
+GROUND[FOREST] = [[TALL_GRASS, 0.14], [FERN, 0.07], [FLOWER, 0.015], [RED_MUSHROOM, 0.01], [BROWN_MUSHROOM, 0.012], [BERRY_BUSH, 0.01]];
+GROUND[DARK_FOREST] = [[FERN, 0.1], [TALL_GRASS, 0.05], [RED_MUSHROOM, 0.025], [BROWN_MUSHROOM, 0.035]];
+GROUND[TAIGA] = [[FERN, 0.14], [TALL_GRASS, 0.08], [BERRY_BUSH, 0.025], [BROWN_MUSHROOM, 0.01]];
+const GROUND_ALL = GROUND.map((row) => row && row.reduce((t, [, p]) => t + p, 0));
+
+/// What grows on the ground at (x, z) (on top of column `col`, at col.h + 1), if anything.
+function groundPlant(x, z, col) {
+  const { h, biome } = col;
+  if (h <= SEA + 1 || col.d < TOWN_FLAT + 4) return AIR;
+  const p = rand(x, 0, z, 71);
+  if (biome === DESERT) return p < 0.012 && terrainBlock(x, h, z, col) === SAND ? DRY_SHRUB : AIR;
+  const row = GROUND[biome];
+  if (!row || p >= GROUND_ALL[biome] || terrainBlock(x, h, z, col) !== GRASS) return AIR;
+  let sum = 0;
+  for (const [kind, chance] of row) {
+    sum += chance;
+    if (p >= sum) continue;
+    if (kind !== FLOWER) return kind;
+    // Flowers grow in patches of one colour, with a few strays.
+    const q = rand(x, 1, z, 72);
+    if (q < 0.15) return q < 0.05 ? FLOWER_RED : q < 0.1 ? FLOWER_BLUE : FLOWER_YELLOW;
+    const n = noise2(x, z, FLOWER_CELLS, 73);
+    return n < -0.12 ? FLOWER_RED : n > 0.14 ? FLOWER_BLUE : FLOWER_YELLOW;
+  }
+  return AIR;
 }
 
 // ---------------------------------------------------------------- the town
-
-export const TOWN_R = 20;
-/// The Mining Office: walls from OFFICE.x0..x1, z0..z1 (relative to the town centre), door on the south side.
-export const OFFICE = { x0: -6, x1: 6, z0: -14, z1: -6, door: 0 };
-
-/// The town's block at (x, y, z), or -1 outside it. The ground under the town is solid: no caves, no ores.
-export function townBlock(x, y, z) {
-  const dx = x - TOWN.x, dz = z - TOWN.z;
-  if (dx * dx + dz * dz > TOWN_R * TOWN_R) return -1;
-  const Y = TOWN.y, ry = y - Y;
-  if (y === 0) return BEDROCK;
-  if (ry < -3) return STONE;
-  if (ry < 0) return DIRT;
-  const o = OFFICE;
-  const inOffice = dx >= o.x0 && dx <= o.x1 && dz >= o.z0 && dz <= o.z1;
-  if (ry === 0) {
-    if (inOffice) return PLANKS;
-    const ring = dx * dx + dz * dz;
-    if (Math.abs(dx) <= 1 || Math.abs(dz) <= 1 || (ring >= 81 && ring <= 132)) return BRICKS;
-    return GRASS;
-  }
-  // The fountain in the middle.
-  if (Math.abs(dx) <= 2 && Math.abs(dz) <= 2) {
-    const rim = Math.abs(dx) === 2 || Math.abs(dz) === 2;
-    if (ry === 1) return rim ? BRICKS : WATER;
-    if (ry === 2 && dx === 0 && dz === 0) return LAMP;
-    return AIR;
-  }
-  // Lamp posts.
-  if (Math.abs(dx) === 7 && Math.abs(dz) === 7 && dz > 0) return ry <= 2 ? LOG : ry === 3 ? LAMP : AIR;
-  if (Math.abs(dx) === 12 && dz === 0) return ry <= 2 ? LOG : ry === 3 ? LAMP : AIR;
-  // The Mining Office.
-  const cz = (o.z0 + o.z1) / 2;
-  if (ry >= 5) {
-    const k = ry - 5;
-    const half = (o.z1 - o.z0) / 2 + 1 - k;
-    if (half >= 0 && Math.abs(dz - cz) <= half && dx >= o.x0 - 1 && dx <= o.x1 + 1) {
-      return Math.abs(dz - cz) >= half - 0.5 || dx === o.x0 - 1 || dx === o.x1 + 1 ? ROOF : PLANKS;
-    }
-    return AIR;
-  }
-  if (!inOffice) return AIR;
-  const wallX = dx === o.x0 || dx === o.x1, wallZ = dz === o.z0 || dz === o.z1;
-  if (!wallX && !wallZ) return ry === 4 && dx === 0 && dz === Math.round(cz) ? LAMP : AIR;
-  if (wallX && wallZ) return LOG;
-  if (dz === o.z1 && Math.abs(dx - o.door) <= 1 && ry <= 3) return AIR; // the door
-  if (ry === 4) return LOG;
-  if ((ry === 2 || ry === 3) && (wallZ ? Math.abs(dx) % 3 === 1 : Math.abs(dz - cz) <= 1)) return GLASS;
-  return PLANKS;
-}
+// The town (its buildings, roads and how far the land is flattened round it) lives in town.js.
+export { TOWN_R, OFFICE, townBlock } from "./town.js";
 
 // ---------------------------------------------------------------- the world
 
 /// What was at (x, y, z) when the world was made. The room uses this for single blocks.
 export function naturalBlock(x, y, z) {
-  if (!inWorld(x, z) || y < 0 || y >= HEIGHT) return AIR;
+  if (y < 0 || y >= HEIGHT) return AIR;
+  x = wrap(x);
+  z = wrap(z);
   const t = townBlock(x, y, z);
   if (t >= 0) return t;
-  const col = column(x, z);
+  const col = columnAt(x, z);
   const b = terrainBlock(x, y, z, col);
   if (b !== AIR || y <= col.h) return b;
-  return plantAt(plantsNear(x, z, x, z), x, y, z);
+  const tree = treeAt(treesNear(x, z, x, z), x, y, z);
+  if (tree !== AIR) return tree;
+  return y === col.h + 1 ? groundPlant(x, z, col) : AIR;
 }
 
 export const index = (lx, y, lz) => (y << 8) | (lz << 4) | lx;
 
-/// A whole chunk (16 x 128 x 16), the same blocks naturalBlock gives one by one.
+/// A whole chunk (16 x 128 x 16), the same blocks naturalBlock gives one by one. (cx, cz) wrap: chunk -1 is chunk
+/// CHUNKS - 1.
 export function generateChunk(cx, cz) {
+  cx = mod(cx, CHUNKS);
+  cz = mod(cz, CHUNKS);
   const out = new Uint8Array(CHUNK * CHUNK * HEIGHT);
   const x0 = cx * CHUNK, z0 = cz * CHUNK;
   const cols = [];
   for (let lz = 0; lz < CHUNK; lz++) {
     for (let lx = 0; lx < CHUNK; lx++) {
       const x = x0 + lx, z = z0 + lz;
-      if (!inWorld(x, z)) continue;
-      const tdx = x - TOWN.x, tdz = z - TOWN.z;
+      const tdx = wrapDelta(x - TOWN.x), tdz = wrapDelta(z - TOWN.z);
       if (tdx * tdx + tdz * tdz <= TOWN_R * TOWN_R) {
         for (let y = 0; y < HEIGHT; y++) out[index(lx, y, lz)] = townBlock(x, y, z);
         continue;
@@ -292,21 +488,32 @@ export function generateChunk(cx, cz) {
       for (let y = 0; y <= top; y++) out[index(lx, y, lz)] = terrainBlock(x, y, z, col);
     }
   }
-  const plants = plantsNear(x0, z0, x0 + CHUNK - 1, z0 + CHUNK - 1);
-  for (const t of plants) {
-    for (let x = t.x - 2; x <= t.x + 2; x++) {
-      for (let z = t.z - 2; z <= t.z + 2; z++) {
+  // Trees, in treesNear's order: a trunk stays where it's put, leaves give way to later leaves (as treeAt decides).
+  for (const t of treesNear(x0, z0, x0 + CHUNK - 1, z0 + CHUNK - 1)) {
+    const ax = Math.max(x0, t.x - reachLo(t)), bx = Math.min(x0 + CHUNK - 1, t.x + reachHi(t));
+    const az = Math.max(z0, t.z - reachLo(t)), bz = Math.min(z0 + CHUNK - 1, t.z + reachHi(t));
+    for (let x = ax; x <= bx; x++) {
+      for (let z = az; z <= bz; z++) {
         const lx = x - x0, lz = z - z0;
-        if (lx < 0 || lz < 0 || lx >= CHUNK || lz >= CHUNK) continue;
         const col = cols[lz * CHUNK + lx];
-        if (!col) continue; // the town, or outside the world
-        for (let y = Math.max(col.h, SEA) + 1; y <= t.base + t.height + 1 && y < HEIGHT; y++) {
+        if (!col) continue; // the town
+        const y1 = Math.min(t.top, HEIGHT - 1);
+        for (let y = Math.max(Math.max(col.h, SEA) + 1, treeBottom(t, x, z)); y <= y1; y++) {
           const i = index(lx, y, lz);
-          if (out[i] === LOG || out[i] === CACTUS) continue;
-          const b = plantBlock(t, x, y, z);
+          if (TRUNK[out[i]]) continue;
+          const b = treeBlock(t, x, y, z);
           if (b !== AIR) out[i] = b;
         }
       }
+    }
+  }
+  // Then the plants on the ground, wherever a tree left room.
+  for (let lz = 0; lz < CHUNK; lz++) {
+    for (let lx = 0; lx < CHUNK; lx++) {
+      const col = cols[lz * CHUNK + lx];
+      if (!col || col.h + 1 >= HEIGHT) continue;
+      const i = index(lx, col.h + 1, lz);
+      if (out[i] === AIR) out[i] = groundPlant(x0 + lx, z0 + lz, col);
     }
   }
   return out;

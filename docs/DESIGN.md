@@ -14,8 +14,8 @@ $STAMP hook for the 4% fee, the audited enforced-royalty NFT pattern, and server
 | 50% to mine | 500,000,000 $MINE held by `MiningSites`, paid out only to players for what they earn in the game. Nobody (not the owner) can withdraw it any other way |
 | 4% trading fee | Every swap pays 4% of its IMD side to `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` (the fee recipient). Plain transfers are never taxed |
 | Mining site | Opened once per wallet with ETH (0.005 ETH at launch, owner-settable, never zero), paid straight to the treasury. Needed to convert earnings to $MINE. Not transferable |
-| NFT | "MineWorldCraft Miners": 999 cosmetic miner outfits (16 designs), blind mint for ETH (0.004 at launch) to the treasury, commit-reveal. 5% royalty, enforced (ERC721-C, OpenSea's registry), rate fixed. Owner can update the collection's website and social links shown on OpenSea at any time |
-| Treasury | Site sales, NFT mints and the NFT royalty. Defaults to the fee recipient `0x6e85…70eD`; separate setting |
+| NFT | "MineWorld Crafters": 3,333 characters from the user's own pixel-art designs, drawn and stored fully on-chain (the contract builds each SVG from the trait layers in `web/crafters-art.js`). Free mint (gas only; price owner-settable), per-wallet limit, commit-reveal. No two alike: hair x outfit x eyes x gaze is a different one of 6,912 combinations for every token; background, skin, hat and blush are weighted. The Crafter a player wears is how their miner looks in the game (cosmetic only). 5% royalty, enforced (ERC721-C, OpenSea's registry), rate fixed. Owner can update the collection's website and social links shown on OpenSea at any time |
+| Treasury | Site sales, any NFT mint price and the NFT royalty. Defaults to the fee recipient `0x6e85…70eD`; separate setting |
 
 No auto yield farming: nothing pays for holding or waiting. $MINE is only paid for things players do in the game.
 
@@ -52,8 +52,10 @@ No auto yield farming: nothing pays for holding or waiting. $MINE is only paid f
 
 ## Shared world (multiplayer/)
 
-One Durable Object holds the world: 1024 x 1024 blocks (chunks of 16 x 16 x 128), a world border, a protected town
-at the centre. The terrain comes from a seed (`web/worldgen.js`, identical in the browser and the Worker); the room
+One Durable Object holds the world: a small planet, 512 x 512 blocks (chunks of 16 x 16 x 128) that wrap round in x
+and z (no border: walk past 511 and you're back at 0; every distance is measured the short way round), with a
+protected town at the centre. The game draws it curved, as a sphere 512 blocks round (`web/planet.js`); the rules
+and physics stay flat. The terrain comes from a seed (`web/worldgen.js`, identical in the browser and the Worker); the room
 stores only edits, per chunk, flushed in batches (free-plan write budget). Positions are sent ~2 a second while
 moving and relayed to nearby players. Monsters are spawned by the room for each player (at night, or underground)
 and simulated by that player's game; hits are checked by the room. Free plan only: keep messages down.

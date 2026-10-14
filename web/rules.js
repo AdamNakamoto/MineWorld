@@ -1,24 +1,34 @@
 // The world's rules, shared by the game and the multiplayer room: its size, the protected town, reach, the day,
 // and the monsters. The room checks every break and every hit against these, so a modified game can't earn more
 // than an honest one.
+//
+// The world is a small planet: x and z wrap round (walk past 511 and you're back at 0), so every distance and every
+// block lookup goes through wrap / wrapDelta. The game draws it curved (planet.js); the rules are flat.
 
-export const WORLD = 1024; // blocks along each side (x and z run 0..1023)
+export const WORLD = 512; // blocks along each side (x and z run 0..511, then round again)
 export const CHUNK = 16;
 export const HEIGHT = 128;
 export const SEA = 48;
-export const TOWN = { x: 512, z: 512, y: 58 };
+export const TOWN = { x: 256, z: 256, y: 58 };
 /// Nobody breaks or places blocks this close to the town's centre (the spawn, the Mining Office).
-export const PROTECT_R = 24;
-export const SPAWN = { x: 512.5, y: TOWN.y + 1, z: 519.5 };
+export const PROTECT_R = 64;
+export const SPAWN = { x: TOWN.x + 0.5, y: TOWN.y + 1, z: TOWN.z + 7.5 };
 
 export const REACH = 5; // blocks, in the game
 export const ROOM_REACH = 7.5; // what the room allows: reach plus room for the latency between position updates
 export const ATTACK_MS = 500; // a sword swing
 export const ROOM_ATTACK_MS = 380;
 
+/// Whether (x, z) is written the one way it's stored: 0 <= x, z < WORLD (wrap first to get there).
 export const inWorld = (x, z) => x >= 0 && z >= 0 && x < WORLD && z < WORLD;
+/// A coordinate brought round into [0, WORLD) (whole numbers stay whole).
+export const wrap = (v) => ((v % WORLD) + WORLD) % WORLD;
+/// The shortest way from one coordinate to another round the planet: a difference brought into [-WORLD/2, WORLD/2).
+export const wrapDelta = (d) => d - WORLD * Math.floor(d / WORLD + 0.5);
+/// The flat distance from (ax, az) to (bx, bz) the short way round.
+export const wrapDist = (ax, az, bx, bz) => Math.hypot(wrapDelta(ax - bx), wrapDelta(az - bz));
 export function protectedAt(x, z) {
-  const dx = x + 0.5 - TOWN.x, dz = z + 0.5 - TOWN.z;
+  const dx = wrapDelta(x + 0.5 - TOWN.x), dz = wrapDelta(z + 0.5 - TOWN.z);
   return dx * dx + dz * dz < PROTECT_R * PROTECT_R;
 }
 

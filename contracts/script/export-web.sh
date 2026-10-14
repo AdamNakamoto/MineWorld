@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Write web/deployments/robinhood.json: Robinhood Chain's details, the addresses the site needs and the contract
 # ABIs. Commit it and the host serves it. After the launch it holds $MINE, MiningSites, the hook and its routers; the
-# Miners join once deployed (either can come first).
+# Crafters join once deployed (either can come first).
 #   ./script/export-web.sh
 # RPC_URL picks the RPC used to check there's a contract behind each address (default: foundry.toml's "robinhood").
 set -euo pipefail
@@ -9,10 +9,10 @@ cd "$(dirname "$0")/.."
 export PATH="$HOME/.foundry/bin:$PATH"
 
 GAME=deployments/robinhood.json
-MINERS=deployments/robinhood-miners.json
+CRAFTERS=deployments/robinhood-crafters.json
 OUT=../web/deployments/robinhood.json
 RPC="${RPC_URL:-robinhood}"
-[ -f "$GAME" ] || [ -f "$MINERS" ] || { echo "Nothing deployed yet: run deploy-mainnet.sh launch (or miners) --broadcast first." >&2; exit 1; }
+[ -f "$GAME" ] || [ -f "$CRAFTERS" ] || { echo "Nothing deployed yet: run deploy-mainnet.sh launch (or crafters) --broadcast first." >&2; exit 1; }
 forge build >/dev/null
 mkdir -p "$(dirname "$OUT")"
 
@@ -56,10 +56,10 @@ if [ -f "$GAME" ]; then
      | .abis += {mine: $mineAbi, sites: $sitesAbi, hook: $hookAbi, router: $routerAbi, ethRouter: $ethRouterAbi}')
 fi
 
-if [ -f "$MINERS" ]; then
-  check "$(jq -r .miners "$MINERS")" miners
-  json=$(echo "$json" | jq --slurpfile m "$MINERS" --argjson minersAbi "$(abi MineWorldMiners)" \
-    '.contracts.miners = $m[0].miners | .minersBlock = $m[0].block | .abis.miners = $minersAbi')
+if [ -f "$CRAFTERS" ]; then
+  check "$(jq -r .crafters "$CRAFTERS")" crafters
+  json=$(echo "$json" | jq --slurpfile m "$CRAFTERS" --argjson craftersAbi "$(abi MineWorldCrafters)" \
+    '.contracts.crafters = $m[0].crafters | .craftersBlock = $m[0].block | .abis.crafters = $craftersAbi')
 fi
 
 echo "$json" > "$OUT"

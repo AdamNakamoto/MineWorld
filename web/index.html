@@ -8,7 +8,7 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -26,7 +26,11 @@
   <div id="hud" hidden>
     <div id="cross" class="cross" aria-hidden="true"></div>
     <div class="topleft">
-      <div class="card earn" title="$MINE earned (the room's ledger)">
+      <div class="bar">
+        <button id="menuBtn" class="btn hud-btn icon" title="Menu (Esc)" aria-label="Menu">≡</button>
+        <button id="voiceBtn" class="btn hud-btn" title="Voice chat with players near you"><kbd>B</kbd> Voice chat</button>
+      </div>
+      <div class="card earn" title="$MINE earned (the world server's ledger)">
         <div><span class="coin" aria-hidden="true"></span><b id="earnToday">0</b> <span class="muted">today</span></div>
         <div class="small muted"><span id="earnWho">Guest: sign in to earn</span></div>
       </div>
@@ -34,30 +38,29 @@
     </div>
     <div class="topright">
       <span id="onlineN" class="card small" hidden></span>
-      <button id="siteBtn" class="btn hud-btn" title="Mining Site (M)">⛏ Mining Site <kbd>M</kbd></button>
-      <button id="invBtn" class="btn hud-btn" title="Inventory and crafting (E)">🎒 <kbd>E</kbd></button>
-      <button id="soundBtn" class="btn hud-btn icon" title="Sound">🔊</button>
-      <button id="setBtn" class="btn hud-btn icon" title="Settings">⚙︎</button>
+      <button id="siteBtn" class="btn hud-btn" title="Mining Site (M)"><kbd>M</kbd> Mining Site</button>
+      <button id="invBtn" class="btn hud-btn" title="Inventory and crafting (E)"><kbd>E</kbd> Inventory</button>
+      <button id="chatBtn" class="btn hud-btn" title="Chat (T)"><kbd>T</kbd> Chat</button>
+      <button id="viewBtn" class="btn hud-btn" title="See your miner (V)"><kbd>V</kbd> View</button>
     </div>
     <div id="toasts" class="toasts" aria-live="polite"></div>
     <div id="target" class="target-name" hidden></div>
+    <div id="eating" class="eating" hidden><div></div></div>
+    <div id="talk" class="talk card" hidden><b id="talkWho"></b><span id="talkLine"></span><small class="muted">Click again for more</small></div>
     <div class="bottom">
-      <div id="hearts" class="hearts" aria-label="Health"></div>
+      <div class="vitals">
+        <div id="hearts" class="hearts" aria-label="Health"></div>
+        <div id="food" class="food" aria-label="Food"></div>
+      </div>
       <div id="hotbar" class="hotbar"></div>
     </div>
     <div id="chat" class="chat">
       <div id="chatLog" class="chat-log" aria-live="polite"></div>
       <form id="chatForm" class="chat-form" hidden>
-        <input id="chatInput" maxlength="140" autocomplete="off" enterkeyhint="send" placeholder="Say something (no links)" aria-label="Chat message">
+        <input id="chatInput" maxlength="140" autocomplete="off" enterkeyhint="send" placeholder="Say something, or /help for commands" aria-label="Chat message">
       </form>
     </div>
-    <div id="help" class="help card small">Click to play · WASD move · Space jump · Shift sprint · Left click mine / attack · Right click place · 1–9 / wheel pick · E inventory · M Mining Site · Enter chat</div>
-    <div id="settings" class="card settings" hidden>
-      <h3>Settings</h3>
-      <label>View distance <input id="viewDist" type="range" min="3" max="10" step="1"> <span id="viewDistN"></span></label>
-      <label>Mouse speed <input id="mouseSpeed" type="range" min="0.3" max="2.5" step="0.1"></label>
-      <button class="btn" data-close>Done</button>
-    </div>
+    <div id="help" class="help card small">Click to play · WASD move · Space jump · Shift sprint · Left click mine / attack · Right click place or eat · 1–9 / wheel pick · E inventory · M Mining Site · V view · B voice · T chat · /help commands</div>
   </div>
 
   <div id="touch" class="touch" hidden>
@@ -65,6 +68,53 @@
     <button id="tJump" class="tbtn jump">⤒</button>
     <button id="tMine" class="tbtn mine">⛏</button>
     <button id="tPlace" class="tbtn place">▣</button>
+  </div>
+
+  <div id="notice" class="overlay notice" hidden>
+    <div class="sheet small-sheet">
+      <h2 class="gold-title">Spawn is protected</h2>
+      <p class="sub">Go exploring to mine and build</p>
+      <p class="muted">Mining and building are off within 64 blocks of spawn. Walk out, or use <b>/wild</b> to find a safe spot.</p>
+      <button id="noticeGo" class="btn wide">Go exploring (/wild)</button>
+      <button id="noticeStay" class="btn wide">Stay at spawn</button>
+    </div>
+  </div>
+
+  <div id="menu" class="overlay" hidden>
+    <div class="sheet menu-sheet">
+      <header><h2>Menu</h2><button class="x" data-close aria-label="Close">✕</button></header>
+      <button class="btn wide" data-close>Back to the game</button>
+      <section class="box">
+        <h3>Your name</h3>
+        <p class="note" id="nameNote">Sign in to earn (in the Mining Site panel) to pick a name: it shows instead of your wallet address.</p>
+        <form id="nameForm" class="row-form">
+          <input id="nameInput" maxlength="15" autocomplete="off" placeholder="3 to 15 letters, numbers or _" aria-label="Name">
+          <button class="btn" type="submit">Save</button>
+        </form>
+      </section>
+      <section class="box">
+        <h3>Voice chat</h3>
+        <p class="note">Talk with players close to you in the world (about 32 blocks). Off until you turn it on; your browser asks for the microphone.
+        Others' voices fade with distance. Mute anyone from their name in chat.</p>
+        <button id="voiceToggle" class="btn wide">Turn on voice chat</button>
+        <p class="note" id="voiceNote"></p>
+      </section>
+      <section class="box">
+        <h3>Settings</h3>
+        <label class="setting">View distance <input id="viewDist" type="range" min="3" max="15" step="1"> <span id="viewDistN"></span></label>
+        <label class="setting">Mouse speed <input id="mouseSpeed" type="range" min="0.3" max="2.5" step="0.1"></label>
+        <label class="setting"><input id="soundToggle" type="checkbox"> Sound effects</label>
+      </section>
+      <section class="box">
+        <h3>Controls</h3>
+        <p class="note">WASD move · Space jump · Shift sprint · mouse look · left click mine / attack · right click place, or hold to eat ·
+        1–9 or wheel pick · E inventory · M Mining Site · V view · B voice · T or Enter chat · Esc menu</p>
+      </section>
+      <section class="box">
+        <h3>Commands</h3>
+        <p class="note"><b>/wild</b> a safe random spot far from spawn · <b>/spawn</b> back to town · <b>/sethome</b> and <b>/home</b> · <b>/help</b></p>
+      </section>
+    </div>
   </div>
 
   <div id="inv" class="overlay" hidden>

@@ -1,15 +1,17 @@
 # MineWorldCraft
 
-A shared block world in the browser: mine, fight monsters, build, and earn **$MINE** on Robinhood Chain. Version one.
+A tiny round planet of blocks in the browser: mine, fight monsters, build, meet the villagers, and earn **$MINE** on
+Robinhood Chain.
 
 Everything is original: the code, the block textures (drawn pixel by pixel in `web/textures.js`), the creatures, the
-miner outfits and the town. No Minecraft code, textures, sounds or names are used, and the game says it isn't
+Crafters and the town. No Minecraft code, textures, sounds or names are used, and the game says it isn't
 affiliated with Mojang or Microsoft. Built on what worked in Courier World
 ([github.com/AdamNakamoto/courierworld](https://github.com/AdamNakamoto/courierworld)): plain HTML/JS with three.js,
 a Cloudflare Worker for the shared world, Foundry contracts reusing Courier's audited hook, NFT and voucher code.
 
-![The town and the Mining Office](docs/town.jpg)
-![Monsters in the forest](docs/monsters.jpg)
+![The planet](docs/planet-globe.jpg)
+![The town](docs/town-road.jpg)
+![The planet curving away from a mountain](docs/planet-mountain.jpg)
 
 ## Layout
 
@@ -25,8 +27,8 @@ a Cloudflare Worker for the shared world, Foundry contracts reusing Courier's au
 ./dev.sh
 ```
 
-Starts Anvil on port 8610, deploys $MINE, MiningSites and the Miners, gives the dev players (Anvil accounts 2-9) some
-$MINE and two revealed Miners each, writes `web/chain.json` and `multiplayer/.dev.vars`, and serves the site at
+Starts Anvil on port 8610, deploys $MINE, MiningSites and the Crafters, gives the dev players (Anvil accounts 2-9) some
+$MINE and two revealed Crafters each, writes `web/chain.json` and `multiplayer/.dev.vars`, and serves the site at
 http://localhost:5810. Then, once it prints "Game", start the local world server (it reads `.dev.vars` when it starts,
 so start it after `dev.sh`, and restart it whenever `dev.sh` restarts):
 
@@ -35,19 +37,59 @@ cd multiplayer && npm install && npx wrangler dev --port 8790
 ```
 
 On localhost the game joins the local server automatically (`web/config.js`); `?mp=` with nothing plays offline, and
-`?t=0.25` fixes the sky at noon (localhost only). `./dev.sh --fork` runs the full launch on a fork of Robinhood Chain
+`?t=0.25` fixes the time of day at noon (localhost only: the sky and the villagers' hours). `./dev.sh --fork` runs the full launch on a fork of Robinhood Chain
 (the real PoolManager, IMD and IMD/ETH pool), so the panel's trade box works with play money. `--wallet` logs in with
-your own browser wallet on a practice chain (chain ID 466400); `--sale` leaves the Miners mint open and sealed.
+your own browser wallet on a practice chain (chain ID 466400); `--sale` leaves the Crafters mint open and sealed. A fork
+reads Robinhood Chain's official RPC; where a network's DNS blocks that name (Anvil then reports a certificate error),
+run `python3 tools/rpc-relay.py` and fork through it: `FORK_URL=http://127.0.0.1:8611 ./dev.sh --fork`.
 
 ## How to play
 
-WASD to move, Space to jump, Shift to sprint, the mouse to look. Hold the left button to mine (or attack), right
-click to place the block in your hand, 1-9 or the wheel to pick, **E** for the inventory and crafting, **M** for the
-Mining Site panel, Enter to chat. Phones get a stick, look-by-drag, and mine / place / jump buttons.
+WASD to move, Space to jump, Shift to sprint, the mouse to look. Hold the left button to mine (or attack, or click a
+villager to talk), right click to place the block in your hand or hold it to eat, 1-9 or the wheel to pick, **E** the
+inventory and crafting, **M** the Mining Site panel, **V** to see your miner from outside, **B** voice chat, **T** or
+Enter to chat, **Esc** the menu (your name, voice, settings). Phones get a stick, look-by-drag, and mine / place / jump
+buttons. Chat commands: `/wild` (a safe random spot far from spawn), `/spawn`, `/sethome` and `/home`, `/help`.
 
 Punch a tree for logs, craft planks and sticks, then a wooden pickaxe; stone needs a pickaxe, iron ore a stone one,
 gold, diamonds and $MINE crystals an iron one. Monsters (Mudlings, Cave crawlers, Bone rattlers, Rock golems) come out
-at night and underground. The town in the middle is protected: nobody mines or builds there.
+at night and underground. Food keeps you going: the hunger bar drains as you move, mine and fight; apples drop from
+leaves, berries from bushes, and a red and a brown mushroom with a plank make stew. A full belly heals you, an empty one
+hurts, and you need food to sprint (`web/vitals.js`).
+
+## The planet
+
+The world is a tiny planet, as in Courier World: 512 blocks round in every direction, with no edge (walk any way and
+you come back where you started). The blocks stay square and physics stays flat, but everything is drawn bent round a
+sphere of radius 512 / 2π, about 81.5 blocks, as seen from the camera (`web/planet.js`; the chunks bend in their
+shader, everything else is placed each frame), so the horizon curves close by and mountains fall away behind it. The
+title screen shows the whole planet as a turning globe (`web/globe.js`, from a map the world worker draws). The terrain
+(`web/worldgen.js`) tiles seamlessly: plains, forests, flower meadows, dark forests of giant trees, pine taiga, deserts,
+snow, peaks, seas and beaches, caves and ores; `tools/check-worldgen.mjs` checks that the game and the server agree on
+every block, across the seams too. Chunks are generated and meshed in a Web Worker (`web/world-worker.js`); the view
+reaches up to 15 chunks.
+
+## The town and its villagers
+
+The town at the top of the planet (`web/town.js`) is protected: nobody mines or builds within 64 blocks of the
+fountain (the first try explains, and offers `/wild`). Stone main roads and gravel lanes, the plaza and the Mining
+Office, a bakery, smithy, library, trading post, two-storey tavern, barn, town hall, clock tower and watchtower,
+eleven houses, a flower garden, a pond, an orchard and gates. Fourteen villagers (`web/villagers.js`) live in the
+houses, work in the shops and walk the roads to the plaza, the garden and the pond, then go home at dusk; where each
+one is follows the clock alone, so every player sees them in the same place with nothing sent over the network. Click
+one to talk: they know the game.
+
+## Players
+
+Other players walk the planet with you, with name tags and the Crafter they wear. After signing in (Mining Site panel),
+pick a name in the menu: 3 to 15 letters, numbers or `_`, first come first served, changed at most once a day; reserved
+and offensive names are refused (`web/name-rules.js`, from Courier World; add one to `BANNED` to take it down). Chat
+lines (no links or wallet addresses) and who joined or left show in the chat box; clicking a name mutes that player.
+
+Voice chat (`web/voice.js`) is off until a player turns it on (B, or the menu). Players with voice on who stand within
+about 32 blocks talk directly, browser to browser (WebRTC); the world server only passes on the messages that set a
+connection up, and only between nearby players who both have voice on. Voices fade with distance. It uses public STUN
+servers only, so players behind strict networks may not connect until a TURN relay is added.
 
 ## The economy
 
@@ -58,7 +100,7 @@ at night and underground. The town in the middle is protected: nobody mines or b
 | Mining vault | 50% (500M) in `MiningSites`, paid out only for what players earn in the game |
 | Trading fee | Every swap pays 4% of its IMD side to `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` (taken by the pool's hook; the hook is renounced at launch, so only that wallet can ever move its own fee) |
 | Mining site | Opened once per wallet with ETH (0.005 at launch), paid to the treasury. Needed to convert earnings to $MINE |
-| Miners NFT | 999 cosmetic outfits in 16 designs, blind mint (0.004 ETH) to the treasury, revealed after the mint. 5% royalty, enforced |
+| Crafters NFT | 3,333 cosmetic pixel-art characters, drawn and stored entirely on chain, no two alike. Free blind mint (5 a transaction, 10 a wallet; the owner can set a price, paid straight to the treasury), revealed after the mint. 5% royalty, enforced |
 | No yield farming | Nothing pays for holding or waiting. $MINE comes only from playing |
 
 **Earning.** Signing in with a wallet (one free signature) makes the world server count that wallet's earnings:
@@ -83,14 +125,24 @@ leaked server key can take at most the daily caps until it's paused and replaced
 | `MineToken.sol` | $MINE: 500M to the hook (pool), 500M to MiningSites (vault) at deploy |
 | `MineHook.sol`, `MineRouter.sol`, `MineEthRouter.sol` | Courier's audited `StampHook` and routers for $MINE: one pool, locked launch liquidity, 4% fee on the IMD side, buy/sell with IMD or ETH. Differences from StampHook: launch supply up to 1B, lowest start tick -300,000 (as CourierPad), market cap over the fixed supply |
 | `MiningSites.sol` | Mining sites (ETH, once per wallet) and the vault's claims: EIP-712 vouchers from the world server, daily caps, pause. Ownable2Step, can't be renounced |
-| `MineWorldMiners.sol` | Courier Skins adapted: 999 Miners, commit-reveal, on-chain metadata with pictures under an owner-settable base, enforced 5% royalty (ERC721-C, OpenSea's registry). The owner can update the website and social links shown on OpenSea at any time (`setLinks`) |
+| `MineWorldCrafters.sol` | MineWorld Crafters (Courier Skins adapted): 3,333 Crafters, commit-reveal, traits from a keyed shuffle (each token a different hair, outfit, eyes and gaze) and weighted picks, fully on-chain metadata and pictures, enforced 5% royalty (ERC721-C, OpenSea's registry). The owner can update the website and social links (`setLinks`) and the collection's picture and banner (`setCollectionImages`) shown on OpenSea at any time |
+| `CrafterArt.sol` | The Crafters' pictures as 24 x 24 SVGs, generated from `web/crafters-art.js` and `web/crafters.js` by `tools/gen-crafter-art.mjs`; never edit it by hand |
 
 ```bash
 cd contracts
 forge test                                  # unit + invariant tests
 forge test --fork-url robinhood             # plus the fork tests against Robinhood Chain
 ./script/deploy-mainnet.sh launch           # dry run of the launch on a fork
-./script/deploy-mainnet.sh miners           # dry run of the Miners
+./script/deploy-mainnet.sh crafters         # dry run of the Crafters
+```
+
+The JS in `web/crafters-art.js` and `web/crafters.js` defines every Crafter. After changing either, regenerate the
+contract and its test vectors (no npm needed), then run the tests, which check the contract draws exactly what the JS
+draws and fail while the generated files are stale:
+
+```bash
+~/.local/node/bin/node tools/gen-crafter-art.mjs           # writes contracts/src/CrafterArt.sol, contracts/test/CrafterVectors.sol
+~/.local/node/bin/node tools/gen-crafter-art.mjs --check   # or only check they're up to date
 ```
 
 Settings are in `contracts/launch.env` (public values only). The real launch, after an audit:
@@ -99,13 +151,15 @@ Settings are in `contracts/launch.env` (public values only). The real launch, af
    `npx wrangler secret put MINING_KEY` in `multiplayer/`.
 2. `MINING_SIGNER=<that address> ./script/deploy-mainnet.sh launch --broadcast --browser --browser-disable-open`
    (sign at http://127.0.0.1:9545 with the wallet on Robinhood Chain; it becomes the owner of MiningSites).
-3. `./script/deploy-mainnet.sh miners --broadcast --browser --browser-disable-open` (the reveal secret goes to
-   `~/mineworldcraft-miners-reveal-secret.txt`, never printed; keep it safe). Then put the pictures
-   (`web/miners/`) at `MINERS_IMAGES`.
-4. Set `CHAIN_ID`, `CHAIN_RPC`, `MINING_ADDRESS` and `MINERS_ADDRESS` in `multiplayer/wrangler.toml`, deploy the
+3. `./script/deploy-mainnet.sh crafters --broadcast --browser --browser-disable-open` (the art, then the collection
+   with the sale closed; the reveal secret goes to `~/mineworldcraft-crafters-reveal-secret.txt`, never printed; keep
+   it safe). Open the mint with `setSaleOpen(true)`; after it, `setSaleOpen(false)`, wait for the next block, then
+   `reveal(secret)`.
+4. Set `CHAIN_ID`, `CHAIN_RPC`, `MINING_ADDRESS` and `CRAFTERS_ADDRESS` in `multiplayer/wrangler.toml`, deploy the
    Worker, put its address in `web/config.js` (`LIVE_ROOM`) and its domain in the Worker's `ORIGINS`, and publish the
    site with `web/deployments/robinhood.json` (written by `export-web.sh`).
-5. On OpenSea: set the collection's links (or call `setLinks`) and turn on creator earnings.
+5. On OpenSea: set the collection's links and pictures (or call `setLinks` and `setCollectionImages`) and turn on
+   creator earnings.
 
 ## The world server
 
@@ -114,8 +168,8 @@ cd multiplayer
 npx wrangler deploy
 ```
 
-One Durable Object holds the world: who's playing, every edit (per chunk), the monsters, chat and the $MINE ledger
-(16 shards). The terrain itself is never stored: both sides generate it from the same seed. Built for Cloudflare's
+One Durable Object holds the world: who's playing, every edit (per chunk), the monsters, chat, names, voice set-up
+messages and the $MINE ledger (16 shards). The terrain itself is never stored: both sides generate it from the same seed. Built for Cloudflare's
 free plan: hibernating WebSockets, pings answered without waking the room, positions sent only while moving, writes
 batched every 30 seconds (the free plan allows 100,000 requests and 100,000 written rows a day per account, shared by
 every Worker on it, so a separate Cloudflare account keeps Courier World's room unaffected).

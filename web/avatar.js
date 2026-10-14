@@ -1,44 +1,20 @@
-// A blocky miner for other players (and the NFT pictures, via portrait.js): head, body, arms and legs, dressed in
-// one of the outfits in miners.js, with a walk cycle and a swing.
+// A blocky miner in 3D, dressed as a MineWorld Crafter: the face on the front of the head is the Crafter's own
+// pixel art, the hair, hat and outfit follow its traits (crafters.js), with a walk cycle and a swing. Players without
+// a Crafter are the Rookie.
 
 import * as THREE from "https://esm.sh/three@0.160.0";
-import { designOf } from "./miners.js";
+import { pixels, HAIRS, HATS, OUTFITS, SKINS } from "./crafters.js";
 
 const PX = 1.8 / 32; // one "pixel" of the 32-pixel-tall figure, in metres
 
-function faceTexture(d) {
+/// The look of a player without a Crafter: brown bob, charcoal hoodie, no hat.
+export const ROOKIE = { hair: 9, outfit: 4, eyes: 0, gaze: 0, background: 0, skin: 1, hat: 0, blush: 0 };
+
+function canvasTexture(w, h, draw) {
   const c = document.createElement("canvas");
-  c.width = c.height = 8;
-  const g = c.getContext("2d");
-  const css = (n) => `#${n.toString(16).padStart(6, "0")}`;
-  g.fillStyle = css(d.skin);
-  g.fillRect(0, 0, 8, 8);
-  g.fillStyle = css(d.hair);
-  g.fillRect(0, 0, 8, 2);
-  g.fillRect(0, 2, 1, 1);
-  g.fillRect(7, 2, 1, 1);
-  if (d.hat?.type === "hood") {
-    g.fillStyle = css(d.hat.color);
-    g.fillRect(0, 0, 8, 3);
-    g.fillRect(0, 5, 8, 3);
-    g.fillRect(0, 0, 1, 8);
-    g.fillRect(7, 0, 1, 8);
-  }
-  g.fillStyle = "#ffffff";
-  g.fillRect(1, 3, 2, 1);
-  g.fillRect(5, 3, 2, 1);
-  g.fillStyle = d.eyes ? css(d.eyes) : "#2a2a44";
-  g.fillRect(2, 3, 1, 1);
-  g.fillRect(5, 3, 1, 1);
-  if (d.beard) {
-    g.fillStyle = css(d.beard);
-    g.fillRect(1, 5, 6, 3);
-    g.fillStyle = css(d.skin);
-    g.fillRect(3, 5, 2, 1);
-  } else if (d.hat?.type !== "hood") {
-    g.fillStyle = "#8a4a3a";
-    g.fillRect(3, 6, 2, 1);
-  }
+  c.width = w;
+  c.height = h;
+  draw(c.getContext("2d"));
   const t = new THREE.CanvasTexture(c);
   t.magFilter = THREE.NearestFilter;
   t.minFilter = THREE.NearestFilter;
@@ -50,79 +26,99 @@ function box(w, h, d, color, emissive) {
   return new THREE.Mesh(new THREE.BoxGeometry(w * PX, h * PX, d * PX), m);
 }
 
-function hat(d) {
-  const g = new THREE.Group();
-  const t = d.hat;
-  if (!t) return g;
-  const c = t.color;
-  const add = (w, h, dd, y, z = 0, color = c, x = 0) => { const m = box(w, h, dd, color); m.position.set(x * PX, y * PX, z * PX); g.add(m); return m; };
-  switch (t.type) {
-    case "hardhat": add(9, 2, 9, 4.6); add(10, 0.6, 11, 3.8, 0.6); add(2, 1.4, 1, 3.4, 4.6, d.accent ?? 0xffffaa).material.emissive = new THREE.Color(0x666633); break;
-    case "beanie": add(8.6, 3, 8.6, 3.4); add(2, 1.4, 2, 5.4, 0, d.accent ?? c); break;
-    case "straw": add(8.4, 2, 8.4, 4.4); add(13, 0.6, 13, 3.6); break;
-    case "safari": add(8.4, 2.4, 8.4, 4.4); add(11, 0.6, 11, 3.4); break;
-    case "helmet": add(8.8, 8.8, 8.8, 0.2).material.transparent = false; add(1, 3, 1, 5.6, 0, d.accent); break;
-    case "hood": add(8.6, 8.4, 8.6, 0.4, -0.3); break;
-    case "dome": { const m = add(10, 10, 10, 0.4); m.material.transparent = true; m.material.opacity = 0.35; break; }
-    case "brass": add(9.6, 9.6, 9.6, 0.2); add(5, 4, 1, 0.5, 4.9, 0x3ad8e8); break;
-    case "horns": add(1.4, 3, 1.4, 4.6, 0, c, 3); add(1.4, 3, 1.4, 4.6, 0, c, -3); break;
-    case "visor": add(8.8, 1.6, 1, 0.6, 4.4, c).material.emissive = new THREE.Color(c); break;
-    case "crown": for (const x of [-3, -1, 1, 3]) add(1.4, 2.4, 8.4, 5, 0, c, x).material.emissive = new THREE.Color(0x401060); add(8.4, 1, 8.4, 4.2); break;
-  }
-  return g;
-}
+/// `traits`: a Crafter's traits (from the chain, via the world server), or null for the Rookie.
+export function createAvatar(traits) {
+  const t = traits ?? ROOKIE;
+  const px = pixels(t);
+  const bg = px[0];
+  const skin = SKINS[t.skin], hair = HAIRS[t.hair], hatDef = HATS[t.hat], outfit = OUTFITS[t.outfit];
+  const hc = hair.colors;
+  const hairMid = hc[3] ?? hc.m, hairDark = hc[2] ?? hc.f;
+  const at = (x, y) => px[y * 24 + x];
 
-/// A miner wearing outfit `design` (an index into MINERS, or null for the rookie look).
-export function createAvatar(design) {
-  const d = designOf(design);
+  // The face: the Crafter's own pixels, from the bangs down to the neck (10 x 10), the background filled with hair.
+  const face = canvasTexture(10, 10, (g) => {
+    for (let y = 0; y < 10; y++) for (let x = 0; x < 10; x++) {
+      const c = at(x + 8, y + 8);
+      g.fillStyle = c === bg ? hairDark : c;
+      g.fillRect(x, y, 1, 1);
+    }
+  });
+  // The front of the body: the outfit's own pixels (rows 19-23), its last row carried on down.
+  const shirt = canvasTexture(8, 12, (g) => {
+    for (let y = 0; y < 12; y++) for (let x = 0; x < 8; x++) {
+      const c = at(x + 8, Math.min(23, y + 19));
+      g.fillStyle = c === bg ? outfit.colors[3] : c;
+      g.fillRect(x, y, 1, 1);
+    }
+  });
+  const main = outfit.colors[3];
+  const sleeve = at(6, 21) === bg ? main : at(6, 21);
+  const pants = outfit.mask === "overalls" || outfit.mask === "suit" ? main : "#2a3046";
+
   const root = new THREE.Group();
   const body = new THREE.Group();
   root.add(body);
-  const glow = d.glow ?? null;
-  // Legs (pivot at the hip), body, arms (pivot at the shoulder), head (pivot at the neck).
   const legs = [-2, 2].map((x) => {
     const pivot = new THREE.Group();
     pivot.position.set(x * PX, 12 * PX, 0);
-    const leg = box(4, 12, 4, d.pants);
+    const leg = box(4, 12, 4, pants);
     leg.position.y = -6 * PX;
-    const shoe = box(4.2, 2.4, 4.4, d.shoes, glow && d.shoes === 0xff5a1a ? 0x802000 : 0);
+    const shoe = box(4.2, 2.4, 4.4, "#2a1e16");
     shoe.position.set(0, -10.9 * PX, 0.2 * PX);
     pivot.add(leg, shoe);
     body.add(pivot);
     return pivot;
   });
-  const torso = box(8, 12, 4, d.shirt);
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(8 * PX, 12 * PX, 4 * PX), [
+    new THREE.MeshLambertMaterial({ color: main }), new THREE.MeshLambertMaterial({ color: main }),
+    new THREE.MeshLambertMaterial({ color: main }), new THREE.MeshLambertMaterial({ color: main }),
+    new THREE.MeshLambertMaterial({ map: shirt }), new THREE.MeshLambertMaterial({ color: main }),
+  ]);
   torso.position.y = 18 * PX;
-  const belt = box(8.2, 1.4, 4.2, d.accent ?? d.pants, glow ? new THREE.Color(glow).multiplyScalar(0.5) : 0);
-  belt.position.y = 12.8 * PX;
-  body.add(torso, belt);
+  body.add(torso);
   const arms = [-6, 6].map((x) => {
     const pivot = new THREE.Group();
     pivot.position.set(x * PX, 23 * PX, 0);
-    const arm = box(4, 12, 4, d.shirt);
+    const arm = box(4, 12, 4, sleeve);
     arm.position.y = -5 * PX;
-    const hand = box(4.1, 2.5, 4.1, d.skin);
+    const hand = box(4.1, 2.5, 4.1, skin.S);
     hand.position.y = -10 * PX;
     pivot.add(arm, hand);
     body.add(pivot);
     return pivot;
   });
+
   const head = new THREE.Group();
   head.position.y = 24 * PX;
-  // Box faces: +x, -x, +y, -y, +z (front), -z. The face goes on +z.
+  // Box faces: +x, -x, +y, -y, +z (front), -z. The Crafter's face goes on +z.
   const skull = new THREE.Mesh(new THREE.BoxGeometry(8 * PX, 8 * PX, 8 * PX), [
-    new THREE.MeshLambertMaterial({ color: d.hair }), new THREE.MeshLambertMaterial({ color: d.hair }),
-    new THREE.MeshLambertMaterial({ color: d.hair }), new THREE.MeshLambertMaterial({ color: d.skin }),
-    new THREE.MeshLambertMaterial({ map: faceTexture(d) }), new THREE.MeshLambertMaterial({ color: d.hair }),
+    new THREE.MeshLambertMaterial({ color: hairMid }), new THREE.MeshLambertMaterial({ color: hairMid }),
+    new THREE.MeshLambertMaterial({ color: hairMid }), new THREE.MeshLambertMaterial({ color: skin.S }),
+    new THREE.MeshLambertMaterial({ map: face }), new THREE.MeshLambertMaterial({ color: hairMid }),
   ]);
   skull.position.y = 4 * PX;
-  head.add(skull, hat(d));
-  head.children[1].position.y = 4 * PX;
+  head.add(skull);
   body.add(head);
-  if (glow) {
-    const light = new THREE.PointLight(glow, 0.6, 4);
-    light.position.y = 1.2;
-    root.add(light);
+  const add = (w, h, d, color, x, y, z, emissive) => {
+    const m = box(w, h, d, color, emissive);
+    m.position.set(x * PX, y * PX, z * PX);
+    head.add(m);
+    return m;
+  };
+  // Hair beyond the head's own box.
+  if (hair.mask === "long") add(8.6, 13, 1.6, hairMid, 0, 1, -4.4);
+  if (hair.mask === "bob") add(8.8, 6, 8.8, hairMid, 0, 5.4, -0.3);
+  if (hair.mask === "curly") add(9.6, 4.6, 9.6, hairMid, 0, 6.8, -0.2);
+  if (hair.mask === "bun") { add(8.6, 3, 8.6, hairMid, 0, 7, -0.2); if (!hatDef.mask) add(3.4, 3.4, 3.4, hairMid, -2, 10, -2); }
+  // The hat.
+  const hcol = hatDef.colors ?? {};
+  if (hatDef.mask === "bucket") { add(9.2, 3.4, 9.2, hcol[4], 0, 9, 0); add(12.4, 0.8, 12.4, hcol[1], 0, 7.4, 0); }
+  if (hatDef.mask === "cap") { add(9, 3, 9, hcol[3], 0, 9.2, 0); add(8, 0.8, 4.6, hcol[1], 0, 7.8, 6); }
+  if (hatDef.mask === "hard") {
+    add(9.4, 3, 9.4, hcol[3], 0, 9.2, 0);
+    add(11, 0.8, 11, hcol[2], 0, 7.8, 0);
+    add(2.2, 1.8, 1, hcol.Q, 0, 9, 4.9, 0x888866);
   }
 
   let phase = 0, swing = 0;
@@ -139,5 +135,15 @@ export function createAvatar(design) {
       swing = swinging ? (swing + dt * 9) % (Math.PI * 2) : 0;
       if (swinging) arms[1].rotation.x = -1.2 - Math.sin(swing) * 0.9;
     },
+    dispose() {
+      root.traverse((n) => {
+        if (!n.isMesh) return;
+        n.geometry.dispose();
+        for (const m of [].concat(n.material)) { m.map?.dispose(); m.dispose(); }
+      });
+    },
   };
 }
+
+/// A small picture of a Crafter (a data URL of its SVG), for the panel.
+export { svg as crafterSvg } from "./crafters.js";

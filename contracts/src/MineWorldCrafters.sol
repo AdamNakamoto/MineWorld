@@ -6,7 +6,8 @@ import {ERC2981} from "@openzeppelin/contracts/token/common/ERC2981.sol";
 import {Ownable, Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
-import {Base64} from "@openzeppelin/contracts/utils/Base64.sol";
+import {CrafterArt, CrafterRules, Traits} from "./CrafterArt.sol";
+import {FastBase64} from "./lib/FastBase64.sol";
 
 /// @notice The creator token standard (ERC721-C) that marketplaces read to find a collection's transfer rules.
 interface ICreatorToken {
@@ -22,62 +23,73 @@ interface ITransferValidator721 {
     function validateTransfer(address caller, address from, address to, uint256 tokenId) external view;
 }
 
-/// @title MineWorldMiners
-/// @notice 999 MineWorldCraft Miners: outfits for your miner in MineWorldCraft (a copy of Courier World's audited
-///         Courier Skins). Cosmetic only; they never change what anyone earns. Minted blind for ETH, then revealed:
-///         the design of each miner comes from a shuffle of the full 999-card deck, keyed by a seed committed before
-///         the mint and revealed after it.
+/// @title MineWorldCrafters
+/// @notice 3,333 MineWorld Crafters: pixel-art characters for MineWorldCraft, drawn and stored entirely on chain
+///         (CrafterArt). Cosmetic only; they never change what anyone earns. Minted blind (free at launch), then
+///         revealed: each token's hair, outfit, eyes and gaze come from a keyed shuffle of the token ids, so no two
+///         Crafters share that combination, and its background, skin, hat and blush are weighted picks from its own
+///         hash. The rules are the same as web/crafters.js, so the game and the chain agree on every Crafter.
 ///
 ///         The 5% royalty is enforced. Every transfer is checked by a transfer validator (OpenSea's creator fee
-///         enforcement registry at launch), so marketplaces can only move miners in sales that pay it. Holders can
-///         always move their own miners between wallets. The validator can be replaced (if marketplaces move to a
+///         enforcement registry at launch), so marketplaces can only move Crafters in sales that pay it. Holders can
+///         always move their own Crafters between wallets. The validator can be replaced (if marketplaces move to a
 ///         new one) but never removed, and the 5% rate is fixed.
-/// @dev Trust: the owner sets the price (never 0), the treasury (mint money and the royalty), the pictures' address
-///      (until frozen), the collection's website and social links and its page (contractURI), and the transfer
-///      validator, which decides which transfers between wallets go through: it can't move anyone's miners, but a bad
-///      one could hold transfers up (mints never touch it). The owner reveals with the committed secret and can't
-///      pick designs (see `reveal`). Ownership moves in two steps and can't be renounced, so the links can always be
-///      updated. Holders' miners and ETH are never within the owner's reach.
-contract MineWorldMiners is ERC721, ERC2981, Ownable2Step, ICreatorToken {
+/// @dev Trust: the owner sets the price (0 allowed), the per-wallet mint limit, the treasury (mint money and the
+///      royalty), the collection's website and social links, its picture and banner and its page (contractURI), and
+///      the transfer validator, which decides which transfers between wallets go through: it can't move anyone's
+///      Crafters, but a bad one could hold transfers up (mints never touch it). The art can't be changed. The owner
+///      reveals with the committed secret and can't pick looks (see `reveal`). Ownership moves in two steps and can't
+///      be renounced, so the links can always be updated. Holders' Crafters and ETH are never within the owner's reach.
+contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken {
     using Strings for uint256;
 
-    uint256 public constant MAX_SUPPLY = 999;
-    uint256 public constant MAX_PER_TX = 10;
+    uint256 public constant MAX_SUPPLY = CrafterRules.SUPPLY;
+    uint256 public constant MAX_PER_TX = 5;
+    /// @notice The highest per-wallet limit the owner can set.
+    uint256 public constant MAX_WALLET_LIMIT = 50;
     uint96 public constant ROYALTY_BPS = 500;
-    uint256 public constant DESIGNS = 16;
-    /// @notice The longest website or social link (bytes).
+    /// @notice The longest website, social or picture link (bytes).
     uint256 public constant MAX_LINK = 256;
 
     /// @dev validateTransfer(address,address,address,uint256)
     bytes4 private constant VALIDATE_TRANSFER = 0xcaee23ea;
 
+    /// @notice Draws every Crafter (fixed for good).
+    CrafterArt public immutable art;
+    bytes32 public immutable seedCommit;
+
+    /// @notice Per Crafter, in wei (0: free).
     uint256 public price;
+    /// @notice How many Crafters one wallet can mint in all.
+    uint256 public walletLimit = 10;
     bool public saleOpen;
     /// @notice The block the sale was last closed in; the reveal must come in a later one.
     uint256 public saleClosedAt;
     uint256 public totalMinted;
+    /// @notice How many Crafters each wallet has minted (transfers don't change it).
+    mapping(address => uint256) public mintedBy;
     address public treasury;
 
-    bytes32 public immutable seedCommit;
     uint256 public seed; // 0 until revealed
 
     address public transferValidator;
-    string public imageBase;
-    bool public imagesFrozen;
     /// @notice The project's website, shown as the collection's link on marketplaces ("" until set).
     string public website;
     /// @notice A social link (X, Discord...), shown in the collection's description ("" until set).
     string public social;
+    /// @notice The collection's picture and banner on marketplaces (URLs: OpenSea doesn't take data: URIs for these).
+    string public collectionImage;
+    string public bannerImage;
     /// @dev Replaces the built-in collection metadata when set (see contractURI).
     string private customContractURI;
 
     event Revealed(uint256 seed);
     event SaleOpen(bool open);
     event PriceSet(uint256 price);
+    event WalletLimitSet(uint256 limit);
     event TreasurySet(address indexed treasury);
-    event ImageBaseSet(string imageBase);
-    event ImagesFrozen();
     event LinksSet(string website, string social);
+    event CollectionImagesSet(string image, string banner);
     /// @notice ERC-7572: marketplaces re-read contractURI when they see this.
     event ContractURIUpdated();
     /// @notice ERC-4906: marketplaces re-read these tokens' metadata.
@@ -86,18 +98,18 @@ contract MineWorldMiners is ERC721, ERC2981, Ownable2Step, ICreatorToken {
     error SaleClosed();
     error BadQuantity();
     error SoldOut();
+    /// @notice This wallet would go over the per-wallet limit.
+    error WalletLimit();
+    error BadWalletLimit();
     error WrongPayment();
     error NotRevealed();
     error AlreadyRevealed();
     error SaleStillOpen();
     error RevealTooSoon();
-    error ZeroPrice();
     error BadSecret();
     error ZeroAddress();
     error NotAContract();
-    error ImagesAreFrozen();
-    error BadDesign();
-    /// @notice The treasury can't be this contract (it refuses ETH, so no mint could pay it).
+    /// @notice The treasury can't be this contract (it refuses ETH, so no paid mint could go through).
     error BadTreasury();
     /// @notice A link is too long, or has a character that would break the collection's JSON (", \ or a control).
     error BadLink();
@@ -110,40 +122,47 @@ contract MineWorldMiners is ERC721, ERC2981, Ownable2Step, ICreatorToken {
         uint256 price_,
         bytes32 seedCommit_,
         address validator_,
-        string memory imageBase_
-    ) ERC721("MineWorldCraft Miners", "MWCM") Ownable(owner_) {
+        CrafterArt art_
+    ) ERC721("MineWorld Crafters", "CRAFTER") Ownable(owner_) {
         if (treasury_ == address(0)) revert ZeroAddress();
         if (treasury_ == address(this)) revert BadTreasury();
-        if (price_ == 0) revert ZeroPrice();
+        if (address(art_).code.length == 0) revert NotAContract();
         treasury = treasury_;
         price = price_;
         seedCommit = seedCommit_;
-        imageBase = imageBase_;
+        art = art_;
         _setDefaultRoyalty(treasury_, ROYALTY_BPS);
         _setValidator(validator_);
     }
 
     // ---------------------------------------------------------------- mint
 
+    /// @notice Mint `quantity` sealed Crafters (1 to MAX_PER_TX), paying exactly `price` each (nothing while free).
     function mint(uint256 quantity) external payable {
         if (!saleOpen) revert SaleClosed();
         if (quantity == 0 || quantity > MAX_PER_TX) revert BadQuantity();
-        if (totalMinted + quantity > MAX_SUPPLY) revert SoldOut();
+        uint256 minted = totalMinted;
+        if (minted + quantity > MAX_SUPPLY) revert SoldOut();
+        uint256 mine = mintedBy[msg.sender] + quantity;
+        if (mine > walletLimit) revert WalletLimit();
         if (msg.value != price * quantity) revert WrongPayment();
-        for (uint256 i = 0; i < quantity; i++) {
-            _mint(msg.sender, ++totalMinted);
+        mintedBy[msg.sender] = mine;
+        totalMinted = minted + quantity;
+        for (uint256 i = 1; i <= quantity; ++i) {
+            _mint(msg.sender, minted + i);
         }
         // Paid straight to the treasury, with anything ever forced in here: this contract never holds ETH.
-        Address.sendValue(payable(treasury), address(this).balance);
+        uint256 balance = address(this).balance;
+        if (balance != 0) Address.sendValue(payable(treasury), balance);
     }
 
     // ---------------------------------------------------------------- reveal
 
-    /// @notice Fix every miner's design, and end the sale for good. The committed secret is mixed with the
-    ///         previous block's hash, and the sale must have been closed in an earlier block than this one: that
-    ///         hash didn't exist yet while anyone could mint, so nobody (the owner included) could mint knowing a
-    ///         design. On Robinhood Chain, an Arbitrum chain, `block.number` follows the parent chain, so "an
-    ///         earlier block" means waiting for the next parent-chain block (about 12 seconds) after closing.
+    /// @notice Fix every Crafter's look, and end the sale for good. The committed secret is mixed with the previous
+    ///         block's hash, and the sale must have been closed in an earlier block than this one: that hash didn't
+    ///         exist yet while anyone could mint, so nobody (the owner included) could mint knowing a look. On
+    ///         Robinhood Chain, an Arbitrum chain, `block.number` follows the parent chain, so "an earlier block"
+    ///         means waiting for the next parent-chain block (about 12 seconds) after closing.
     function reveal(uint256 secret) external onlyOwner {
         if (seed != 0) revert AlreadyRevealed();
         if (saleOpen) revert SaleStillOpen();
@@ -155,154 +174,112 @@ contract MineWorldMiners is ERC721, ERC2981, Ownable2Step, ICreatorToken {
         if (totalMinted != 0) emit BatchMetadataUpdate(1, totalMinted);
     }
 
-    /// @notice The design a miner turned out to be: an index into the list below (0 Classic Miner ... 15 Crystal
-    ///         Miner). Each token takes a different card of the 999-card deck, so if every miner is minted each
-    ///         design appears exactly as often as its supply says.
-    function designOf(uint256 tokenId) public view returns (uint256) {
+    /// @notice A Crafter's traits once revealed: indexes into the tables of web/crafters-art.js (names from
+    ///         CrafterArt.traitName), the same as traitsOf(seed, id) in web/crafters.js.
+    function traitsOf(uint256 tokenId) external view returns (Traits memory) {
         if (seed == 0) revert NotRevealed();
         _requireOwned(tokenId);
-        return _designAt(_shuffle(tokenId - 1));
+        return _traitsFor(seed, tokenId);
     }
 
-    /// @notice How many of a design are in the deck.
-    function supplyOf(uint256 design) public pure returns (uint256) {
-        if (design >= DESIGNS) revert BadDesign();
-        // 5 commons of 120, 4 rares of 60, 2 rares of 40, 2 legendaries of 20, 3 mythics of 13.
-        if (design < 5) return 120;
-        if (design < 9) return 60;
-        if (design < 11) return 40;
-        if (design < 13) return 20;
-        return 13;
-    }
-
-    /// @dev Card `slot` of the unshuffled deck, dealt in design order.
-    function _designAt(uint256 slot) internal pure returns (uint256 design) {
-        uint256 end;
-        for (design = 0; design < DESIGNS; design++) {
-            end += supplyOf(design);
-            if (slot < end) return design;
+    /// @dev traitsOf in web/crafters.js. The token's place in the shuffled run gives a combination of hair, outfit,
+    ///      eyes and gaze (spread over all COMBOS, a different one for every token); its own hash gives the weighted
+    ///      picks.
+    function _traitsFor(uint256 s, uint256 id) internal pure returns (Traits memory t) {
+        uint256 c = _shuffle(s, id - 1) * CrafterRules.COMBOS / MAX_SUPPLY;
+        uint256 h;
+        assembly ("memory-safe") {
+            mstore(0x00, s)
+            mstore(0x20, id)
+            h := keccak256(0x00, 0x40) // keccak256(abi.encode(s, id))
         }
-        revert BadDesign();
+        uint256 hairs = CrafterRules.HAIRS;
+        uint256 outfits = CrafterRules.OUTFITS;
+        uint256 eyes = CrafterRules.EYES;
+        t.hair = uint8(c % hairs);
+        t.outfit = uint8((c / hairs) % outfits);
+        t.eyes = uint8((c / (hairs * outfits)) % eyes);
+        t.gaze = uint8(c / (hairs * outfits * eyes));
+        t.background = CrafterRules.background(h & 0xffff);
+        t.skin = CrafterRules.skin((h >> 16) & 0xffff);
+        t.hat = CrafterRules.hat((h >> 32) & 0xffff);
+        t.blush = CrafterRules.blush((h >> 48) & 0xffff);
     }
 
-    /// @dev A keyed shuffle of 0..998: a 4-round Feistel network on 10 bits (a permutation of 0..1023), repeated
-    ///      until it lands inside the deck. Different inputs always give different outputs.
-    function _shuffle(uint256 x) internal view returns (uint256) {
-        uint256 s = seed;
+    /// @dev A keyed shuffle of 0..MAX_SUPPLY-1: a 4-round Feistel network on 12 bits (a permutation of 0..4095),
+    ///      repeated until it lands inside the supply. Different inputs always give different outputs. The round
+    ///      function is uint256(keccak256(abi.encode(s, i, r))) & 63.
+    function _shuffle(uint256 s, uint256 x) internal pure returns (uint256) {
         do {
-            uint256 l = x >> 5;
-            uint256 r = x & 31;
+            uint256 l = x >> 6;
+            uint256 r = x & 63;
             for (uint256 i = 0; i < 4; i++) {
-                (l, r) = (r, l ^ (uint256(keccak256(abi.encode(s, i, r))) & 31));
+                uint256 f;
+                assembly ("memory-safe") {
+                    let m := mload(0x40) // scratch past the free memory pointer, never allocated
+                    mstore(m, s)
+                    mstore(add(m, 0x20), i)
+                    mstore(add(m, 0x40), r)
+                    f := and(keccak256(m, 0x60), 63)
+                }
+                (l, r) = (r, l ^ f);
             }
-            x = (l << 5) | r;
+            x = (l << 6) | r;
         } while (x >= MAX_SUPPLY);
         return x;
     }
 
     // ---------------------------------------------------------------- metadata
 
-    function designName(uint256 design) public pure returns (string memory) {
-        string[16] memory names = [
-            "Classic Miner",
-            "Lumberjack",
-            "Farmer",
-            "Explorer",
-            "Builder",
-            "Knight",
-            "Ninja",
-            "Astronaut",
-            "Deep Diver",
-            "Lava Walker",
-            "Frost Miner",
-            "Gold Miner",
-            "Diamond Miner",
-            "Shadow Miner",
-            "Neon Miner",
-            "Crystal Miner"
-        ];
-        if (design >= DESIGNS) revert BadDesign();
-        return names[design];
-    }
-
-    function rarityOf(uint256 design) public pure returns (string memory) {
-        if (design >= DESIGNS) revert BadDesign();
-        if (design < 5) return "Common";
-        if (design < 11) return "Rare";
-        if (design < 13) return "Legendary";
-        return "Mythic";
-    }
-
-    /// @dev The image file for a design, as served under `imageBase`.
-    function _key(uint256 design) private pure returns (string memory) {
-        string[16] memory keys = [
-            "classic",
-            "lumberjack",
-            "farmer",
-            "explorer",
-            "builder",
-            "knight",
-            "ninja",
-            "astronaut",
-            "diver",
-            "lava",
-            "frost",
-            "gold",
-            "diamond",
-            "shadow",
-            "neon",
-            "crystal"
-        ];
-        return keys[design];
-    }
-
-    /// @notice Metadata written on-chain; only the picture is fetched from `imageBase`.
+    /// @notice Metadata and picture, all on chain: the SVG drawn by CrafterArt, the traits as attributes.
     function tokenURI(uint256 tokenId) public view override returns (string memory) {
         _requireOwned(tokenId);
-        string memory id = tokenId.toString();
-        string memory json;
+        bytes memory json;
         if (seed == 0) {
-            json = string.concat(
-                '{"name":"MineWorldCraft Miner #', id,
-                '","description":"A sealed MineWorldCraft Miner. Its design is revealed after the mint.","image":"',
-                imageBase, 'mystery.png","attributes":[{"trait_type":"Status","value":"Sealed"}]}'
+            json = abi.encodePacked(
+                '{"name":"MineWorld Crafter #',
+                tokenId.toString(),
+                '","description":"A sealed MineWorld Crafter. Its look is revealed after the mint.","image":"data:image/svg+xml;base64,',
+                FastBase64.encode(bytes(art.sealedSvg())),
+                '","attributes":[{"trait_type":"Status","value":"Sealed"}]}'
             );
         } else {
-            uint256 d = _designAt(_shuffle(tokenId - 1));
-            json = string.concat(
-                '{"name":"', designName(d), " #", id,
-                '","description":"A miner outfit to wear in MineWorldCraft. Cosmetic only: it changes how you look, never what you earn.","image":"',
-                imageBase, _key(d), '.png","attributes":[{"trait_type":"Design","value":"', designName(d),
-                '"},{"trait_type":"Rarity","value":"', rarityOf(d), '"}]}'
+            Traits memory t = _traitsFor(seed, tokenId);
+            json = abi.encodePacked(
+                '{"name":"MineWorld Crafter #',
+                tokenId.toString(),
+                '","description":"A pixel-art character for MineWorldCraft, drawn and stored entirely on chain. No two Crafters look alike. Cosmetic only: it changes how you look, never what you earn.","image":"data:image/svg+xml;base64,',
+                FastBase64.encode(bytes(art.render(t))),
+                '","attributes":',
+                art.attributes(t),
+                "}"
             );
         }
-        return string.concat("data:application/json;base64,", Base64.encode(bytes(json)));
+        return string.concat("data:application/json;base64,", FastBase64.encode(json));
     }
 
-    /// @notice The collection's page on marketplaces (ERC-7572): its name, description, pictures, and the website and
-    ///         social links once the owner has set them (`setLinks`).
+    /// @notice The collection's page on marketplaces (ERC-7572): its name and description, and its picture, banner,
+    ///         website and social links once the owner has set them (`setCollectionImages`, `setLinks`).
     function contractURI() external view returns (string memory) {
         if (bytes(customContractURI).length != 0) return customContractURI;
         string memory links;
         if (bytes(website).length != 0) links = string.concat(" Website: ", website);
         if (bytes(social).length != 0) links = string.concat(links, " Social: ", social);
         string memory json = string.concat(
-            '{"name":"MineWorldCraft Miners","description":"999 limited miner outfits to wear in MineWorldCraft, a blocky mining world on Robinhood Chain. Miners are cosmetic: everyone in the game sees yours, and they never change what you earn.',
+            '{"name":"MineWorld Crafters","description":"3,333 pixel-art characters for MineWorldCraft, a blocky mining world on Robinhood Chain. Every Crafter is drawn and stored entirely on chain, and no two look alike. Cosmetic only: everyone in the game sees yours, and it never changes what you earn.',
             links,
-            '","image":"',
-            imageBase,
-            'collection.png","featured_image":"',
-            imageBase,
-            'collection.png","banner_image":"',
-            imageBase,
-            'banner.png"'
+            '"'
         );
+        if (bytes(collectionImage).length != 0) {
+            json = string.concat(json, ',"image":"', collectionImage, '","featured_image":"', collectionImage, '"');
+        }
+        if (bytes(bannerImage).length != 0) json = string.concat(json, ',"banner_image":"', bannerImage, '"');
         if (bytes(website).length != 0) json = string.concat(json, ',"external_link":"', website, '"');
         json = string.concat(json, "}");
-        return string.concat("data:application/json;base64,", Base64.encode(bytes(json)));
+        return string.concat("data:application/json;base64,", FastBase64.encode(bytes(json)));
     }
 
-    /// @notice Every miner `owner` holds, so the game can list them without scanning event logs.
+    /// @notice Every Crafter `owner` holds, so the game can list them without scanning event logs.
     function tokensOfOwner(address owner) external view returns (uint256[] memory ids) {
         uint256 n = balanceOf(owner);
         ids = new uint256[](n);
@@ -352,11 +329,18 @@ contract MineWorldMiners is ERC721, ERC2981, Ownable2Step, ICreatorToken {
         emit SaleOpen(open);
     }
 
-    /// @notice Never free: every miner is paid for.
+    /// @notice The price of one Crafter in wei; 0 makes the mint free.
     function setPrice(uint256 price_) external onlyOwner {
-        if (price_ == 0) revert ZeroPrice();
         price = price_;
         emit PriceSet(price_);
+    }
+
+    /// @notice How many Crafters one wallet can mint in all (1 to MAX_WALLET_LIMIT). Lowering it never takes
+    ///         anything back; wallets already over it just can't mint more.
+    function setWalletLimit(uint256 limit) external onlyOwner {
+        if (limit == 0 || limit > MAX_WALLET_LIMIT) revert BadWalletLimit();
+        walletLimit = limit;
+        emit WalletLimitSet(limit);
     }
 
     /// @notice Moves mint payments and the royalty together. The 5% rate never changes.
@@ -368,15 +352,6 @@ contract MineWorldMiners is ERC721, ERC2981, Ownable2Step, ICreatorToken {
         emit TreasurySet(treasury_);
     }
 
-    /// @notice Where the pictures live (ending in "/"), until frozen.
-    function setImageBase(string calldata imageBase_) external onlyOwner {
-        if (imagesFrozen) revert ImagesAreFrozen();
-        imageBase = imageBase_;
-        emit ImageBaseSet(imageBase_);
-        emit ContractURIUpdated();
-        if (totalMinted != 0) emit BatchMetadataUpdate(1, totalMinted);
-    }
-
     /// @notice The project's website (the collection's link on marketplaces) and a social link (in its description),
     ///         at any time; "" leaves one out. Both are written into the built-in collection metadata, so they must
     ///         be plain URLs: no quotes, backslashes or control characters, at most MAX_LINK bytes.
@@ -386,6 +361,17 @@ contract MineWorldMiners is ERC721, ERC2981, Ownable2Step, ICreatorToken {
         website = website_;
         social = social_;
         emit LinksSet(website_, social_);
+        emit ContractURIUpdated();
+    }
+
+    /// @notice The collection's picture and banner on marketplaces (https:// or ipfs:// URLs; OpenSea doesn't take
+    ///         data: URIs for these), at any time; "" leaves one out. Same rules as the links.
+    function setCollectionImages(string calldata image, string calldata banner) external onlyOwner {
+        _checkLink(image);
+        _checkLink(banner);
+        collectionImage = image;
+        bannerImage = banner;
+        emit CollectionImagesSet(image, banner);
         emit ContractURIUpdated();
     }
 
@@ -402,11 +388,6 @@ contract MineWorldMiners is ERC721, ERC2981, Ownable2Step, ICreatorToken {
     function setContractURI(string calldata uri) external onlyOwner {
         customContractURI = uri;
         emit ContractURIUpdated();
-    }
-
-    function freezeImages() external onlyOwner {
-        imagesFrozen = true;
-        emit ImagesFrozen();
     }
 
     /// @notice Ownership can't be renounced (a renounced owner could never update the links, the price or the

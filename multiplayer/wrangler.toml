@@ -18,4 +18,4 @@ new_sqlite_classes = ["World"]
 # CHAIN_ID = "4663"
 # CHAIN_RPC = "https://robinhood-rpc.publicnode.com"
 # MINING_ADDRESS = "0x..."
-# MINERS_ADDRESS = "0x..."
+# CRAFTERS_ADDRESS = "0x..."  (MineWorld Crafters: a player wears one only once the room has checked they own it)

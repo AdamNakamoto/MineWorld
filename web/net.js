@@ -5,8 +5,11 @@
 
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { createAvatar } from "./avatar.js";
+import { unpackTraits } from "./crafters.js";
+import { wrap, wrapDelta } from "./rules.js";
+import { place } from "./planet.js";
 
-const MIN_GAP = 0.25; // seconds between position updates, at the most
+const MIN_GAP = 0.5; // seconds between position updates, at the most
 const HEARTBEAT = 3; // seconds: while moving the same way
 const PING_EVERY = 45_000; // Cloudflare drops sockets quiet for 100 s
 const SEEN = 96; // blocks: how far other miners are drawn
@@ -80,20 +83,26 @@ export function createNet(url, scene, h) {
     backoff = Math.min(backoff * 2, 30_000);
   }
 
-  function add(pid, name, design, x, y, z, yaw) {
+  /// `look`: the Crafter they wear, as packed traits (checked on-chain by the world server), or null.
+  /// `pos` is where they are (flat, kept at the copy nearest you, so distances to it are the short way round);
+  /// `holder` stands their avatar there on the curved planet (draw()).
+  function add(pid, name, look, x, y, z, yaw) {
     drop(pid);
-    const av = createAvatar(design);
+    const av = createAvatar(unpackTraits(look));
     const tag = nameTag(name);
     av.root.add(tag);
-    av.root.position.set(x, y, z);
-    scene.add(av.root);
-    others.set(pid, { av, tag, name, design, pos: av.root.position, target: new THREE.Vector3(x, y, z), yaw, tyaw: yaw, act: false, speed: 0 });
+    const holder = new THREE.Group();
+    holder.add(av.root);
+    scene.add(holder);
+    others.set(pid, { av, tag, holder, name, look, pos: new THREE.Vector3(x, y, z), target: new THREE.Vector3(x, y, z), yaw, tyaw: yaw, act: false, speed: 0 });
   }
   function drop(pid) {
     const o = others.get(pid);
     if (!o) return;
-    scene.remove(o.av.root);
-    o.av.root.traverse((n) => { if (n.isMesh || n.isSprite) { n.geometry?.dispose(); n.material.map?.dispose(); n.material.dispose?.(); } });
+    scene.remove(o.holder);
+    o.av.dispose();
+    o.tag.material.map?.dispose();
+    o.tag.material.dispose();
     others.delete(pid);
   }
 
@@ -106,8 +115,25 @@ export function createNet(url, scene, h) {
         h.welcome?.(m[2], others.size + 1);
         break;
       }
-      case "join": add(m[1], m[2], m[3], m[4], m[5], m[6], m[7]); h.count?.(others.size + 1); break;
-      case "leave": drop(m[1]); h.count?.(others.size + 1); break;
+      case "join": {
+        // A join for someone already here is a new name or look, not a new arrival.
+        const known = others.has(m[1]);
+        add(m[1], m[2], m[3], m[4], m[5], m[6], m[7]);
+        if (!known) h.joined?.(m[1], m[2]);
+        h.count?.(others.size + 1);
+        break;
+      }
+      case "leave": {
+        const o = others.get(m[1]);
+        drop(m[1]);
+        if (o) h.left?.(m[1], o.name);
+        h.count?.(others.size + 1);
+        break;
+      }
+      case "voices": h.voices?.(m[1]); break;
+      case "voice": h.voice?.(m[1], !!m[2]); break;
+      case "rtc": h.rtc?.(m[1], m[2]); break;
+      case "named": h.named?.(m[1]); break;
       case "p": {
         const o = others.get(m[1]);
         if (!o) break;
@@ -136,7 +162,7 @@ export function createNet(url, scene, h) {
         waiting.delete(key);
         if (k === "signedin") {
           resume = { address: m[1], token: m[2] };
-          h.signedin?.(m[1], m[2], { today: m[3], total: m[4], cap: m[5] });
+          h.signedin?.(m[1], m[2], { today: m[3], total: m[4], cap: m[5], name: m[6] ?? null });
         }
         if (k === "signinfail" && !w) { resume = null; h.signedout?.(m[1]); }
         w?.(m);
@@ -155,20 +181,23 @@ export function createNet(url, scene, h) {
     const now = performance.now() / 1000;
     if (open && id !== null) {
       const L = lastSent;
-      const moved = Math.hypot(me.x - L.x, me.y - L.y, me.z - L.z);
+      const moved = Math.hypot(wrapDelta(me.x - L.x), me.y - L.y, wrapDelta(me.z - L.z));
       const turned = Math.abs(me.yaw - L.yaw);
       const gap = now - L.at;
-      if (gap > MIN_GAP && (!(moved <= 0.6) || turned > 0.35 || (moved > 0.05 && gap > HEARTBEAT))) {
+      // Turning alone waits for the heartbeat (the others only see which way you face).
+      if (gap > MIN_GAP && (!(moved <= 0.6) || ((moved > 0.05 || turned > 0.35) && gap > HEARTBEAT))) {
         const r = (v) => Math.round(v * 100) / 100;
-        ws.send(JSON.stringify(["p", r(me.x), r(me.y), r(me.z), r(me.yaw), r(me.pitch)]));
+        ws.send(JSON.stringify(["p", wrap(r(me.x)), r(me.y), wrap(r(me.z)), r(me.yaw), r(me.pitch)]));
         lastSent = { x: me.x, y: me.y, z: me.z, yaw: me.yaw, pitch: me.pitch, at: now };
       }
     }
     for (const o of others.values()) {
       const before = o.pos.clone();
       const k = 1 - Math.exp(-dt * 8);
-      if (o.pos.distanceToSquared(o.target) > 100) o.pos.copy(o.target); // a respawn or a teleport: jump there
-      else o.pos.lerp(o.target, k);
+      // Towards where they are now, the short way round (across the seam if that's shorter).
+      const tx = o.pos.x + wrapDelta(o.target.x - o.pos.x), tz = o.pos.z + wrapDelta(o.target.z - o.pos.z);
+      if ((tx - o.pos.x) ** 2 + (o.target.y - o.pos.y) ** 2 + (tz - o.pos.z) ** 2 > 100) o.pos.set(tx, o.target.y, tz); // a respawn or a teleport: jump there
+      else o.pos.lerp(_t.set(tx, o.target.y, tz), k);
       let dy = o.tyaw - o.yaw;
       while (dy > Math.PI) dy -= Math.PI * 2;
       while (dy < -Math.PI) dy += Math.PI * 2;
@@ -177,9 +206,18 @@ export function createNet(url, scene, h) {
       const sp = Math.hypot(o.pos.x - before.x, o.pos.z - before.z) / Math.max(dt, 1e-3);
       o.speed += (sp - o.speed) * k;
       o.av.animate(dt, o.speed, o.act);
+      // Kept at the copy nearest you (voice.js and the rest measure straight to it).
+      o.pos.x = me.x + wrapDelta(o.pos.x - me.x);
+      o.pos.z = me.z + wrapDelta(o.pos.z - me.z);
       const far = Math.hypot(o.pos.x - me.x, o.pos.z - me.z) > SEEN;
-      o.av.root.visible = !far;
+      o.holder.visible = !far;
     }
+  }
+  const _t = new THREE.Vector3();
+
+  /// Stands the other miners on the curved planet as seen from the camera (after planet.follow, before the render).
+  function draw() {
+    for (const o of others.values()) if (o.holder.visible) place(o.holder, o.pos, 0);
   }
 
   return {
@@ -190,15 +228,21 @@ export function createNet(url, scene, h) {
     get online() { return open; },
     others,
     tick,
+    draw,
     chunks: (keys) => { for (let i = 0; i < keys.length; i += 48) send(["chunks", keys.slice(i, i + 48)]); },
     breakBlock: (x, y, z) => send(["break", x, y, z]),
     place: (x, y, z, b) => send(["place", x, y, z, b]),
     hit: (mobId, dmg) => send(["hit", mobId, dmg]),
+    /// A monster the room sent that this game couldn't place, or that wandered off or was lost.
+    gone: (mobId) => send(["gone", mobId]),
     /// After a respawn (the room moved you to the town): your next position goes out whatever it is.
     respawn() { send(["respawn"]); lastSent = { x: NaN, y: 0, z: 0, yaw: 0, pitch: 0, at: 0 }; },
     act: (on) => send(["act", on ? 1 : 0]),
     chat: (text) => send(["chat", text]),
-    design: (tokenId) => send(["design", tokenId]),
+    /// Pick a name (web/name-rules.js); the room answers "named" or an error.
+    setName: (name) => send(["setname", name]),
+    /// Wear Crafter `tokenId` (null for the Rookie): the room checks on-chain that it's yours.
+    wear: (tokenId) => send(["wear", tokenId]),
     /// One free signature proves the wallet is yours; from then on the room counts your earnings for it.
     async signIn(address, sign) {
       const [, message] = await ask(["auth", address], "challenge");

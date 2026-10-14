@@ -3,26 +3,26 @@
 #
 #   ./script/deploy-mainnet.sh launch                    # dry run against a fork: hook, $MINE, MiningSites, pool
 #   MINING_SIGNER=0x... ./script/deploy-mainnet.sh launch --broadcast --browser --browser-disable-open
-#   ./script/deploy-mainnet.sh miners                    # dry run of the Miners collection against a fork
-#   ./script/deploy-mainnet.sh miners --broadcast --browser --browser-disable-open
+#   ./script/deploy-mainnet.sh crafters                  # dry run of the Crafters collection against a fork
+#   ./script/deploy-mainnet.sh crafters --broadcast --browser --browser-disable-open
 #
 # launch: MineHook at a mined CREATE2 address (with its two routers), MiningSites, $MINE (500M to the hook, 500M to
 #   MiningSites), the pool opened (the 500M locked for good), then the hook renounced so the fee recipient is final.
 #   MINING_SIGNER is the game server's voucher key's address (never the key).
-# miners: MineWorldCraft Miners with the sale closed (open it later with setSaleOpen).
+# crafters: the on-chain art (CrafterArt) and MineWorld Crafters with the sale closed (open it later with setSaleOpen).
 #
 # Signing: --browser serves a page at http://127.0.0.1:9545 (--browser-disable-open: nothing opens by itself; paste
 # the address into your browser) where you connect your wallet and approve each transaction, so no private key is typed
 # anywhere. Switch the wallet to Robinhood Chain first. Or --account <keystore name> for a Foundry keystore. The wallet
-# that signs owns MiningSites and the Miners (both hand over in two steps and can't be renounced).
+# that signs owns MiningSites and the Crafters (both hand over in two steps and can't be renounced).
 #
 # RPC_URL picks the RPC (default: foundry.toml's "robinhood"). The launch mines a CREATE2 salt first, which takes a
 # while, so it needs an RPC that keeps a few minutes of state (Courier's launchpad needed the official RPC for this).
 #
-# The Miners' reveal secret: pass your own as SECRET=..., or, when broadcasting, one is generated and written to
-# SECRET_FILE (default ~/mineworldcraft-miners-reveal-secret.txt, readable only by you; if it exists, the secret in it
-# is reused, so a retry keeps the same commit). It is never printed. Keep it in a password manager too: the Miners can
-# only be revealed with it (reveal(secret)). A dry run uses a throwaway secret and saves nothing.
+# The Crafters' reveal secret: pass your own as SECRET=..., or, when broadcasting, one is generated and written to
+# SECRET_FILE (default ~/mineworldcraft-crafters-reveal-secret.txt, readable only by you; if it exists, the secret in
+# it is reused, so a retry keeps the same commit). It is never printed. Keep it in a password manager too: the Crafters
+# can only be revealed with it (reveal(secret)). A dry run uses a throwaway secret and saves nothing.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.foundry/bin:$PATH"
@@ -30,8 +30,8 @@ export PATH="$HOME/.foundry/bin:$PATH"
 STAGE="${1:-}"
 shift || true
 case "$STAGE" in
-  launch | miners) ;;
-  *) echo "Usage: $0 launch|miners [--broadcast --browser --browser-disable-open | --account <name>]" >&2; exit 1 ;;
+  launch | crafters) ;;
+  *) echo "Usage: $0 launch|crafters [--broadcast --browser --browser-disable-open | --account <name>]" >&2; exit 1 ;;
 esac
 
 set -a
@@ -57,7 +57,7 @@ if [ "$STAGE" = launch ]; then
   RECORD=deployments/robinhood.json
   KEYS=(mine sites hook)
 else
-  SECRET_FILE="${SECRET_FILE:-$HOME/mineworldcraft-miners-reveal-secret.txt}"
+  SECRET_FILE="${SECRET_FILE:-$HOME/mineworldcraft-crafters-reveal-secret.txt}"
   if [ -z "${SECRET:-}" ]; then
     if [ "$BROADCAST" = 1 ]; then
       if [ -s "$SECRET_FILE" ]; then
@@ -74,9 +74,9 @@ else
   SEED_COMMIT=$(cast keccak "$(cast abi-encode "f(uint256)" "$SECRET")")
   export SEED_COMMIT
   unset SECRET # the deploy only needs the commit
-  SCRIPT=(script/DeployMiners.s.sol)
-  RECORD=deployments/robinhood-miners.json
-  KEYS=(miners)
+  SCRIPT=(script/DeployCrafters.s.sol)
+  RECORD=deployments/robinhood-crafters.json
+  KEYS=(crafters art)
 fi
 
 if [ "$BROADCAST" = 1 ]; then
@@ -85,7 +85,7 @@ if [ "$BROADCAST" = 1 ]; then
     grep -E '^(FEE_RECIPIENT|TREASURY|START_MCAP_USD|SITE_PRICE|WALLET_DAILY_CAP|DAILY_CAP)=' launch.env | sed 's/^/  /'
     echo "  MINING_SIGNER=$MINING_SIGNER"
   else
-    grep -E '^(TREASURY|MINERS_[A-Z_]+)=' launch.env | sed 's/^/  /'
+    grep -E '^(TREASURY|CRAFTERS_[A-Z_]+)=' launch.env | sed 's/^/  /'
     echo "  SEED_COMMIT=$SEED_COMMIT"
     [ -n "${SECRET_NOTE:-}" ] && echo "  ($SECRET_NOTE; not printed)"
   fi

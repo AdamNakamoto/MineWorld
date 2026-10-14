@@ -1,8 +1,9 @@
 // Box-against-blocks movement for the player and the monsters: gravity, swimming, and sliding along walls one axis
-// at a time. `pos` is the bottom centre of the box; `half` its half width, `h` its height.
+// at a time. `pos` is the bottom centre of the box; `half` its half width, `h` its height. The world wraps round with
+// no border (world.get wraps), so a box can stand across the seam; whoever moves it wraps its position afterwards.
 
 import { WATER } from "./blocks.js";
-import { WORLD } from "./rules.js";
+import { wrapDelta } from "./rules.js";
 
 const EPS = 1e-3;
 export const GRAVITY = 28;
@@ -13,7 +14,7 @@ function hits(world, pos, half, h) {
   const y0 = Math.floor(pos.y), y1 = Math.floor(pos.y + h - 1e-9);
   const z0 = Math.floor(pos.z - half), z1 = Math.floor(pos.z + half - 1e-9);
   for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) {
-    if (world.solid(x, y, z) || (y >= 0 && (x < 0 || z < 0 || x >= WORLD || z >= WORLD))) out.push([x, y, z]);
+    if (world.solid(x, y, z)) out.push([x, y, z]);
   }
   return out;
 }
@@ -59,7 +60,10 @@ export function moveBox(world, pos, vel, half, h, dt) {
   return { onGround, wall, water };
 }
 
-/// Whether a box at `pos` would overlap a solid block (used before placing a block where someone stands).
+/// Whether a box at `pos` would overlap a solid block (used before placing a block where someone stands). The block
+/// may be written on either side of the seam.
 export function boxHitsBlock(pos, half, h, bx, by, bz) {
+  bx = pos.x + wrapDelta(bx + 0.5 - pos.x) - 0.5;
+  bz = pos.z + wrapDelta(bz + 0.5 - pos.z) - 0.5;
   return bx + 1 > pos.x - half && bx < pos.x + half && by + 1 > pos.y && by < pos.y + h && bz + 1 > pos.z - half && bz < pos.z + half;
 }
