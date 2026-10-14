@@ -38,7 +38,7 @@ export function shuffle(seed, x, { keccak256, encodeAbiParameters }) {
 export function traitsOf(seed, id, hash) {
   seed = BigInt(seed);
   id = Number(id);
-  if (!Number.isInteger(id) || id < 1 || id > SUPPLY) throw new Error(`No Crafter #${id}`);
+  if (!Number.isInteger(id) || id < 1 || id > SUPPLY) throw new Error(`No I'M DIO #${id}`);
   const v = shuffle(seed, id - 1, hash);
   const c = Math.floor((v * COMBOS) / SUPPLY);
   const h = BigInt(hash.keccak256(hash.encodeAbiParameters([{ type: "uint256" }, { type: "uint256" }], [seed, BigInt(id)])));

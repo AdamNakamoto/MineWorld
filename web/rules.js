@@ -10,7 +10,7 @@ export const CHUNK = 16;
 export const HEIGHT = 128;
 export const SEA = 48;
 export const TOWN = { x: 256, z: 256, y: 58 };
-/// Nobody breaks or places blocks this close to the town's centre (the spawn, the Mining Office).
+/// Nobody breaks or places blocks this close to the town's centre (the spawn, Mining Sites).
 export const PROTECT_R = 64;
 export const SPAWN = { x: TOWN.x + 0.5, y: TOWN.y + 1, z: TOWN.z + 7.5 };
 

@@ -15,8 +15,8 @@ const T = (hair, outfit, eyes, gaze, skin, hat, blush = 0) => ({ hair, outfit, e
 
 /// Who lives here: a name, a trade, a home, where they work, a look (Crafter traits) and what they say.
 export const VILLAGERS = [
-  { name: "Olwen", job: "Clerk", home: "Rose Cottage", work: "Mining Office", look: T(10, 13, 0, 0, 0, 0), lines: [
-    "Welcome to the Mining Office! Press M to open your mining site and turn what you dig into $MINE.",
+  { name: "Olwen", job: "Clerk", home: "Rose Cottage", work: "Mining Sites", look: T(10, 13, 0, 0, 0, 0), lines: [
+    "Welcome to Mining Sites! Press M to open your mining site and turn what you dig into $MINE.",
     "Sign in with your wallet first: then every natural block you break and every monster you beat is counted.",
     "A mining site costs a little ETH, once. You can earn without one, but you need it to convert to $MINE.",
   ] },
@@ -52,10 +52,10 @@ export const VILLAGERS = [
     "Stone pays a little, coal a bit more, iron and gold better, and a $MINE crystal best of all.",
     "Placed blocks pay nothing when you break them again. Only the planet's own stone counts.",
   ] },
-  { name: "Wren", job: "Crafter fan", home: "West House", work: "plaza", look: T(33, 1, 5, 1, 0, 3), lines: [
-    "See my look? It's a MineWorld Crafter. You can mint one in the Mining Site panel and wear it.",
-    "Press V to see yourself from outside. Your Crafter's face is on your miner!",
-    "Wearing a Crafter makes you a better miner too: faster blocks, more $MINE, a higher daily cap. Rarer and higher-level ones more.",
+  { name: "Wren", job: "DIO fan", home: "West House", work: "plaza", look: T(33, 1, 5, 1, 0, 3), lines: [
+    "See my look? It's an I'M DIO. You can mint one in the Mining Site panel and wear it.",
+    "Press V to see yourself from outside. Your DIO's face is on your miner!",
+    "Wearing a DIO makes you a better miner too: faster blocks, more $MINE, a higher daily cap. Rarer and higher-level ones more.",
   ] },
   { name: "Odo", job: "Elder", home: "Town Hall", work: "Town Hall", look: T(17, 13, 2, 0, 1, 0), lines: [
     "We built this town at the top of the world. Everything past the gates is wild.",
@@ -109,7 +109,7 @@ function footOf(door) {
 }
 const doorFeet = {};
 for (const [name, d] of Object.entries(DOORS)) {
-  if (name === "Mining Office") continue;
+  if (name === "Mining Sites") continue;
   doorFeet[name] = footOf(d);
   feet.push(doorFeet[name]);
 }
@@ -130,7 +130,7 @@ for (const l of [22, -22]) {
   road(on([[-46, l], [-22, l], [0, l], [22, l], [46, l]], ([x, z]) => z === l && Math.abs(x) <= 46));
   road(on([[l, -46], [l, -22], [l, 0], [l, 22], [l, 46]], ([x, z]) => x === l && Math.abs(z) <= 46));
 }
-// Round the fountain, and the alley past the Mining Office to the north road.
+// Round the fountain, and the alley past Mining Sites to the north road.
 const ring = [...RING, RING[0]];
 for (let i = 1; i < ring.length; i++) link(ring[i - 1], ring[i]);
 link([7, 0], [7, -16]);
@@ -159,7 +159,7 @@ function path(from, to) {
 /// A villager's day as a loop of stops: home, work, a wander, work again, and back home; each leg along the roads.
 function dayLoop(v, i) {
   const place = (name, n) => {
-    if (DOORS[name]) return { foot: name === "Mining Office" ? [0, -5] : doorFeet[name], door: [DOORS[name].x - TOWN.x, DOORS[name].z - TOWN.z] };
+    if (DOORS[name]) return { foot: name === "Mining Sites" ? [0, -5] : doorFeet[name], door: [DOORS[name].x - TOWN.x, DOORS[name].z - TOWN.z] };
     const list = spots[name];
     const p = list[(i + n) % list.length];
     return { foot: spotFoot(p), door: p };

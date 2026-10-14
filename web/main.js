@@ -23,7 +23,7 @@ import { createShop } from "./shop.js";
 import { createSky } from "./sky.js";
 import { createNet, short, SNEAKING } from "./net.js";
 import { createAvatar } from "./avatar.js";
-import { heldModel, setHeldAtlas, tileUVs } from "./held.js";
+import { heldModel, setHeldAtlas, tileUVs, bareArm, tickGlint } from "./held.js";
 import * as BLK from "./blocks.js";
 import { ICONS, drawRow, createHunger, EXHAUSTION, SPRINT_MIN_FOOD, HEAL_FOOD, EAT_SECONDS, FOOD_MAX } from "./vitals.js";
 import { runCommand } from "./commands.js";
@@ -42,9 +42,9 @@ THREE.ColorManagement.enabled = false; // colours are used as written (the block
 const $ = (id) => document.getElementById(id);
 const touch = matchMedia("(pointer: coarse)").matches;
 // On localhost only: ?t=0.25 fixes the sky's time of day (0 sunrise, 0.25 noon, 0.75 midnight), and window.mwc
-// exposes the game for testing.
+// exposes the game for testing (mwc.dev.swing, 0..1, holds the first-person hand at that point of a swing).
 const local = /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
-const dev = { time: local && new URLSearchParams(location.search).has("t") ? Number(new URLSearchParams(location.search).get("t")) : null };
+const dev = { time: local && new URLSearchParams(location.search).has("t") ? Number(new URLSearchParams(location.search).get("t")) : null, swing: null };
 
 // ---------------------------------------------------------------- scene
 const canvas = $("c");
@@ -72,10 +72,27 @@ const ambient = new THREE.AmbientLight(0xffffff, 0.6);
 const sunLight = new THREE.DirectionalLight(0xffffff, 0.7);
 sunLight.position.set(0.4, 1, 0.3);
 scene.add(ambient, sunLight);
+// What's in your hand in first person is drawn as Minecraft draws it: in its own pass after the world, with the depth
+// cleared first (so it never sinks into a wall), through its own camera at the eye looking along -z with a fixed
+// field of view (sprinting's widening doesn't stretch it), lit like the world where you stand (frame() copies the
+// world's lights). The hand itself hangs in handScene: see "held item" below.
+const HAND_FOV = 70;
+const handScene = new THREE.Scene();
+const handCamera = new THREE.PerspectiveCamera(HAND_FOV, 1, 0.05, 10);
+const handAmbient = new THREE.AmbientLight();
+const handSun = new THREE.DirectionalLight();
+handScene.add(handAmbient, handSun);
+// Minecraft's hand is placed for a 16:9 screen. On a squarer window (or a phone held upright) the same 70 degrees of
+// height would push it off the right edge, so there the hand camera keeps 16:9's width of view instead.
+const HAND_ASPECT = 16 / 9;
 function resize() {
   renderer.setSize(innerWidth, innerHeight, false);
-  camera.aspect = innerWidth / innerHeight;
+  const aspect = innerWidth / innerHeight;
+  camera.aspect = handCamera.aspect = aspect;
+  const t = Math.tan((HAND_FOV / 2) * (Math.PI / 180)) * Math.max(1, HAND_ASPECT / aspect);
+  handCamera.fov = 2 * Math.atan(t) * (180 / Math.PI);
   camera.updateProjectionMatrix();
+  handCamera.updateProjectionMatrix();
 }
 addEventListener("resize", resize);
 resize();
@@ -111,6 +128,7 @@ const move = {
 // you. Mining, placing and fighting always aim from your eyes, whichever view is on.
 const VIEWS = ["First person", "Behind you", "Facing you"];
 let view = 0, myLook = null, me = null;
+let handArm = null; // your bare arm in first person (held.js bareArm), in your miner's colours: made when first shown
 let heldNow = 0; // the item in your hand (0: nothing), as your miner and everyone else show it
 let prelaunch = false; // the room says $MINE isn't live yet: practice earnings, free trips and shop
 try { myLook = unpackTraits(JSON.parse(localStorage.getItem("mwc:wornTraits"))); } catch {}
@@ -124,6 +142,14 @@ function dressMe(traits) {
   me.hold(heldModel(heldNow));
   me.root.visible = view > 0;
   meHolder.add(me.root);
+  // The bare arm, in the new colours.
+  if (handArm) {
+    const shown = heldMesh === handArm;
+    if (shown) heldGroup.remove(handArm);
+    handArm.traverse((n) => { if (n.isMesh) { n.geometry.dispose(); n.material.dispose(); } });
+    handArm = null;
+    if (shown) showHeld(0);
+  }
 }
 dressMe(myLook);
 function nextView() {
@@ -272,23 +298,36 @@ function closeInventory() { $("inv").hidden = true; }
 // ---------------------------------------------------------------- held item, target box, cracks, debris
 const atlasTex = world.uniforms.map.value;
 setHeldAtlas(atlas, atlasTex);
-// In first person what's in hand hangs off the view and moves the way Minecraft's does (ItemInHandRenderer): it bobs
-// with the view (bobber), swings (a 6-tick swing, like your miner's, avatar.js), and dips out of sight and comes back
-// up when you change what you hold.
-const HAND = new THREE.Vector3(0.48, -0.42, -0.78); // where it's held, in the view
-const HAND_TICKS = 6, HAND_DIP = 0.4, HAND_DROP = 0.6; // a swing's ticks; how fast it dips (a tick) and how far down
+// In first person what's in hand hangs off the view exactly as Minecraft Java's does (GameRenderer.renderItemInHand
+// and ItemInHandRenderer, right-handed), in handScene (above), metres being blocks, x right, y up, -z ahead:
+// - bobber: the view bobbing (placeCamera), the same as the world's;
+// - swayer: the hand lagging the view as you turn (Minecraft's xBob and yBob);
+// - heldGroup: the arm, a matrix built up as Minecraft's pose stack is (drawHand): the swing, the arm's place and the
+//   equip's dip, the attack's turn, or the lift to the mouth while eating;
+// - in it, the item placed by its model's own first-person display settings (held.js heldModel "first"), or with
+//   nothing in hand, Minecraft's bare arm (held.js bareArm, in your miner's colours).
+const HAND = {
+  side: 1, // the right hand (Minecraft's 1; the left would be -1)
+  x: 0.56, y: -0.52, z: -0.72, drop: -0.6, // applyItemArmTransform: where the item is held, and its drop when changing
+  ticks: 6, dip: 0.4, // a swing's ticks (as your miner's, avatar.js); the most the equip's height changes in a tick
+  sway: 0.1, swayEase: 0.5, // turned by (view - bob) x sway; bob eases this much of the way to the view a tick
+  eatTicks: EAT_SECONDS * 20, // food's use time (Minecraft's 32 ticks)
+};
 const bobber = new THREE.Group();
+const swayer = new THREE.Group();
 const heldGroup = new THREE.Group();
-camera.add(bobber);
-bobber.add(heldGroup);
-heldGroup.position.copy(HAND);
-let heldMesh = null;
-/// The hand's swing (its tick, and how far through it is, 0..1) and height (1 up, 0 out of sight), each with its
-/// value a tick ago, and the item whose model it shows.
-const hand = { swinging: false, time: 0, attack: 0, attackOld: 0, height: 1, heightOld: 1, shown: 0 };
+heldGroup.matrixAutoUpdate = false; // (drawHand sets its matrix)
+handScene.add(bobber);
+bobber.add(swayer);
+swayer.add(heldGroup);
+let heldMesh = null; // what's in it now
+/// The hand's swing (its tick, and how far through it is, 0..1), height (1 up, 0 out of sight: Minecraft's
+/// mainHandHeight) and the view it lags behind (Minecraft's xBob and yBob, in radians as player.pitch and yaw), each
+/// with its value a tick ago, and the item whose model it shows.
+const hand = { swinging: false, time: 0, attack: 0, attackOld: 0, height: 1, heightOld: 1, shown: 0, pitch: 0, pitchOld: 0, yaw: 0, yawOld: 0 };
 /// A swing of the hand (a new one only once the last is halfway: mining keeps starting them).
 function swingHand() {
-  if (!hand.swinging || hand.time >= HAND_TICKS / 2 || hand.time < 0) { hand.time = -1; hand.swinging = true; }
+  if (!hand.swinging || hand.time >= HAND.ticks / 2 || hand.time < 0) { hand.time = -1; hand.swinging = true; }
 }
 let gearTimer = 0;
 /// Tells the room what you wear and hold (the four armor tiers, then the item in hand), a moment after the last
@@ -309,63 +348,101 @@ function updateHeld() {
     sendGear();
   }
 }
-/// Puts item `id`'s first-person model in the hand (0: nothing).
+/// Puts item `id`'s first-person model in the hand, or with nothing (0) the bare arm.
 function showHeld(id) {
   hand.shown = id;
-  if (heldMesh) {
-    heldGroup.remove(heldMesh);
-    if (heldMesh.isMesh) { heldMesh.geometry.dispose(); heldMesh.material.dispose(); } // (an item's model is shared: held.js)
-    heldMesh = null;
-  }
-  if (!id) return;
-  if (id < 64 && !BLOCKS[id]?.plant && id !== BLK.TORCH) {
-    const g = new THREE.BoxGeometry(0.2, 0.2, 0.2);
-    const [top, side, bottom] = faceTiles(id);
-    tileUVs(g, [side, side, top, bottom, side, side]);
-    heldMesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ map: atlasTex, alphaTest: 0.5, transparent: id === WATER }));
-    heldMesh.rotation.set(0.2, 0.7, 0);
-  } else {
-    // The same model the others see in your hand (held.js), smaller, its blade or head up and to the left.
-    heldMesh = heldModel(id);
-    heldMesh.scale.setScalar(heldMesh.userData.kind === "weapon" ? 0.38 : 0.48);
-    heldMesh.rotation.set(0, -0.35, 1.4);
-    heldMesh.position.set(0.02, 0.02, 0);
-  }
-  heldGroup.add(heldMesh);
+  if (heldMesh) heldGroup.remove(heldMesh); // (an item's model is shared, held.js; the arm is kept)
+  heldMesh = id ? heldModel(id, "first") : (handArm ??= bareArm(me.colours));
+  if (heldMesh) heldGroup.add(heldMesh);
 }
-/// The hand's tick: the swing goes on (mining or fighting, held down, keeps it going), and it dips to change the item.
+const turnAngle = (r) => r - 2 * Math.PI * Math.floor(r / (2 * Math.PI) + 0.5); // into [-pi, pi)
+/// The hand's tick (Minecraft's ItemInHandRenderer.tick and LocalPlayer's xBob/yBob): the swing goes on (mining or
+/// fighting, held down, keeps it going); the lag eases towards the view; the height heads for the attack strength
+/// cubed (so it dips after a hit and rises as the weapon is ready again, as Minecraft's does), or down to change what's
+/// shown, at most `dip` a tick.
 function handTick(busy) {
   hand.attackOld = hand.attack;
   hand.heightOld = hand.height;
+  hand.pitchOld = hand.pitch;
+  hand.yawOld = hand.yaw;
+  hand.pitch += (player.pitch - hand.pitch) * HAND.swayEase;
+  hand.yaw += turnAngle(player.yaw - hand.yaw) * HAND.swayEase;
   if (busy) swingHand();
-  if (hand.swinging && ++hand.time >= HAND_TICKS) { hand.time = 0; hand.swinging = false; }
+  if (hand.swinging && ++hand.time >= HAND.ticks) { hand.time = 0; hand.swinging = false; }
   if (!hand.swinging) hand.time = 0;
-  hand.attack = hand.time / HAND_TICKS;
-  const want = heldNow === hand.shown ? 1 : 0;
-  hand.height += Math.max(-HAND_DIP, Math.min(HAND_DIP, want - hand.height));
+  hand.attack = hand.time / HAND.ticks;
+  const strength = Math.min(1, (performance.now() - attackAt) / (TOOLS[heldNow]?.swingMs ?? ATTACK_MS));
+  const want = heldNow === hand.shown ? strength ** 3 : 0;
+  hand.height += Math.max(-HAND.dip, Math.min(HAND.dip, want - hand.height));
   if (hand.height < 0.1 && heldNow !== hand.shown) showHeld(heldNow);
 }
-const _q = new THREE.Quaternion(), _X = new THREE.Vector3(1, 0, 0), _Y = new THREE.Vector3(0, 1, 0), _Z = new THREE.Vector3(0, 0, 1);
 const DEG = Math.PI / 180;
-/// Poses the first-person hand `a` (0..1) of the way between ticks: Minecraft's swing (across and up, then a chop),
-/// the dip, and a wobble while eating.
+/// heldGroup's matrix, built up the way Minecraft's PoseStack is: each step moves or turns (degrees) what follows.
+const _step = new THREE.Matrix4();
+const pose = {
+  m: heldGroup.matrix,
+  move(x, y, z) { this.m.multiply(_step.makeTranslation(x, y, z)); return this; },
+  turnX(d) { this.m.multiply(_step.makeRotationX(d * DEG)); return this; },
+  turnY(d) { this.m.multiply(_step.makeRotationY(d * DEG)); return this; },
+  turnZ(d) { this.m.multiply(_step.makeRotationZ(d * DEG)); return this; },
+};
+/// Poses the first-person hand `a` (0..1) of the way between ticks, as Minecraft's renderHandsWithItems does.
 function drawHand(a) {
-  let t = hand.attack - hand.attackOld;
-  if (t < 0) t += 1; // (the swing wrapped round to the next one)
-  t = hand.attackOld + t * a;
-  const h = hand.heightOld + (hand.height - hand.heightOld) * a, r = Math.sqrt(t);
-  heldGroup.position.set(HAND.x - 0.4 * Math.sin(r * Math.PI), HAND.y + 0.2 * Math.sin(r * Math.PI * 2) - HAND_DROP * (1 - h), HAND.z - 0.2 * Math.sin(t * Math.PI));
-  const f = Math.sin(t * t * Math.PI), f1 = Math.sin(r * Math.PI);
-  heldGroup.quaternion.setFromAxisAngle(_Y, (45 - 20 * f) * DEG)
-    .multiply(_q.setFromAxisAngle(_Z, -20 * f1 * DEG)).multiply(_q.setFromAxisAngle(_X, -80 * f1 * DEG))
-    .multiply(_q.setFromAxisAngle(_Y, -45 * DEG));
-  if (eatT > 0) {
-    const w = eatT * 6;
-    heldGroup.position.y -= Math.abs(Math.sin(w)) * 0.1;
-    heldGroup.position.z += Math.sin(w) * 0.08;
-    heldGroup.rotateX(-Math.abs(Math.sin(w)) * 0.6);
+  const side = HAND.side;
+  let p = hand.attack - hand.attackOld;
+  if (p < 0) p += 1; // (the swing wrapped round to the next one)
+  p = dev.swing ?? hand.attackOld + p * a; // the swing's progress, 0..1
+  const sq = Math.sqrt(p), equip = 1 - (hand.heightOld + (hand.height - hand.heightOld) * a);
+  // The lag behind the view (Minecraft turns by (view - bob) x 0.1, its pitch down and yaw right being ours negated).
+  const bobPitch = hand.pitchOld + (hand.pitch - hand.pitchOld) * a;
+  const bobYaw = hand.yawOld + turnAngle(hand.yaw - hand.yawOld) * a;
+  swayer.rotation.set(-(player.pitch - bobPitch) * HAND.sway, -turnAngle(player.yaw - bobYaw) * HAND.sway, 0, "XYZ");
+  pose.m.identity();
+  if (heldMesh && heldMesh === handArm) {
+    // The bare arm (renderPlayerArm): out from the lower right, punching forward in a swing.
+    pose.move(side * (-0.3 * Math.sin(sq * Math.PI) + 0.64), 0.4 * Math.sin(sq * Math.PI * 2) - 0.6 + equip * -0.6,
+      -0.4 * Math.sin(p * Math.PI) - 0.72)
+      .turnY(side * 45)
+      .turnY(side * Math.sin(sq * Math.PI) * 70)
+      .turnZ(side * Math.sin(p * p * Math.PI) * -20)
+      .move(side * -1, 3.6, 3.5)
+      .turnZ(side * 120).turnX(200).turnY(side * -135)
+      .move(side * 5.6, 0, 0);
+  } else if (move.eating && eatT > 0) {
+    // Eating (applyEatTransform): lifted to the mouth and turned to face you, bobbing as you chew.
+    const left = Math.max(0, HAND.eatTicks - eatT * 20) + 1, f = Math.min(1, left / HAND.eatTicks);
+    if (f < 0.8) pose.move(0, Math.abs(Math.cos((left / 4) * Math.PI) * 0.1), 0);
+    const up = 1 - f ** 27;
+    pose.move(up * 0.6 * side, up * -0.5, 0).turnY(side * up * 90).turnX(up * 10).turnZ(side * up * 30)
+      .move(side * HAND.x, HAND.y + equip * HAND.drop, HAND.z);
+  } else {
+    // The swing: across and up, then a chop down and away (the swing's move, applyItemArmTransform, then
+    // applyItemArmAttackTransform).
+    pose.move(side * -0.4 * Math.sin(sq * Math.PI), 0.2 * Math.sin(sq * Math.PI * 2), -0.2 * Math.sin(p * Math.PI))
+      .move(side * HAND.x, HAND.y + equip * HAND.drop, HAND.z)
+      .turnY(side * (45 + Math.sin(p * p * Math.PI) * -20))
+      .turnZ(side * Math.sin(sq * Math.PI) * -20)
+      .turnX(Math.sin(sq * Math.PI) * -80)
+      .turnY(side * -45);
   }
+  heldGroup.matrixWorldNeedsUpdate = true;
 }
+/// Draws the hand over the world (frame(), after the world): lit as the world is where you stand, the sun's direction
+/// turned into the view.
+const _viewTurn = new THREE.Quaternion();
+function renderHand() {
+  if (view !== 0 || !heldGroup.visible || !heldMesh) return;
+  handAmbient.color.copy(ambient.color);
+  handAmbient.intensity = ambient.intensity;
+  handSun.color.copy(sunLight.color);
+  handSun.intensity = sunLight.intensity;
+  handSun.position.copy(sunLight.position).applyQuaternion(_viewTurn.copy(camera.quaternion).invert());
+  renderer.autoClear = false;
+  renderer.clearDepth();
+  renderer.render(handScene, handCamera);
+  renderer.autoClear = true;
+}
+showHeld(0);
 
 // The block outline, the cracks and the debris have flat positions (userData.at, userData.p) and are drawn bent round
 // the planet each frame (drawOnPlanet).
@@ -423,7 +500,7 @@ function updateDebris(dt) {
   }
 }
 
-// The Mining Office's sign.
+// The Mining Sites' sign.
 let officeSign = null;
 {
   const c = document.createElement("canvas");
@@ -432,12 +509,12 @@ let officeSign = null;
   g.fillStyle = "#3a2a18"; g.fillRect(0, 0, 512, 96);
   g.strokeStyle = "#f5c832"; g.lineWidth = 8; g.strokeRect(4, 4, 504, 88);
   g.fillStyle = "#f5c832"; g.font = "700 46px Silkscreen, monospace"; g.textAlign = "center"; g.textBaseline = "middle";
-  g.fillText("MINING OFFICE", 256, 50);
+  g.fillText("MINING SITES", 256, 50);
   const t = new THREE.CanvasTexture(c);
   officeSign = new THREE.Mesh(new THREE.PlaneGeometry(6, 1.1), new THREE.MeshBasicMaterial({ map: t }));
   officeSign.userData.at = new THREE.Vector3(TOWN.x + 0.5, TOWN.y + 4.45, TOWN.z + OFFICE.z1 + 1.02);
   scene.add(officeSign);
-  document.fonts?.ready.then(() => { g.fillStyle = "#3a2a18"; g.fillRect(8, 8, 496, 80); g.fillStyle = "#f5c832"; g.fillText("MINING OFFICE", 256, 50); t.needsUpdate = true; });
+  document.fonts?.ready.then(() => { g.fillStyle = "#3a2a18"; g.fillRect(8, 8, 496, 80); g.fillStyle = "#f5c832"; g.fillText("MINING SITES", 256, 50); t.needsUpdate = true; });
 }
 
 // ---------------------------------------------------------------- monsters
@@ -1676,12 +1753,14 @@ function frame() {
   ambient.intensity = (0.42 + s.daylight * 0.5) * Math.PI;
   sunLight.intensity = s.daylight * 0.35 * Math.PI;
   drawOnPlanet(dt);
+  tickGlint(now / 1000);
   renderer.render(scene, camera);
+  renderHand();
 }
 
 /// Bends everything drawn in the world round the planet as seen from the camera, just before the render: the chunks
 /// (in the shader, at their copies nearest the camera), monsters, other miners, your own miner, the block outline,
-/// the cracks, debris and the Mining Office's sign.
+/// the cracks, debris and the Mining Sites' sign.
 const _flat = new THREE.Vector3();
 function drawOnPlanet(dt) {
   followPlanet(camera.position, dt);
@@ -1711,5 +1790,7 @@ if (local) {
     get lookingAt() { return lookingAt; },
     // Moving, for testing: the keys held, a movement tick (run them by hand to measure speeds), its state, your miner.
     keys, stickState, playerTick, move, hand, hunger, FEEL, settings, drawnPos, get me() { return me; }, get view() { return view; },
+    // The first-person hand: its scene and camera, and what's in it.
+    handScene, handCamera, heldGroup, get heldMesh() { return heldMesh; }, get eatT() { return eatT; }, setPlacing: (on) => { placing = on; placeAt = 0; },
   };
 }

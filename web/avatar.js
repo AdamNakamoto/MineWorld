@@ -12,8 +12,11 @@ import * as THREE from "https://esm.sh/three@0.160.0";
 import { pixels, HAIRS, HATS, OUTFITS, SKINS } from "./crafters.js";
 import { ARMOR_COLOURS } from "./textures.js";
 import { wrapDelta } from "./rules.js";
+import { withGlint } from "./held.js";
 
 const PX = 1.8 / 32; // one "pixel" of the 32-pixel-tall figure, in metres
+const ITEM_BLOCK = 16 * PX; // a held item's model is measured in blocks (held.js): one is 16 of the figure's pixels
+const ARMOR_GLINT = { scale: 1.5, strength: 0.55 }; // worn Crystal armor's glint: its streaks' repeats a metre, and how bright
 const TICK = 1 / 20; // seconds: the animation's step, Minecraft's tick
 const DEG = Math.PI / 180;
 /// Minecraft's numbers for the biped's animation (angles in radians, lengths in pixels).
@@ -187,10 +190,11 @@ export function createAvatar(traits, gear = [0, 0, 0, 0]) {
     add(2.2, 1.8, 1, hcol.Q, 0, 9, 4.9, 0x888866);
   }
 
-  // Armor over the outfit, in its tier's colours (Crystal glows a little).
+  // Armor over the outfit, in its tier's colours (Crystal glows a little, and has the enchantment glint, held.js).
   const plate = (tier, w, h, d, x, y, z, parent) => {
     const [main] = ARMOR_COLOURS[tier - 1];
     const m = box(w, h, d, main, tier === 4 ? 0x3a1050 : 0);
+    if (tier === 4) withGlint(m.material, ARMOR_GLINT.scale, ARMOR_GLINT.strength);
     m.position.set(x * PX, y * PX, z * PX);
     parent.add(m);
   };
@@ -202,9 +206,11 @@ export function createAvatar(traits, gear = [0, 0, 0, 0]) {
   if (gear[2]) for (const l of legs) plate(gear[2], 4.6, 6, 4.6, 0, -3, 0, l);
   if (gear[3]) for (const l of legs) plate(gear[3], 4.8, 3.2, 5, 0, -10.6, 0.3, l);
 
-  // What's in the hand (held.js): the right hand (the miner faces +z, so its right is -x), the one that swings.
+  // What's in the hand (held.js): the right hand (the miner faces +z, so its right is -x), the one that swings. The
+  // model inside is in blocks, at Minecraft's third-person size.
   const grip = new THREE.Group();
   grip.position.set(0, -11 * PX, 0.5 * PX);
+  grip.scale.setScalar(ITEM_BLOCK);
   arms[0].add(grip);
 
   // The animation, stepped once a tick from where the miner is (each value's last two kept, to draw in between).
@@ -316,6 +322,8 @@ export function createAvatar(traits, gear = [0, 0, 0, 0]) {
 
   return {
     root, head,
+    /// The colours of the right arm's sleeve and hand (for the bare arm in first person, held.js bareArm).
+    colours: { skin: skin.S, sleeve },
     /// Puts `model` (held.js heldModel, or null for nothing) in the hand, in place of what was there, and holds it
     /// the way its kind is held (POSES).
     hold(model) {

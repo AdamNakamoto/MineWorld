@@ -97,8 +97,8 @@ reaches up to 15 chunks.
 ## The town and its villagers
 
 The town at the top of the planet (`web/town.js`) is protected: nobody mines or builds within 64 blocks of the
-fountain (the first try explains, and offers `/wild`). Stone main roads and gravel lanes, the plaza and the Mining
-Office, a bakery, smithy, library, trading post, two-storey tavern, barn, town hall, clock tower and watchtower,
+fountain (the first try explains, and offers `/wild`). Stone main roads and gravel lanes, the plaza and Mining Sites
+(the office), a bakery, smithy, library, trading post, two-storey tavern, barn, town hall, clock tower and watchtower,
 eleven houses, a flower garden, a pond, an orchard and gates. Fourteen villagers (`web/villagers.js`) live in the
 houses, work in the shops and walk the roads to the plaza, the garden and the pond, then go home at dusk; where each
 one is follows the clock alone, so every player sees them in the same place with nothing sent over the network. Click

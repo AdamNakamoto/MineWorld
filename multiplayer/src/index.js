@@ -1247,8 +1247,8 @@ export class World extends DurableObject {
     const wallet = a.wallet;
     const r = await this.readItem("crafter", tokenId, wallet).catch((e) => ({ failed: e }));
     if (r.failed) return this.chainDown(ws, r.failed);
-    if (r.sealed) return this.send(ws, ["err", "The Crafters aren't revealed yet."]);
-    if (!r.mine) return this.send(ws, ["err", "That Crafter isn't in your wallet."]);
+    if (r.sealed) return this.send(ws, ["err", "The I'M DIO collection isn't revealed yet."]);
+    if (!r.mine) return this.send(ws, ["err", "That DIO isn't in your wallet."]);
     if (a.wallet !== wallet) return; // (signed out meanwhile)
     a.look = packTraits(r.traits);
     this.zoneCast(a.zone, ["look", a.id, a.look]);
@@ -1377,7 +1377,7 @@ export class World extends DurableObject {
           a.look = null;
           this.zoneCast(a.zone, ["look", a.id, null]);
         }
-        this.send(ws, ["err", `Your ${slot === "crafter" ? "Crafter" : SLOTS[slot].name.toLowerCase()} isn't in this wallet any more, so its boost is off.`]);
+        this.send(ws, ["err", `Your ${slot === "crafter" ? "DIO" : SLOTS[slot].name.toLowerCase()} isn't in this wallet any more, so its boost is off.`]);
         continue;
       }
       const level = r.levelOk ? r.level : item[2];

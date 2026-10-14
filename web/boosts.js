@@ -63,7 +63,7 @@ export const CRAFTER_LEVELS = {
 /// contract); `tiers`: the boost for each tier (Common, Rare, Legendary); and `levels` if tokens have levels.
 export const SLOTS = {
   crafter: {
-    name: "Crafter", env: "CRAFTERS_ADDRESS", contract: null, live: true, // (its address is the Crafters' own setting)
+    name: "DIO", env: "CRAFTERS_ADDRESS", contract: null, live: true, // (its address is the Crafters' own setting)
     tierOf: "rarity",
     tiers: [{ speed: 5, earn: 5, cap: 10 }, { speed: 10, earn: 10, cap: 25 }, { speed: 20, earn: 20, cap: 50 }],
     levels: { env: "LEVELS_ADDRESS", contract: null, fn: "levelOf", table: CRAFTER_LEVELS },

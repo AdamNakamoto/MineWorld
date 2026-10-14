@@ -1,4 +1,4 @@
-// The town at the centre of the planet: the spawn, the Mining Office, roads, shops, houses, gardens and the villagers'
+// The town at the centre of the planet: the spawn, Mining Sites (the office where sites are opened), roads, shops, houses, gardens and the villagers'
 // homes (villagers.js walks them about). The ground under it is solid (no caves, no ores) and the land is flattened
 // round it; nobody mines or builds within PROTECT_R (rules.js). Deterministic like worldgen.js, which asks townBlock
 // first for every column within TOWN_R. Everything is placed relative to the town's centre: +x east, +z south.
@@ -13,7 +13,7 @@ export const TOWN_FLAT = 60; // the town's ground is level out to here
 export const TOWN_BLEND = 84; // and blends into the land by here
 export const TOWN_R = 56; // townBlock draws everything within this radius (inside the protected PROTECT_R)
 
-/// The Mining Office: walls from OFFICE.x0..x1, z0..z1, door on the south side.
+/// Mining Sites, the office in the middle of town: walls from OFFICE.x0..x1, z0..z1, door on the south side.
 export const OFFICE = { x0: -6, x1: 6, z0: -14, z1: -6, door: 0 };
 
 /// The rocket's launch pad (zones.js): a round pad of landing plates in the north-east, on open grass between the
@@ -52,7 +52,7 @@ export const BUILDINGS = [
 ];
 
 /// Where each building's door opens onto, in world coordinates: the villagers' homes and workplaces.
-export const DOORS = Object.fromEntries([["Mining Office", { x: TOWN.x + OFFICE.door, z: TOWN.z + OFFICE.z1 + 1 }],
+export const DOORS = Object.fromEntries([["Mining Sites", { x: TOWN.x + OFFICE.door, z: TOWN.z + OFFICE.z1 + 1 }],
   ...BUILDINGS.map((b) => {
     const out = { n: [b.at, b.z0 - 1], s: [b.at, b.z1 + 1], e: [b.x1 + 1, b.at], w: [b.x0 - 1, b.at] }[b.door];
     return [b.name, { x: TOWN.x + out[0], z: TOWN.z + out[1] }];
@@ -181,7 +181,7 @@ function roofOver(dx, dz, ry) {
   return -1;
 }
 
-/// The Mining Office (as it was first built).
+/// The Mining Sites office (as it was first built).
 function officeBlock(dx, dz, ry) {
   const o = OFFICE, cz = (o.z0 + o.z1) / 2;
   const inOffice = dx >= o.x0 && dx <= o.x1 && dz >= o.z0 && dz <= o.z1;
