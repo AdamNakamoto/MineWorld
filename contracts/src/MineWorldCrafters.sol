@@ -209,7 +209,7 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
     }
 
     /// @notice The extra traits the attributes extension gives `tokenId`, as JSON objects separated by commas ("" with
-    ///         no extension, or if it can't be read: the metadata never breaks for it).
+    ///         no extension, or if its call reverts; the owner picks the extension, which must return a string cheaply).
     function extraAttributes(uint256 tokenId) public view returns (string memory extra) {
         _requireOwned(tokenId);
         address x = attributesExtension;
