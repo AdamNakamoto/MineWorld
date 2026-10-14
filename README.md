@@ -47,10 +47,13 @@ run `python3 tools/rpc-relay.py` and fork through it: `FORK_URL=http://127.0.0.1
 
 ## How to play
 
-WASD to move, Space to jump, Shift to sprint, the mouse to look. Hold the left button to mine (or attack, or click a
-villager to talk), right click to place the block in your hand or hold it to eat, 1-9 or the wheel to pick, **E** the
-inventory and crafting, **M** the Mining Site panel, **V** to see your miner from outside, **B** voice chat, **T** or
-Enter to chat, **F** the rocket (on its pad), **Esc** the menu (your name, voice, settings). Phones get a stick,
+WASD to move, Space to jump, Ctrl (or W twice quickly) to sprint, Shift to sneak (you won't walk off an edge), the
+mouse to look. Moving feels like Minecraft Java: the same 20 ticks a second and the same speeds and jump
+(`web/physics.js`), view bobbing (it can be turned off in the menu) and its animations for every miner
+(`web/avatar.js`). Hold the left button to mine (or attack, or click a villager to talk), right click to place the
+block in your hand or hold it to eat, 1-9 or the wheel to pick, **E** the inventory and crafting, **M** the Mining
+Site panel, **V** to see your miner from outside, **B** voice chat, **T** or Enter to chat, **F** the rocket (on its
+pad), **Esc** the menu (your name, voice, settings). Phones get a stick (push it all the way to sprint),
 look-by-drag, and mine / place / jump buttons. Chat commands: `/wild` (a safe random spot far from spawn), `/spawn`,
 `/sethome` and `/home`, `/help`; on a zone they work within it (`/spawn` is its landing pad, `/home` only where it was set).
 

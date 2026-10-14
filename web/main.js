@@ -15,13 +15,13 @@ import { makeAtlas, iconFor, faceTiles, tileOf, ATLAS_TILES } from "./textures.j
 import { createWorld, keyOf, MAX_RADIUS } from "./world.js";
 import { follow as followPlanet, place as placeOnPlanet, bend as bendPoint } from "./planet.js";
 import { createGlobe } from "./globe.js";
-import { moveBox, boxHitsBlock } from "./physics.js";
+import { boxHitsBlock, stepPlayer, TICK, MOVE } from "./physics.js";
 import { createInventory, SLOTS, HOTBAR } from "./inventory.js";
 import { createMobs } from "./mobs.js";
 import { createVillagers } from "./villagers.js";
 import { createShop } from "./shop.js";
 import { createSky } from "./sky.js";
-import { createNet, short } from "./net.js";
+import { createNet, short, SNEAKING } from "./net.js";
 import { createAvatar } from "./avatar.js";
 import { heldModel, setHeldAtlas, tileUVs } from "./held.js";
 import * as BLK from "./blocks.js";
@@ -52,7 +52,20 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPrefer
 renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 renderer.setPixelRatio(Math.min(devicePixelRatio, touch ? 1.5 : 2));
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, 1, 0.05, 500);
+// How moving and looking feel, after Minecraft Java (the movement itself is physics.js MOVE, the miner's animation
+// avatar.js ANIM).
+const FEEL = {
+  fov: 70, sprintFov: 1.15, fovEase: 0.5, // the view's height in degrees; x this sprinting, eased in this much a tick
+  look: 0.15 * Math.PI / 180, // radians turned per mouse count at mouse speed 1 (Minecraft's default sensitivity)
+  sneakEye: 1.27, eyeEase: 0.5, // eye height while sneaking (standing: EYE), eased this much of the way a tick
+  doubleTap: 7, // ticks: W pressed again within this sprints
+  sprintStart: 0.8, // the forward push it takes to start sprinting (sneaking's 0.3 isn't enough)
+  wallAngle: 8 * Math.PI / 180, // running into a wall more head-on than this from your push stops a sprint
+  bobStep: 0.6, bobMax: 0.1, bobEase: 0.4, // view bobbing: its phase per block walked, its most, eased this much a tick
+  fall: 3, // blocks: a longer fall hurts a point (half a heart) for every block past it, part blocks rounded up
+  maxCatchUp: 5, // ticks run in one frame at most (after a stall the game slows rather than leaping)
+};
+const camera = new THREE.PerspectiveCamera(FEEL.fov, 1, 0.05, 500);
 camera.rotation.order = "YXZ";
 scene.add(camera);
 const ambient = new THREE.AmbientLight(0xffffff, 0.6);
@@ -74,7 +87,7 @@ const sky = createSky(scene);
 const inv = createInventory();
 world.onDrop = (k) => synced.delete(k);
 
-let settings = { view: touch ? 5 : 10, mouse: 1 };
+let settings = { view: touch ? 5 : 10, mouse: 1, bob: true };
 try { settings = { ...settings, ...JSON.parse(localStorage.getItem("mwc:settings")) }; } catch {}
 settings.view = Math.max(3, Math.min(MAX_RADIUS, Number(settings.view) || 10));
 world.setRadius(settings.view);
@@ -82,9 +95,17 @@ world.setRadius(settings.view);
 // ---------------------------------------------------------------- the player
 const player = {
   pos: new THREE.Vector3(SPAWN.x, SPAWN.y, SPAWN.z), vel: new THREE.Vector3(), yaw: 0, pitch: 0,
-  onGround: false, water: false, health: 20, hurtAt: 0, alive: true, fallFrom: null, sel: 0,
+  onGround: false, water: false, health: 20, hurtAt: 0, alive: true, fallFrom: null, sel: 0, jumpDelay: 0,
 };
 const HALF = 0.3, TALL = 1.8, EYE = 1.62;
+/// The player's movement between ticks (playerTick): the position a tick ago (drawn between it and player.pos), and
+/// what eases from tick to tick (each with its value a tick ago, to draw in between): the eye's height, the view's
+/// widening while sprinting, and the view bobbing's phase (walk) and strength (bob).
+const move = {
+  acc: 0, prev: new THREE.Vector3().copy(player.pos), sprinting: false, sneaking: false, eating: false,
+  tap: 0, hadForward: false, tapped: false, jumpPressed: false, autoJump: false, wall: false,
+  eye: EYE, eyeOld: EYE, fov: 1, fovOld: 1, walk: 0, walkOld: 0, bob: 0, bobOld: 0,
+};
 
 // Your own miner, seen from outside: V (or the 👁 button) switches between first person, behind you, and facing
 // you. Mining, placing and fighting always aim from your eyes, whichever view is on.
@@ -175,7 +196,7 @@ function select(i) {
 let targetTimer = 0;
 function showTarget(text, ms) {
   const t = $("target");
-  t.textContent = text;
+  if (t.textContent !== text) t.textContent = text; // (it's called every frame while you look at something)
   t.hidden = false;
   clearTimeout(targetTimer);
   targetTimer = setTimeout(() => (t.hidden = true), ms);
@@ -251,10 +272,24 @@ function closeInventory() { $("inv").hidden = true; }
 // ---------------------------------------------------------------- held item, target box, cracks, debris
 const atlasTex = world.uniforms.map.value;
 setHeldAtlas(atlas, atlasTex);
+// In first person what's in hand hangs off the view and moves the way Minecraft's does (ItemInHandRenderer): it bobs
+// with the view (bobber), swings (a 6-tick swing, like your miner's, avatar.js), and dips out of sight and comes back
+// up when you change what you hold.
+const HAND = new THREE.Vector3(0.48, -0.42, -0.78); // where it's held, in the view
+const HAND_TICKS = 6, HAND_DIP = 0.4, HAND_DROP = 0.6; // a swing's ticks; how fast it dips (a tick) and how far down
+const bobber = new THREE.Group();
 const heldGroup = new THREE.Group();
-camera.add(heldGroup);
-heldGroup.position.set(0.48, -0.42, -0.78);
-let heldMesh = null, swingT = 0;
+camera.add(bobber);
+bobber.add(heldGroup);
+heldGroup.position.copy(HAND);
+let heldMesh = null;
+/// The hand's swing (its tick, and how far through it is, 0..1) and height (1 up, 0 out of sight), each with its
+/// value a tick ago, and the item whose model it shows.
+const hand = { swinging: false, time: 0, attack: 0, attackOld: 0, height: 1, heightOld: 1, shown: 0 };
+/// A swing of the hand (a new one only once the last is halfway: mining keeps starting them).
+function swingHand() {
+  if (!hand.swinging || hand.time >= HAND_TICKS / 2 || hand.time < 0) { hand.time = -1; hand.swinging = true; }
+}
 let gearTimer = 0;
 /// Tells the room what you wear and hold (the four armor tiers, then the item in hand), a moment after the last
 /// change, so scrolling through the hotbar sends one message rather than one per slot.
@@ -264,6 +299,8 @@ function sendGear(now = false) {
   if (now) go();
   else gearTimer = setTimeout(go, 400);
 }
+/// After the selected slot or what's in it changed: your miner holds the new item at once (and the others are told);
+/// your first-person hand dips and comes back up with it (handTick).
 function updateHeld() {
   const id = inv.slot(player.sel)?.id ?? 0;
   if (id !== heldNow) {
@@ -271,27 +308,63 @@ function updateHeld() {
     me?.hold(heldModel(id));
     sendGear();
   }
+}
+/// Puts item `id`'s first-person model in the hand (0: nothing).
+function showHeld(id) {
+  hand.shown = id;
   if (heldMesh) {
     heldGroup.remove(heldMesh);
     if (heldMesh.isMesh) { heldMesh.geometry.dispose(); heldMesh.material.dispose(); } // (an item's model is shared: held.js)
     heldMesh = null;
   }
-  const s = inv.slot(player.sel);
-  if (!s) return;
-  if (s.id < 64 && !BLOCKS[s.id]?.plant && s.id !== BLK.TORCH) {
+  if (!id) return;
+  if (id < 64 && !BLOCKS[id]?.plant && id !== BLK.TORCH) {
     const g = new THREE.BoxGeometry(0.2, 0.2, 0.2);
-    const [top, side, bottom] = faceTiles(s.id);
+    const [top, side, bottom] = faceTiles(id);
     tileUVs(g, [side, side, top, bottom, side, side]);
-    heldMesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ map: atlasTex, alphaTest: 0.5, transparent: s.id === WATER }));
+    heldMesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ map: atlasTex, alphaTest: 0.5, transparent: id === WATER }));
     heldMesh.rotation.set(0.2, 0.7, 0);
   } else {
     // The same model the others see in your hand (held.js), smaller, its blade or head up and to the left.
-    heldMesh = heldModel(s.id);
+    heldMesh = heldModel(id);
     heldMesh.scale.setScalar(heldMesh.userData.kind === "weapon" ? 0.38 : 0.48);
     heldMesh.rotation.set(0, -0.35, 1.4);
     heldMesh.position.set(0.02, 0.02, 0);
   }
   heldGroup.add(heldMesh);
+}
+/// The hand's tick: the swing goes on (mining or fighting, held down, keeps it going), and it dips to change the item.
+function handTick(busy) {
+  hand.attackOld = hand.attack;
+  hand.heightOld = hand.height;
+  if (busy) swingHand();
+  if (hand.swinging && ++hand.time >= HAND_TICKS) { hand.time = 0; hand.swinging = false; }
+  if (!hand.swinging) hand.time = 0;
+  hand.attack = hand.time / HAND_TICKS;
+  const want = heldNow === hand.shown ? 1 : 0;
+  hand.height += Math.max(-HAND_DIP, Math.min(HAND_DIP, want - hand.height));
+  if (hand.height < 0.1 && heldNow !== hand.shown) showHeld(heldNow);
+}
+const _q = new THREE.Quaternion(), _X = new THREE.Vector3(1, 0, 0), _Y = new THREE.Vector3(0, 1, 0), _Z = new THREE.Vector3(0, 0, 1);
+const DEG = Math.PI / 180;
+/// Poses the first-person hand `a` (0..1) of the way between ticks: Minecraft's swing (across and up, then a chop),
+/// the dip, and a wobble while eating.
+function drawHand(a) {
+  let t = hand.attack - hand.attackOld;
+  if (t < 0) t += 1; // (the swing wrapped round to the next one)
+  t = hand.attackOld + t * a;
+  const h = hand.heightOld + (hand.height - hand.heightOld) * a, r = Math.sqrt(t);
+  heldGroup.position.set(HAND.x - 0.4 * Math.sin(r * Math.PI), HAND.y + 0.2 * Math.sin(r * Math.PI * 2) - HAND_DROP * (1 - h), HAND.z - 0.2 * Math.sin(t * Math.PI));
+  const f = Math.sin(t * t * Math.PI), f1 = Math.sin(r * Math.PI);
+  heldGroup.quaternion.setFromAxisAngle(_Y, (45 - 20 * f) * DEG)
+    .multiply(_q.setFromAxisAngle(_Z, -20 * f1 * DEG)).multiply(_q.setFromAxisAngle(_X, -80 * f1 * DEG))
+    .multiply(_q.setFromAxisAngle(_Y, -45 * DEG));
+  if (eatT > 0) {
+    const w = eatT * 6;
+    heldGroup.position.y -= Math.abs(Math.sin(w)) * 0.1;
+    heldGroup.position.z += Math.sin(w) * 0.08;
+    heldGroup.rotateX(-Math.abs(Math.sin(w)) * 0.6);
+  }
 }
 
 // The block outline, the cracks and the debris have flat positions (userData.at, userData.p) and are drawn bent round
@@ -772,9 +845,15 @@ $("chatForm").addEventListener("submit", (e) => {
 $("chatInput").addEventListener("keydown", (e) => { if (e.key === "Escape") closeChat(); e.stopPropagation(); });
 
 // ---------------------------------------------------------------- input
-/// Grab the mouse for looking around (browsers can refuse, e.g. right after Esc; the next click tries again).
+/// Grab the mouse for looking around (browsers can refuse, e.g. right after Esc; the next click tries again). Raw
+/// mouse movement where the browser offers it (no pointer acceleration, as Minecraft reads the mouse); plain where
+/// it doesn't.
 function lockMouse() {
-  try { canvas.requestPointerLock?.()?.catch?.(() => {}); } catch {}
+  const plain = () => { try { canvas.requestPointerLock?.()?.catch?.(() => {}); } catch {} };
+  try {
+    const p = canvas.requestPointerLock?.({ unadjustedMovement: true });
+    p?.catch?.((e) => { if (e?.name === "NotSupportedError") plain(); });
+  } catch { plain(); }
 }
 const keys = new Set();
 let mining = false, placing = false, placeAt = 0, attackAt = 0, playing = false;
@@ -789,6 +868,11 @@ function setMining(on) {
 addEventListener("keydown", (e) => {
   if (!playing || e.target.tagName === "INPUT") return;
   keys.add(e.code);
+  // (A press too quick for a tick to see still counts: a tap of W towards a double-tap sprint, or of Space.)
+  if (!e.repeat && (e.code === "KeyW" || e.code === "ArrowUp")) move.tapped = true;
+  if (!e.repeat && e.code === "Space") move.jumpPressed = true;
+  // Ctrl sprints: keep the browser's Ctrl shortcuts (Ctrl+D, Ctrl+S...) out of the way while playing.
+  if (e.ctrlKey && document.pointerLockElement === canvas) e.preventDefault();
   if (e.code === "KeyE") { $("inv").hidden ? openInventory() : closeInventory(); }
   else if (e.code === "KeyH") { shop.isOpen ? shop.close() : shop.open(); }
   else if (e.code === "KeyM") { panel?.isOpen ? panel.close() : panel?.open(); }
@@ -801,6 +885,10 @@ addEventListener("keydown", (e) => {
   if (e.code === "Space") e.preventDefault();
 });
 addEventListener("keyup", (e) => keys.delete(e.code));
+// Ctrl+W closes the tab and a page can't stop it: if it comes while sprinting with Ctrl, ask first.
+addEventListener("beforeunload", (e) => {
+  if (playing && keys.has("ControlLeft") && document.pointerLockElement === canvas) { e.preventDefault(); e.returnValue = ""; }
+});
 addEventListener("blur", () => { keys.clear(); setMining(false); placing = false; });
 
 canvas.addEventListener("click", () => {
@@ -817,15 +905,18 @@ addEventListener("mouseup", (e) => {
   if (e.button === 0) setMining(false);
   if (e.button === 2) placing = false;
 });
+// Looking is applied at once, every mouse move, with nothing smoothing it (the movement ticks just read the yaw).
 addEventListener("mousemove", (e) => {
   if (document.pointerLockElement !== canvas) return;
-  const k = 0.0022 * settings.mouse;
+  const k = FEEL.look * settings.mouse;
   player.yaw -= e.movementX * k;
   player.pitch = Math.max(-1.55, Math.min(1.55, player.pitch - e.movementY * k));
 });
 addEventListener("wheel", (e) => {
-  if (document.pointerLockElement === canvas) select(player.sel + Math.sign(e.deltaY));
-}, { passive: true });
+  if (document.pointerLockElement !== canvas) return;
+  if (e.ctrlKey) e.preventDefault(); // (sprinting with Ctrl: the wheel picks, it doesn't zoom the page)
+  select(player.sel + Math.sign(e.deltaY));
+}, { passive: false });
 // Esc lets go of the mouse: that opens the menu, as a pause screen (unless a panel was opened on purpose).
 document.addEventListener("pointerlockchange", () => {
   if (document.pointerLockElement === canvas) return;
@@ -926,6 +1017,8 @@ $("mouseSpeed").value = settings.mouse;
 const saveSettings = () => { try { localStorage.setItem("mwc:settings", JSON.stringify(settings)); } catch {} };
 $("viewDist").addEventListener("input", (e) => { settings.view = Number(e.target.value); $("viewDistN").textContent = settings.view; world.setRadius(settings.view); saveSettings(); });
 $("mouseSpeed").addEventListener("input", (e) => { settings.mouse = Number(e.target.value); saveSettings(); });
+$("bobToggle").checked = settings.bob !== false;
+$("bobToggle").addEventListener("change", (e) => { settings.bob = e.target.checked; saveSettings(); });
 
 $("play").addEventListener("click", () => {
   sfx.unlock();
@@ -990,7 +1083,6 @@ function interact(dt, now) {
 
   const hand = inv.slot(player.sel)?.id ?? null;
   if (mining && player.alive) {
-    swingT += dt * 10;
     if (mobFirst) {
       breaking = null;
       if (now - attackAt > (TOOLS[hand]?.swingMs ?? ATTACK_MS)) {
@@ -1014,10 +1106,7 @@ function interact(dt, now) {
         if (breaking.t >= breaking.need) finishBreak(breaking);
       }
     } else breaking = null;
-  } else {
-    breaking = null;
-    swingT = 0;
-  }
+  } else breaking = null;
   if (breaking) {
     crack.visible = true;
     crack.userData.at.set(breaking.x + 0.5, breaking.y + 0.5, breaking.z + 0.5);
@@ -1036,7 +1125,8 @@ function interact(dt, now) {
         inv.useSlot(player.sel);
         net?.place(px, py, pz, s.id);
         sfx.place();
-        swingT = 1;
+        swingHand();
+        me.swing();
       }
     }
   }
@@ -1063,8 +1153,6 @@ function useThing(th, dt, now) {
   const click = mining && !talkLatch && player.alive;
   const hand = inv.slot(player.sel)?.id ?? null;
   const ready = () => now - attackAt > (TOOLS[hand]?.swingMs ?? ATTACK_MS);
-  if (mining && player.alive) swingT += dt * 10;
-  else swingT = 0;
   if (th.kind === "folk") {
     showTarget(`${th.v.name} · ${th.v.job} · ${th.v.shop ? "click for the shop" : "click to talk"}`, 300);
     if (click) {
@@ -1346,11 +1434,25 @@ function shakeCamera() {
   camera.position.y += (Math.random() - 0.5) * shake * 0.5;
   camera.position.z += (Math.random() - 0.5) * shake * 0.5;
 }
-function placeCamera() {
+/// In first person the view bobs as you walk (Minecraft's GameRenderer.bobView, scaled by your smoothed speed along
+/// the ground), unless that's turned off in the menu: a sway, a dip and a slight roll and nod each step. The same
+/// motion moves the hand (bobber), as Minecraft's does. `a`: how far between ticks.
+const _bobOff = new THREE.Vector3();
+function placeCamera(a) {
+  // Wider while sprinting (Minecraft's dynamic field of view).
+  const fov = FEEL.fov * (move.fovOld + (move.fov - move.fovOld) * a);
+  if (Math.abs(camera.fov - fov) > 1e-3) { camera.fov = fov; camera.updateProjectionMatrix(); }
   if (view === 0) {
-    camera.position.copy(eyePos);
+    const bob = settings.bob ? move.bobOld + (move.bob - move.bobOld) * a : 0;
+    const ph = -(move.walkOld + (move.walk - move.walkOld) * a) * Math.PI;
+    const sx = Math.sin(ph) * bob * 0.5, sy = -Math.abs(Math.cos(ph) * bob);
+    const roll = Math.sin(ph) * bob * 3 * DEG, nod = Math.abs(Math.cos(ph - 0.2) * bob) * 5 * DEG;
+    // Minecraft moves the world by this in the view; the camera moves the opposite way.
+    camera.rotation.set(player.pitch - nod, player.yaw, -roll);
+    camera.position.copy(eyePos).add(_bobOff.set(-sx, -sy, 0).applyQuaternion(camera.quaternion));
+    bobber.position.set(sx, sy, 0);
+    bobber.rotation.set(nod, 0, roll, "ZXY");
     shakeCamera();
-    camera.rotation.set(player.pitch, player.yaw, 0);
     return;
   }
   lookDir(back);
@@ -1373,13 +1475,13 @@ let eatT = 0;
 function eat(dt) {
   const s = inv.slot(player.sel);
   const food = s && FOODS[s.id];
-  if (!placing || !food || !player.alive || hunger.food >= FOOD_MAX) {
+  move.eating = !!(placing && food && player.alive && hunger.food < FOOD_MAX); // (eating slows you, as in Minecraft)
+  if (!move.eating) {
     eatT = 0;
     $("eating").hidden = true;
     return;
   }
   eatT += dt;
-  swingT += dt * 6;
   $("eating").hidden = false;
   $("eating").firstElementChild.style.width = `${Math.min(100, (eatT / EAT_SECONDS) * 100)}%`;
   if (eatT >= EAT_SECONDS) {
@@ -1391,13 +1493,96 @@ function eat(dt) {
   }
 }
 
+// ---------------------------------------------------------------- moving
+/// One tick of your movement (20 a second, as Minecraft's): the keys or the stick read as Minecraft reads them,
+/// sprinting and sneaking by its rules, then the move itself (physics.js stepPlayer), then what follows from it:
+/// falls, hunger, the view's bobbing and widening and the eye's height, and the hand.
+function playerTick() {
+  move.prev.copy(player.pos);
+  move.eyeOld = move.eye; move.fovOld = move.fov; move.walkOld = move.walk; move.bobOld = move.bob;
+  const live = !anyOverlay() && !trip && player.alive;
+  let strafe = 0, forward = 0;
+  if (live) {
+    if (keys.has("KeyW") || keys.has("ArrowUp")) forward += 1;
+    if (keys.has("KeyS") || keys.has("ArrowDown")) forward -= 1;
+    if (keys.has("KeyA") || keys.has("ArrowLeft")) strafe -= 1;
+    if (keys.has("KeyD") || keys.has("ArrowRight")) strafe += 1;
+    if (stickState.id !== null) {
+      // The stick's push stretched to a square, so full tilt on a diagonal pushes as hard as two keys do.
+      const x = stickState.dx, z = -stickState.dy, m = Math.hypot(x, z), big = Math.max(Math.abs(x), Math.abs(z));
+      if (big > 1e-3) { strafe += (x * m) / big; forward += (z * m) / big; }
+    }
+    strafe = Math.max(-1, Math.min(1, strafe));
+    forward = Math.max(-1, Math.min(1, forward));
+  }
+  const sneak = live && (keys.has("ShiftLeft") || keys.has("ShiftRight"));
+  if (sneak) { strafe *= MOVE.sneak; forward *= MOVE.sneak; }
+  if (move.eating) { strafe *= MOVE.using; forward *= MOVE.using; }
+  // Sprinting (Minecraft's LocalPlayer.aiStep): Ctrl, or the stick pushed all the way, with a push forward, or W
+  // pressed twice quickly on the ground; never when too hungry, sneaking, eating or in water. It stops when you stop
+  // going forward or run into a wall.
+  const sprintKey = live && (keys.has("ControlLeft") || (touch && Math.hypot(stickState.dx, stickState.dy) > 0.95));
+  const fed = hunger.food >= SPRINT_MIN_FOOD;
+  const ahead = forward >= FEEL.sprintStart;
+  const can = fed && !sneak && !move.eating && !player.water;
+  if (move.tap > 0) move.tap--;
+  if (live && (move.tapped || (ahead && !move.hadForward)) && player.onGround && can && !move.sprinting) {
+    if (move.tap <= 0 && !sprintKey) move.tap = FEEL.doubleTap;
+    else if (ahead) move.sprinting = true;
+  }
+  if (!move.sprinting && ahead && can && sprintKey) move.sprinting = true;
+  if (move.sprinting && (forward <= 1e-5 || !can || move.wall)) move.sprinting = false;
+  move.hadForward = ahead;
+  move.tapped = false;
+  const jump = live && (keys.has("Space") || move.jumpPressed || touchJump || move.autoJump);
+  move.jumpPressed = move.autoJump = false;
+
+  // (An NFT move boost speeds up walking and sprinting: boosts.js. The room's speed check allows far more.)
+  const r = stepPlayer(world, player, { strafe, forward, yaw: player.yaw, jump, sprint: move.sprinting, sneak, speed: withMove(1, ledger.boost.move) }, HALF, TALL);
+  // Round the planet: past 511 is 0 again (everything drawn follows, see drawOnPlanet).
+  player.pos.x = wrap(player.pos.x);
+  player.pos.z = wrap(player.pos.z);
+  const walked = Math.hypot(r.dx, r.dz);
+  if (walked < 1) hunger.tire(walked * (move.sprinting ? EXHAUSTION.sprint : EXHAUSTION.walk));
+  if (r.jumped) hunger.tire(move.sprinting ? EXHAUSTION.sprintJump : EXHAUSTION.jump);
+  // A wall met more head-on than a glance (the step taken more than wallAngle off your push) ends a sprint.
+  move.wall = false;
+  if (r.wall) {
+    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+    const px = fx * forward - fz * strafe, pz = fz * forward + fx * strafe, pl = Math.hypot(px, pz);
+    move.wall = pl > 1e-5 && (walked < 1e-5 || Math.acos(Math.max(-1, Math.min(1, (px * r.dx + pz * r.dz) / (pl * walked)))) > FEEL.wallAngle);
+  }
+  // Auto-jump on touch screens, where pressing jump while walking is awkward.
+  if (touch && r.wall && player.onGround && Math.hypot(strafe, forward) > 0.3) move.autoJump = true;
+  // Falls: from the highest point since you left the ground (falling into water is safe).
+  if (!player.onGround && !player.water) player.fallFrom = Math.max(player.fallFrom ?? move.prev.y, player.pos.y);
+  else {
+    if (player.fallFrom !== null && player.onGround && !player.water) {
+      const drop = player.fallFrom - player.pos.y;
+      if (drop > FEEL.fall) hurt(Math.ceil(drop - FEEL.fall - 1e-6));
+    }
+    player.fallFrom = null;
+  }
+  // The view: bobbing with the walk (its strength your speed along the ground just now, on the ground only), wider
+  // while sprinting; the eye lower while sneaking.
+  move.sneaking = sneak;
+  move.walk += walked * FEEL.bobStep;
+  const along = Math.hypot(player.vel.x, player.vel.z) * TICK;
+  move.bob += ((player.onGround && player.alive ? Math.min(FEEL.bobMax, along) : 0) - move.bob) * FEEL.bobEase;
+  move.fov += ((move.sprinting ? FEEL.sprintFov : 1) - move.fov) * FEEL.fovEase;
+  move.eye += ((sneak ? FEEL.sneakEye : EYE) - move.eye) * FEEL.eyeEase;
+  handTick(live && mining);
+}
+
 // ---------------------------------------------------------------- the loop
 const clock = new THREE.Clock();
 let regenAt = 0;
-const forward = new THREE.Vector3(), right = new THREE.Vector3();
+const drawnPos = new THREE.Vector3(); // where you're drawn: between your last two ticks' positions
+let whereShown = "";
 function frame() {
   requestAnimationFrame(frame);
-  const dt = Math.min(clock.getDelta(), 0.05);
+  const real = clock.getDelta(); // (the movement ticks keep real time; the rest steps at most 50 ms a frame)
+  const dt = Math.min(real, 0.05);
   const now = performance.now();
 
   // Chunks around you (and ask the room for their edits).
@@ -1415,50 +1600,21 @@ function frame() {
     }
     const still = !!trip; // (no walking, falling or fighting while the rocket flies)
     const ready = !still && world.loaded(Math.floor(player.pos.x), Math.floor(player.pos.z));
-    // Movement.
-    let fx = 0, fz = 0;
     const typing = anyOverlay() || still;
-    if (!typing) {
-      if (keys.has("KeyW") || keys.has("ArrowUp")) fz += 1;
-      if (keys.has("KeyS") || keys.has("ArrowDown")) fz -= 1;
-      if (keys.has("KeyA") || keys.has("ArrowLeft")) fx -= 1;
-      if (keys.has("KeyD") || keys.has("ArrowRight")) fx += 1;
-    }
-    if (stickState.id !== null) { fx += stickState.dx; fz -= stickState.dy; }
-    const len = Math.hypot(fx, fz);
-    if (len > 1) { fx /= len; fz /= len; }
-    forward.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
-    right.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
-    const sprint = hunger.food >= SPRINT_MIN_FOOD && (keys.has("ShiftLeft") || keys.has("ShiftRight") || (touch && Math.hypot(stickState.dx, stickState.dy) > 0.95));
-    // (On land, an NFT move boost speeds you up: boosts.js. The room's speed check allows far more than the fastest.)
-    const speed = (player.water ? 2.6 : withMove(sprint ? 5.8 : 4.3, ledger.boost.move)) * (player.alive ? 1 : 0);
-    const tx = (forward.x * fz + right.x * fx) * speed, tz = (forward.z * fz + right.z * fx) * speed;
-    const k = 1 - Math.exp(-dt * (player.onGround ? 14 : player.water ? 5 : 3));
-    player.vel.x += (tx - player.vel.x) * k;
-    player.vel.z += (tz - player.vel.z) * k;
-    const jump = !typing && (keys.has("Space") || touchJump);
-    if (jump && player.onGround && !player.water) { player.vel.y = 8.6; hunger.tire(sprint ? EXHAUSTION.sprintJump : EXHAUSTION.jump); }
-    if (jump && player.water) player.vel.y = Math.min(player.vel.y + 30 * dt, 3.5);
+    // Movement, in whole ticks (playerTick); drawn between the last two.
     if (ready) {
-      const before = { x: player.pos.x, z: player.pos.z };
-      const r = moveBox(world, player.pos, player.vel, HALF, TALL, dt);
-      const walked = Math.hypot(player.pos.x - before.x, player.pos.z - before.z);
-      // Round the planet: past 511 is 0 again (everything drawn follows, see drawOnPlanet).
-      player.pos.x = wrap(player.pos.x);
-      player.pos.z = wrap(player.pos.z);
-      if (walked < 1) hunger.tire(walked * (sprint ? EXHAUSTION.sprint : EXHAUSTION.walk));
-      // Auto-jump on touch screens, where pressing jump while walking is awkward.
-      if (touch && r.wall && r.onGround && len > 0.3) player.vel.y = 8.6;
-      if (!r.onGround && !r.water) player.fallFrom = Math.max(player.fallFrom ?? player.pos.y, player.pos.y);
-      else {
-        if (player.fallFrom !== null && r.onGround && !r.water) {
-          const drop = player.fallFrom - player.pos.y;
-          if (drop > 3.5) hurt(Math.floor(drop - 3));
-        }
-        player.fallFrom = null;
-      }
-      player.onGround = r.onGround;
-      player.water = r.water;
+      move.acc = Math.min(move.acc + real, FEEL.maxCatchUp * TICK);
+      while (move.acc >= TICK) { playerTick(); move.acc -= TICK; }
+    } else {
+      move.acc = 0;
+      move.prev.copy(player.pos);
+    }
+    const a = move.acc / TICK;
+    {
+      const dx = wrapDelta(player.pos.x - move.prev.x), dy = player.pos.y - move.prev.y, dz = wrapDelta(player.pos.z - move.prev.z);
+      if (dx * dx + dy * dy + dz * dz > 64) move.prev.copy(player.pos); // (a teleport or a respawn: straight there)
+      const b = move.prev.equals(player.pos) ? 0 : 1 - a;
+      drawnPos.set(wrap(player.pos.x - dx * b), player.pos.y - dy * b, wrap(player.pos.z - dz * b));
     }
     if (player.pos.y < -30) { hurt(99); }
     // A full belly heals; an empty one hurts (down to half a heart).
@@ -1475,17 +1631,16 @@ function frame() {
     }
     eat(dt);
 
-    eyePos.set(player.pos.x, player.pos.y + EYE, player.pos.z);
+    eyePos.set(drawnPos.x, drawnPos.y + move.eyeOld + (move.eye - move.eyeOld) * a, drawnPos.z);
     if (trip?.phase === "lift") liftCamera();
-    else placeCamera();
+    else placeCamera(a);
     shake = Math.max(0, shake - dt * 1.5);
     me.root.rotation.y = player.yaw + Math.PI;
-    me.head.rotation.x = -player.pitch * 0.8;
-    me.animate(dt, player.alive ? Math.hypot(player.vel.x, player.vel.z) : 0, mining && player.alive);
+    me.animate(Math.min(real, 0.25), { x: drawnPos.x, y: drawnPos.y, z: drawnPos.z, yaw: player.yaw, pitch: player.pitch,
+      sneak: move.sneaking, swinging: mining && player.alive && !typing, ground: player.onGround || player.water });
     if (!typing) interact(dt, now);
     else { outline.visible = false; crack.visible = false; breaking = null; }
-    heldGroup.position.set(0.48, -0.42 - Math.abs(Math.sin(swingT)) * 0.1, -0.78 + Math.sin(swingT) * 0.08);
-    heldGroup.rotation.x = -Math.abs(Math.sin(swingT)) * 0.6;
+    drawHand(a);
 
     mobs.update(dt, player);
     rocket.update(dt);
@@ -1494,10 +1649,12 @@ function frame() {
     if (!trip) padHint();
     if (talking && (now > talking.until || Math.hypot(wrapDelta(talking.v.pos.x - player.pos.x), wrapDelta(talking.v.pos.z - player.pos.z)) > 7)) endTalk();
     offlineMobs(now);
-    net?.tick(dt, { x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw, pitch: player.pitch });
+    net?.tick({ x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw, pitch: player.pitch,
+      flags: move.sneaking ? SNEAKING : 0, moving: Math.hypot(player.vel.x, player.vel.z) > 0.5 });
     voice?.tick(player.pos);
     updateDebris(dt);
-    $("where").textContent = `${Math.floor(player.pos.x)}, ${Math.floor(player.pos.y)}, ${Math.floor(player.pos.z)}${isNight(Date.now() + serverOffset) ? " · night" : ""}`;
+    const where = `${Math.floor(player.pos.x)}, ${Math.floor(player.pos.y)}, ${Math.floor(player.pos.z)}${isNight(Date.now() + serverOffset) ? " · night" : ""}`;
+    if (where !== whereShown) $("where").textContent = whereShown = where; // (only when it changes: a write costs a layout)
   } else {
     // The title screen: the whole planet, turning slowly in space (the world loads round the spawn meanwhile).
     globe.render(renderer, dt);
@@ -1535,7 +1692,7 @@ function drawOnPlanet(dt) {
   rocket.draw();
   boss.draw();
   chests.draw();
-  if (me.root.visible) placeOnPlanet(meHolder, player.pos, 0);
+  if (me.root.visible) placeOnPlanet(meHolder, drawnPos, 0);
   // The outline and cracks are boxes round a block's centre: stand them at the bent centre, turned with the ground.
   for (const o of [outline, crack]) if (o.visible) placeOnPlanet(o, o.userData.at, 0);
   for (const m of debris) placeOnPlanet(m, m.userData.p, 0);
@@ -1552,5 +1709,7 @@ if (local) {
     // The rocket's zones, for testing: where you are, fly (with the take-off) or switch at once, the boss, the chests.
     get zone() { return zone; }, get trip() { return trip; }, fly, switchZone, openRocket, rocket, boss, chests, takeHit,
     get lookingAt() { return lookingAt; },
+    // Moving, for testing: the keys held, a movement tick (run them by hand to measure speeds), its state, your miner.
+    keys, stickState, playerTick, move, hand, hunger, FEEL, settings, drawnPos, get me() { return me; }, get view() { return view; },
   };
 }

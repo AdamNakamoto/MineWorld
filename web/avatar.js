@@ -1,12 +1,40 @@
 // A blocky miner in 3D, dressed as a MineWorld Crafter: the face on the front of the head is the Crafter's own
-// pixel art, the hair, hat and outfit follow its traits (crafters.js), with a walk cycle and a swing. Players without
-// a Crafter are the Rookie.
+// pixel art, the hair, hat and outfit follow its traits (crafters.js). Players without a Crafter are the Rookie.
+//
+// It moves the way Minecraft Java's players do (HumanoidModel.setupAnim), worked out 20 times a second from where
+// the miner really goes and drawn smoothly in between: legs and arms swing with the speed along the ground, the
+// arms sway a little at rest, the body turns towards where you walk and lags the head, a swing twists the body, and
+// sneaking crouches. In the air (a jump or a fall) the legs hold a stride and the arms lift out a little, in the
+// spirit of the Not Enough Animations mod. What's in the hand sets the arm's pose (POSES); the walk and the swing are
+// layered on top of it.
 
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { pixels, HAIRS, HATS, OUTFITS, SKINS } from "./crafters.js";
 import { ARMOR_COLOURS } from "./textures.js";
+import { wrapDelta } from "./rules.js";
 
 const PX = 1.8 / 32; // one "pixel" of the 32-pixel-tall figure, in metres
+const TICK = 1 / 20; // seconds: the animation's step, Minecraft's tick
+const DEG = Math.PI / 180;
+/// Minecraft's numbers for the biped's animation (angles in radians, lengths in pixels).
+const ANIM = {
+  stride: 0.6662, legSwing: 1.4, // a leg swings cos(limbSwing x stride) x legSwing x amount; an arm half as far
+  walkSpeed: 4, walkEase: 0.4, // the swing's amount follows min(blocks a tick x walkSpeed, 1), eased this much a tick
+  turnEase: 0.3, // the body turns this much of the way towards where you walk each tick
+  headFree: 50 * DEG, headMax: 75 * DEG, // the head looks this far off the body freely; the body follows past it
+  backwards: 95 * DEG, // walking more than this far off where you look, the body faces your look (walking backwards)
+  moving: 0.05, // blocks a tick: slower than this the body doesn't turn to the walk
+  swingTicks: 6, // a swing (attack, mining, placing) takes this many ticks; mining starts the next one halfway
+  twist: 0.2, // how far the body twists in a swing
+  // Sneaking eases in this much a tick: the upper body drops crouchDrop pixels and leans forward from the neck, the
+  // head drops crouchHead, the arms hang back along the torso, the legs step back. (Minecraft also lowers the whole
+  // model 2 pixels, feet and all: left out here, to keep the feet on the ground.)
+  crouchEase: 0.5, lean: 0.5, crouchArms: 0.4, crouchDrop: 3.2, crouchHead: 4.2, crouchLegsBack: 4,
+  airEase: 0.35, airRise: 0.15, // in the air: the pose eases in this much a tick; others count as airborne past this
+  // rise or fall a tick (blocks), since only your own game knows when you're on the ground
+};
+/// An angle brought round into [-pi, pi).
+const turn = (a) => a - 2 * Math.PI * Math.floor(a / (2 * Math.PI) + 0.5);
 
 /// The turn that takes a held icon's blade (its diagonal, up and to the right) to `blade` and its face to `face`,
 /// both given in the body's frame (the miner faces +z; its right is -x).
@@ -20,17 +48,18 @@ function turnTo(blade, face) {
   return new THREE.Quaternion().setFromRotationMatrix(m);
 }
 const armTurn = (angle) => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), angle);
-/// How each kind of held thing (held.js heldKind) is held: the right arm's angle at rest (negative raises it forward)
-/// and the thing's turn in the hand, given in the arm's frame (so it's the body-frame turn undone by the arm's).
+/// How each kind of held thing (held.js heldKind) is held: the right arm's angle at rest (negative raises it forward),
+/// how much of the walk's arm swing it keeps (Minecraft halves it for anything held), and the thing's turn in the
+/// hand, given in the arm's frame (so it's the body-frame turn undone by the arm's).
 const POSES = {
   // A weapon held out, ready, like the classic games' heroes: the arm raised forward, the blade out to the side, a
-  // little forward and down, its face to the front.
-  weapon: { arm: -1.0, q: armTurn(1.0).multiply(turnTo([-1, -0.3, 0.35], [0, 0.15, 1])) },
+  // little forward and down, its face to the front. (A raised arm barely swings as you walk.)
+  weapon: { arm: -1.0, walk: 0.25, q: armTurn(1.0).multiply(turnTo([-1, -0.3, 0.35], [0, 0.15, 1])) },
   // A tool with the arm down: its head up, forward and out, its face half to the front.
-  tool: { arm: 0, q: armTurn(0.3).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -0.75 * Math.PI)) },
+  tool: { arm: 0, walk: 0.5, q: armTurn(0.3).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -0.75 * Math.PI)) },
   // A block a little forward, as if about to place it.
-  block: { arm: -0.35, q: new THREE.Quaternion() },
-  none: { arm: 0, q: new THREE.Quaternion() },
+  block: { arm: -0.35, walk: 0.5, q: new THREE.Quaternion() },
+  none: { arm: 0, walk: 1, q: new THREE.Quaternion() },
 };
 POSES.item = POSES.tool;
 
@@ -84,9 +113,17 @@ export function createAvatar(traits, gear = [0, 0, 0, 0]) {
   const sleeve = at(6, 21) === bg ? main : at(6, 21);
   const pants = outfit.mask === "overalls" || outfit.mask === "suit" ? main : "#2a3046";
 
+  // root faces where the miner looks (whoever draws it turns it); `body` turns within it, lagging the head; `upper`
+  // (the torso and arms) twists in a swing; the torso leans from the neck (`chest`) when sneaking. The head turns
+  // with root, so it always faces the look.
   const root = new THREE.Group();
   const body = new THREE.Group();
+  const upper = new THREE.Group();
+  const chest = new THREE.Group();
+  chest.position.y = 24 * PX;
   root.add(body);
+  body.add(upper);
+  upper.add(chest);
   const legs = [-2, 2].map((x) => {
     const pivot = new THREE.Group();
     pivot.position.set(x * PX, 12 * PX, 0);
@@ -103,8 +140,8 @@ export function createAvatar(traits, gear = [0, 0, 0, 0]) {
     new THREE.MeshLambertMaterial({ color: main }), new THREE.MeshLambertMaterial({ color: main }),
     new THREE.MeshLambertMaterial({ map: shirt }), new THREE.MeshLambertMaterial({ color: main }),
   ]);
-  torso.position.y = 18 * PX;
-  body.add(torso);
+  torso.position.y = -6 * PX;
+  chest.add(torso);
   const arms = [-6, 6].map((x) => {
     const pivot = new THREE.Group();
     pivot.position.set(x * PX, 23 * PX, 0);
@@ -113,7 +150,8 @@ export function createAvatar(traits, gear = [0, 0, 0, 0]) {
     const hand = box(4.1, 2.5, 4.1, skin.S);
     hand.position.y = -10 * PX;
     pivot.add(arm, hand);
-    body.add(pivot);
+    pivot.rotation.order = "ZYX"; // (Minecraft's order for a part's turns)
+    upper.add(pivot);
     return pivot;
   });
 
@@ -127,7 +165,7 @@ export function createAvatar(traits, gear = [0, 0, 0, 0]) {
   ]);
   skull.position.y = 4 * PX;
   head.add(skull);
-  body.add(head);
+  root.add(head);
   const add = (w, h, d, color, x, y, z, emissive) => {
     const m = box(w, h, d, color, emissive);
     m.position.set(x * PX, y * PX, z * PX);
@@ -158,7 +196,7 @@ export function createAvatar(traits, gear = [0, 0, 0, 0]) {
   };
   if (gear[0]) { plate(gear[0], 9, 4.4, 9, 0, 6.6, 0, head); plate(gear[0], 9, 1.2, 1.4, 0, 4.4, 4.2, head); }
   if (gear[1]) {
-    plate(gear[1], 8.8, 9, 4.8, 0, 19.4, 0, body);
+    plate(gear[1], 8.8, 9, 4.8, 0, 19.4 - 24, 0, chest);
     for (const a of arms) plate(gear[1], 4.8, 3.4, 4.8, 0, -0.6, 0, a);
   }
   if (gear[2]) for (const l of legs) plate(gear[2], 4.6, 6, 4.6, 0, -3, 0, l);
@@ -169,30 +207,137 @@ export function createAvatar(traits, gear = [0, 0, 0, 0]) {
   grip.position.set(0, -11 * PX, 0.5 * PX);
   arms[0].add(grip);
 
-  let phase = 0, swing = 0, rest = 0; // rest: the right arm's angle for what it holds
+  // The animation, stepped once a tick from where the miner is (each value's last two kept, to draw in between).
+  // Angles follow Minecraft's model but with y and z turns flipped, since this model faces +z and Minecraft's -z.
+  let pose = POSES.none; // how the right arm holds what's in it
+  const st = {
+    seen: false, acc: 0, age: 0, x: 0, y: 0, z: 0,
+    limb: 0, amount: 0, amountOld: 0, // how far the legs have swung (limbSwing), and how widely (limbSwingAmount)
+    body: 0, bodyOld: 0, // the body's yaw
+    swinging: false, swingTime: 0, attack: 0, attackOld: 0, // a swing: its tick, and how far through it is (0..1)
+    crouch: 0, crouchOld: 0, air: 0, airOld: 0, rise: 0, riseOld: 0, // (rise: blocks up a tick, smoothed)
+  };
+  /// Starts a swing (Minecraft's LivingEntity.swing): a new one only once the last is halfway through.
+  function startSwing() {
+    if (!st.swinging || st.swingTime >= ANIM.swingTicks / 2 || st.swingTime < 0) { st.swingTime = -1; st.swinging = true; }
+  }
+  /// One tick: what the miner did since the last (`s`: see animate).
+  function step(s) {
+    const dx = wrapDelta(s.x - st.x), dz = wrapDelta(s.z - st.z);
+    let dy = s.y - st.y, d2 = dx * dx + dz * dz;
+    if (d2 > 4 || Math.abs(dy) > 4) d2 = dy = 0; // a teleport or a respawn, not a step
+    st.x = s.x; st.y = s.y; st.z = s.z;
+    st.age++;
+    // The walk's swing follows the speed along the ground.
+    st.amountOld = st.amount;
+    st.amount += (Math.min(Math.sqrt(d2) * ANIM.walkSpeed, 1) - st.amount) * ANIM.walkEase;
+    st.limb += st.amount;
+    // The body turns towards where you walk (or to your look, walking backwards or swinging), and never lets the
+    // head get more than headMax off it (past headFree it starts to follow).
+    st.bodyOld = st.body;
+    let target = st.body;
+    if (d2 > ANIM.moving * ANIM.moving) {
+      const walkYaw = Math.atan2(-dx, -dz);
+      target = Math.abs(turn(s.yaw - walkYaw)) > ANIM.backwards ? walkYaw + Math.PI : walkYaw;
+    }
+    if (st.attack > 0 || s.swinging) target = s.yaw;
+    st.body += turn(target - st.body) * ANIM.turnEase;
+    const off = Math.max(-ANIM.headMax, Math.min(ANIM.headMax, turn(s.yaw - st.body)));
+    st.body = s.yaw - off;
+    if (Math.abs(off) > ANIM.headFree) st.body += off * 0.2;
+    // The swing (mining or fighting keeps starting the next).
+    if (s.swinging) startSwing();
+    st.attackOld = st.attack;
+    if (st.swinging && ++st.swingTime >= ANIM.swingTicks) { st.swingTime = 0; st.swinging = false; }
+    if (!st.swinging) st.swingTime = 0;
+    st.attack = st.swingTime / ANIM.swingTicks;
+    // Sneaking, and the air (your own game says when you're on the ground; for others it's a quick rise or fall).
+    st.crouchOld = st.crouch;
+    st.crouch += ((s.sneak ? 1 : 0) - st.crouch) * ANIM.crouchEase;
+    st.airOld = st.air;
+    st.riseOld = st.rise;
+    const airborne = s.ground === undefined ? Math.abs(dy) > ANIM.airRise : !s.ground;
+    st.air += ((airborne ? 1 : 0) - st.air) * ANIM.airEase;
+    st.rise += (dy - st.rise) * 0.5;
+  }
+  /// Sets every part for the moment `a` (0..1) of the way from the last tick to the next.
+  function draw(s, a) {
+    const amount = Math.min(1, st.amountOld + (st.amount - st.amountOld) * a);
+    const limb = st.limb - st.amount * (1 - a);
+    const age = st.age + a;
+    const crouch = st.crouchOld + (st.crouch - st.crouchOld) * a;
+    const air = st.airOld + (st.air - st.airOld) * a;
+    const rise = st.riseOld + (st.rise - st.riseOld) * a;
+    let att = st.attack - st.attackOld;
+    if (att < 0) att += 1; // (the swing wrapped round to the next one)
+    att = st.attackOld + att * a;
+    body.rotation.y = turn(st.bodyOld + turn(st.body - st.bodyOld) * a - s.yaw);
+    head.rotation.x = -s.pitch;
+    head.position.y = (24 - crouch * ANIM.crouchHead) * PX;
+    // The walk: legs swing cos(limbSwing x stride) x legSwing x amount, the arms opposite and half as far (less in the
+    // air, where the legs hold a stride instead).
+    const walk = amount * (1 - 0.5 * air), c = Math.cos(limb * ANIM.stride) * walk;
+    legs[0].rotation.x = c * ANIM.legSwing;
+    legs[1].rotation.x = -c * ANIM.legSwing;
+    arms[0].rotation.set(pose.arm - c * pose.walk, 0, 0);
+    arms[1].rotation.set(c, 0, 0);
+    // The arms' idle sway.
+    const sway = Math.cos(age * 0.09) * 0.05 + 0.05, nod = Math.sin(age * 0.067) * 0.05;
+    arms[0].rotation.z -= sway; arms[0].rotation.x += nod;
+    arms[1].rotation.z += sway; arms[1].rotation.x -= nod;
+    // In the air: a stride held, the arms lifting out, more the faster you fall.
+    if (air > 0.001) {
+      const fall = Math.max(0, Math.min(1, -rise / 0.6));
+      legs[0].rotation.x -= 0.5 * air * (1 - fall);
+      legs[1].rotation.x += 0.3 * air;
+      arms[0].rotation.z -= (0.15 + 0.45 * fall) * air;
+      arms[1].rotation.z += (0.15 + 0.45 * fall) * air;
+      arms[1].rotation.x -= 0.5 * fall * air;
+    }
+    // A swing: the body twists, the arm comes up fast and down across.
+    upper.rotation.y = 0;
+    if (att > 0) {
+      const tw = Math.sin(Math.sqrt(att) * Math.PI * 2) * ANIM.twist;
+      upper.rotation.y = -tw;
+      arms[1].rotation.x += tw;
+      let f = 1 - att;
+      f = 1 - f * f * f * f;
+      arms[0].rotation.x -= Math.sin(f * Math.PI) * 1.2 + Math.sin(att * Math.PI) * -(head.rotation.x - 0.7) * 0.75;
+      arms[0].rotation.y -= tw * 2;
+      arms[0].rotation.z += Math.sin(att * Math.PI) * 0.4;
+    }
+    // Sneaking: the upper body drops and leans forward from the neck, the arms hang along it, the legs step back.
+    upper.position.y = -crouch * ANIM.crouchDrop * PX;
+    chest.rotation.x = crouch * ANIM.lean;
+    arms[0].rotation.x += crouch * ANIM.crouchArms;
+    arms[1].rotation.x += crouch * ANIM.crouchArms;
+    for (const l of legs) l.position.z = -crouch * ANIM.crouchLegsBack * PX;
+  }
+
   return {
     root, head,
     /// Puts `model` (held.js heldModel, or null for nothing) in the hand, in place of what was there, and holds it
     /// the way its kind is held (POSES).
     hold(model) {
       grip.clear();
-      const pose = POSES[model?.userData.kind] ?? POSES.none;
-      rest = pose.arm;
+      pose = POSES[model?.userData.kind] ?? POSES.none;
       grip.quaternion.copy(pose.q);
       if (model) grip.add(model);
-      arms[0].rotation.x = rest;
+      arms[0].rotation.x = pose.arm;
     },
-    /// speed: metres per second along the ground; swinging: mining or fighting.
-    animate(dt, speed, swinging) {
-      phase += dt * Math.min(speed, 6) * 2.2;
-      const a = Math.sin(phase) * Math.min(speed / 4, 1) * 0.8;
-      legs[0].rotation.x = a;
-      legs[1].rotation.x = -a;
-      arms[0].rotation.x = rest - a * (rest ? 0.25 : 1); // (a raised arm barely swings as you walk)
-      arms[1].rotation.x = a;
-      swing = swinging ? (swing + dt * 9) % (Math.PI * 2) : 0;
-      if (swinging) arms[0].rotation.x = -1.2 - Math.sin(swing) * 0.9;
+    /// Called every frame (`dt` seconds since the last) with where the miner is and what they do: `s` is { x, y, z
+    /// (flat, any image of it), yaw, pitch (where they look; root is turned to the yaw by whoever draws it), sneak,
+    /// swinging (mining or fighting, held down), ground (whether they stand on something, if known) }.
+    animate(dt, s) {
+      if (!st.seen) {
+        Object.assign(st, { seen: true, x: s.x, y: s.y, z: s.z, body: s.yaw, bodyOld: s.yaw });
+      }
+      st.acc = Math.min(st.acc + dt, TICK * 5);
+      while (st.acc >= TICK) { step(s); st.acc -= TICK; }
+      draw(s, st.acc / TICK);
     },
+    /// One swing (placing a block, or a single hit).
+    swing: startSwing,
     dispose() {
       root.traverse((n) => {
         if (!n.isMesh || n.userData.shared) return; // (a held item's model is shared: held.js)

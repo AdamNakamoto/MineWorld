@@ -6,6 +6,13 @@
 // The others you see are the ones on your planet (zones.js): flying somewhere (zone()) tells the room, drops everyone
 // you saw, and ignores what the room says about the old planet until it answers "zoned" with the new one's players.
 //
+// The others move smoothly: each one is drawn a little in the past (about INTERP_S), moving in a straight line from
+// one update of theirs to the next, so they walk at an even pace between updates rather than gliding to each one and
+// waiting. The moment shown runs a little faster or slower to keep that far behind as updates come early or late.
+// Your own updates also say whether you're sneaking (the flags at their end), and one goes out as soon as you stop,
+// so the others don't see you glide the last stretch. Your miner's animation (avatar.js) is worked out on each game
+// from how the others move, so it costs no messages.
+//
 // $MINE amounts from the room (earn, signedin, boost, bossreward) are in ledger units, ten-thousandths of a $MINE
 // (rewards.js UNIT). Your NFT boost (boosts.js) comes as ["boost", ...] whenever it changes. Your rocket tickets
 // (zones.js) come as ["tickets", { zone: count }] after signing in and whenever they change.
@@ -16,6 +23,8 @@ import { heldModel } from "./held.js";
 import { unpackTraits } from "./crafters.js";
 import { unpackBoost } from "./boosts.js";
 import { wrap, wrapDelta } from "./rules.js";
+/// An angle brought round into [-pi, pi).
+const turnBy = (a) => a - 2 * Math.PI * Math.floor(a / (2 * Math.PI) + 0.5);
 import { place } from "./planet.js";
 
 /// The item in hand from a player's gear as the room relays it ([four armor tiers, item]), 0 for nothing.
@@ -23,6 +32,13 @@ const heldOf = (g) => (Number.isInteger(g?.[4]) && g[4] > 0 && g[4] < 256 ? g[4]
 
 const MIN_GAP = 0.5; // seconds between position updates, at the most
 const HEARTBEAT = 3; // seconds: while moving the same way
+const INTERP_S = 0.45; // seconds: others are drawn about this far in the past (half their updates' gap, plus room for
+// updates coming late)
+const CATCH_UP = 0.5, LAG_S = 1; // the moment shown runs up to 25% faster or slower, by CATCH_UP x how far it's off
+// INTERP_S (averaged over LAG_S)
+const PAUSE = 2 * MIN_GAP; // seconds: a longer wait between updates was a pause, not a slow walk
+const JUMP_TO = 10; // blocks: an update this far from the last is a teleport or a respawn (drawn there at once)
+export const SNEAKING = 1; // a position update's flags: sneaking
 const PING_EVERY = 45_000; // Cloudflare drops sockets quiet for 100 s
 const SEEN = 96; // blocks: how far other miners are drawn
 export const short = (a) => `${a.slice(0, 6)}…${a.slice(-4)}`;
@@ -56,9 +72,15 @@ const PLANET_NEWS = new Set(["p", "act", "join", "leave", "look", "gear", "set",
 export function createNet(url, scene, h) {
   let ws = null, id = null, open = false, closedByUs = false, backoff = 1000;
   let hello = null, resume = null, zone = "home", flying = null;
-  const others = new Map(); // id -> { av, tag, name, design, pos, target, yaw, tyaw, act, speed }
+  // id -> { av, tag, holder, name, look, gear, held, pos (drawn), yaw, pitch, sneak, target, tyaw (their latest
+  // update), act, snaps (their updates: { t (seconds, when it came), x, y, z, yaw, pitch, flags }), clock (the moment
+  // shown, on the same clock), lag (how far that is behind their latest update, averaged) }
+  const others = new Map();
   const queue = [];
-  let lastSent = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, at: 0 };
+  /// What was last sent (x NaN: send the next whatever it is).
+  const unsent = () => ({ x: NaN, y: 0, z: 0, yaw: 0, pitch: 0, at: 0, flags: 0, moving: false });
+  let lastSent = unsent();
+  let lastTick = null; // (performance.now() / 1000 at the last tick)
   let pingTimer = null;
   const waiting = new Map(); // reply kind -> resolve
   const ticketWaits = new Map(); // payment hash (lower case) -> resolve: the room's answer about that ticket
@@ -76,7 +98,7 @@ export function createNet(url, scene, h) {
       backoff = 1000;
       ws.send(JSON.stringify(["hello", { ...(hello ?? {}), zone }]));
       flying = null;
-      lastSent = { x: NaN, y: 0, z: 0, yaw: 0, pitch: 0, at: 0 }; // (the room starts us on the pad: say where we really are)
+      lastSent = unsent(); // (the room starts us on the pad: say where we really are)
       if (resume) ws.send(JSON.stringify(["resume", resume.address, resume.token]));
       while (queue.length) ws.send(JSON.stringify(queue.shift()));
       clearInterval(pingTimer);
@@ -111,6 +133,7 @@ export function createNet(url, scene, h) {
     const ok = Array.isArray(gear) && gear.length >= 4 && gear.slice(0, 4).every((t) => Number.isInteger(t) && t >= 0 && t <= 4);
     const held = ok ? heldOf(gear) : 0;
     gear = ok ? gear.slice(0, 4) : [0, 0, 0, 0];
+    const was = others.get(pid); // (a new name, look or armor: they carry on moving as they were)
     drop(pid);
     const av = createAvatar(unpackTraits(look), gear);
     av.hold(heldModel(held));
@@ -119,7 +142,33 @@ export function createNet(url, scene, h) {
     const holder = new THREE.Group();
     holder.add(av.root);
     scene.add(holder);
-    others.set(pid, { av, tag, holder, name, look, gear, held, pos: new THREE.Vector3(x, y, z), target: new THREE.Vector3(x, y, z), yaw, tyaw: yaw, act: false, speed: 0 });
+    const o = { av, tag, holder, name, look, gear, held, pos: new THREE.Vector3(x, y, z), yaw, pitch: 0, sneak: false,
+      target: new THREE.Vector3(x, y, z), tyaw: yaw, act: false, clock: performance.now() / 1000, lag: 0 };
+    o.snaps = [{ t: o.clock, x, y, z, yaw, pitch: 0, flags: 0 }];
+    if (was) for (const k of ["pos", "yaw", "pitch", "sneak", "act", "snaps", "clock", "lag"]) o[k] = was[k];
+    others.set(pid, o);
+  }
+  /// An update from another player: kept to draw them moving to it (tick). Positions are kept the short way round
+  /// from the update before, so they interpolate across the seam.
+  function heard(o, x, y, z, yaw, pitch, flags) {
+    const t = performance.now() / 1000;
+    const last = o.snaps[o.snaps.length - 1];
+    x = last.x + wrapDelta(x - last.x);
+    z = last.z + wrapDelta(z - last.z);
+    const s = { t, x, y, z, yaw: last.yaw + turnBy(yaw - last.yaw), pitch, flags };
+    if (Math.hypot(x - last.x, y - last.y, z - last.z) > JUMP_TO) { o.snaps = [s]; o.clock = t; o.lag = 0; }
+    else {
+      // After a pause (standing still, or turning only), the step to here is taken to have begun one update's gap
+      // ago: they set off then, rather than creeping all the way since (and the moment shown skips the wait).
+      if (t - last.t > PAUSE) {
+        o.snaps.push({ ...last, t: t - MIN_GAP });
+        if (o.clock < t - MIN_GAP) { o.clock = t - MIN_GAP; o.lag = INTERP_S; }
+      }
+      o.snaps.push(s);
+      if (o.snaps.length > 12) o.snaps.splice(0, o.snaps.length - 12);
+    }
+    o.target.set(wrap(x), y, wrap(z));
+    o.tyaw = yaw;
   }
   function drop(pid) {
     const o = others.get(pid);
@@ -169,10 +218,9 @@ export function createNet(url, scene, h) {
       case "rtc": h.rtc?.(m[1], m[2]); break;
       case "named": h.named?.(m[1]); break;
       case "p": {
+        // ["p", id, x, y, z, yaw, pitch, flags] (flags: SNEAKING; a room from before sends none)
         const o = others.get(m[1]);
-        if (!o) break;
-        o.target.set(m[2], m[3], m[4]);
-        o.tyaw = m[5];
+        if (o) heard(o, m[2], m[3], m[4], m[5], Number.isFinite(m[6]) ? m[6] : 0, Number.isInteger(m[7]) ? m[7] : 0);
         break;
       }
       case "act": { const o = others.get(m[1]); if (o) o.act = !!m[2]; break; }
@@ -245,36 +293,45 @@ export function createNet(url, scene, h) {
     setTimeout(() => { if (waiting.get(reply) === ok) { waiting.delete(reply); bad(new Error("The world server didn't answer. Try again.")); } }, ms);
   });
 
-  /// Called every frame with your position: sends an update when it changed enough, and moves the others.
-  function tick(dt, me) {
+  /// Called every frame with you (`me`: { x, y, z, yaw, pitch, flags (SNEAKING), moving (walking, not just
+  /// standing) }): sends an update when it changed enough, and moves the others.
+  function tick(me) {
     const now = performance.now() / 1000;
+    // (The others' clocks keep real time, even when frames are slow and the game's own dt is held short.)
+    const step = Math.min(0.25, now - (lastTick ?? now));
+    lastTick = now;
     if (open && id !== null) {
       const L = lastSent;
       const moved = Math.hypot(wrapDelta(me.x - L.x), me.y - L.y, wrapDelta(me.z - L.z));
       const turned = Math.abs(me.yaw - L.yaw);
       const gap = now - L.at;
-      // Turning alone waits for the heartbeat (the others only see which way you face).
-      if (gap > MIN_GAP && (!(moved <= 0.6) || ((moved > 0.05 || turned > 0.35) && gap > HEARTBEAT))) {
+      const flags = me.flags | 0;
+      // Moving, or sneaking or standing up, or just stopped, at once (but no more often than MIN_GAP). Turning alone
+      // waits for the heartbeat (the others only see which way you face).
+      const stopped = L.moving && !me.moving && moved > 0.05;
+      if (gap > MIN_GAP && (!(moved <= 0.6) || flags !== L.flags || stopped || ((moved > 0.05 || turned > 0.35) && gap > HEARTBEAT))) {
         const r = (v) => Math.round(v * 100) / 100;
-        ws.send(JSON.stringify(["p", wrap(r(me.x)), r(me.y), wrap(r(me.z)), r(me.yaw), r(me.pitch)]));
-        lastSent = { x: me.x, y: me.y, z: me.z, yaw: me.yaw, pitch: me.pitch, at: now };
+        ws.send(JSON.stringify(["p", wrap(r(me.x)), r(me.y), wrap(r(me.z)), r(me.yaw), r(me.pitch), flags]));
+        lastSent = { x: me.x, y: me.y, z: me.z, yaw: me.yaw, pitch: me.pitch, at: now, flags, moving: !!me.moving };
       }
     }
     for (const o of others.values()) {
-      const before = o.pos.clone();
-      const k = 1 - Math.exp(-dt * 8);
-      // Towards where they are now, the short way round (across the seam if that's shorter).
-      const tx = o.pos.x + wrapDelta(o.target.x - o.pos.x), tz = o.pos.z + wrapDelta(o.target.z - o.pos.z);
-      if ((tx - o.pos.x) ** 2 + (o.target.y - o.pos.y) ** 2 + (tz - o.pos.z) ** 2 > 100) o.pos.set(tx, o.target.y, tz); // a respawn or a teleport: jump there
-      else o.pos.lerp(_t.set(tx, o.target.y, tz), k);
-      let dy = o.tyaw - o.yaw;
-      while (dy > Math.PI) dy -= Math.PI * 2;
-      while (dy < -Math.PI) dy += Math.PI * 2;
-      o.yaw += dy * k;
+      // The moment shown moves on (never past their latest update); they're drawn between the updates either side.
+      // Far behind (a hidden tab, a stall), it skips ahead.
+      const S = o.snaps, latest = S[S.length - 1].t;
+      if (latest - o.clock > 2 * INTERP_S + MIN_GAP) { o.clock = latest - INTERP_S; o.lag = INTERP_S; }
+      o.lag += (latest - o.clock - o.lag) * (1 - Math.exp(-step / LAG_S));
+      o.clock = Math.min(latest, o.clock + step * Math.max(0.75, Math.min(1.25, 1 + (o.lag - INTERP_S) * CATCH_UP)));
+      const shown = o.clock;
+      while (S.length > 1 && S[1].t <= shown) S.shift();
+      const A = S[0], B = S[1] ?? A;
+      const k = B.t > A.t ? Math.max(0, Math.min(1, (shown - A.t) / (B.t - A.t))) : 1;
+      o.pos.set(A.x + (B.x - A.x) * k, A.y + (B.y - A.y) * k, A.z + (B.z - A.z) * k);
+      o.yaw = A.yaw + (B.yaw - A.yaw) * k;
+      o.pitch = A.pitch + (B.pitch - A.pitch) * k;
+      o.sneak = !!((k < 0.5 ? A : B).flags & SNEAKING);
       o.av.root.rotation.y = o.yaw + Math.PI;
-      const sp = Math.hypot(o.pos.x - before.x, o.pos.z - before.z) / Math.max(dt, 1e-3);
-      o.speed += (sp - o.speed) * k;
-      o.av.animate(dt, o.speed, o.act);
+      o.av.animate(step, { x: o.pos.x, y: o.pos.y, z: o.pos.z, yaw: o.yaw, pitch: o.pitch, sneak: o.sneak, swinging: o.act });
       // Kept at the copy nearest you (voice.js and the rest measure straight to it).
       o.pos.x = me.x + wrapDelta(o.pos.x - me.x);
       o.pos.z = me.z + wrapDelta(o.pos.z - me.z);
@@ -282,7 +339,6 @@ export function createNet(url, scene, h) {
       o.holder.visible = !far;
     }
   }
-  const _t = new THREE.Vector3();
 
   /// Stands the other miners on the curved planet as seen from the camera (after planet.follow, before the render).
   function draw() {
@@ -331,7 +387,7 @@ export function createNet(url, scene, h) {
       if (!open) return; // (the next hello says where you are)
       flying = key;
       send(["zone", key]);
-      lastSent = { x: NaN, y: 0, z: 0, yaw: 0, pitch: 0, at: 0 };
+      lastSent = unsent();
     },
     bossHit: (dmg) => send(["bosshit", dmg]),
     pvpHit: (target, dmg) => send(["pvp", target, dmg]),
@@ -345,7 +401,7 @@ export function createNet(url, scene, h) {
     /// A monster the room sent that this game couldn't place, or that wandered off or was lost.
     gone: (mobId) => send(["gone", mobId]),
     /// After a respawn (the room moved you to the town): your next position goes out whatever it is.
-    respawn() { send(["respawn"]); lastSent = { x: NaN, y: 0, z: 0, yaw: 0, pitch: 0, at: 0 }; },
+    respawn() { send(["respawn"]); lastSent = unsent(); },
     act: (on) => send(["act", on ? 1 : 0]),
     chat: (text) => send(["chat", text]),
     /// Pick a name (web/name-rules.js); the room answers "named" or an error.

@@ -330,9 +330,11 @@ export class World extends DurableObject {
     if (a.ready) this.zoneCast(a.zone, ["join", ...this.shown(a)], ws);
   }
 
+  /// ["p", x, y, z, yaw, pitch, flags]: where a player is, passed on to those near (flags: web/net.js SNEAKING; a
+  /// game from before sends none).
   async position(ws, a, m) {
     if (!a.ready) return;
-    const [, x, y, z, yaw, pitch] = m;
+    const [, x, y, z, yaw, pitch, flags] = m;
     if (![x, y, z, yaw].every(num) || x < 0 || z < 0 || x >= WORLD || z >= WORLD || y < 0 || y > HEIGHT + 20) return;
     const now = Date.now();
     // A player moving faster than anyone can (a teleport) earns nothing for a while. Idle time can't be banked:
@@ -342,7 +344,7 @@ export class World extends DurableObject {
     const dy = y - a.y;
     if (wrapDist(x, z, a.x, a.z) / dt > 40 || dy / dt > 20 || -dy / dt > 80) a.suspect = now + SETTLE_MS;
     a.x = x; a.y = y; a.z = z; a.yaw = yaw; a.pAt = now;
-    this.near(a.zone, x, z, ["p", a.id, x, y, z, yaw, num(pitch) ? pitch : 0], ws);
+    this.near(a.zone, x, z, ["p", a.id, x, y, z, yaw, num(pitch) ? pitch : 0, isInt(flags, 0, 256) ? flags : 0], ws);
     // Deepvein grows back on Mondays: anyone there when the week turns gets the new week's world.
     if (zoneOf(a.zone).weekly && a.week !== weekOf(now)) {
       a.week = weekOf(now);

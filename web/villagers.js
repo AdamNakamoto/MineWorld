@@ -230,7 +230,7 @@ export function createVillagers(scene) {
         f.av.root.visible = true;
         f.pos.set(TOWN.x + f.stay[0] + 0.5, TOWN.y + 1, TOWN.z + f.stay[1] + 0.5);
         f.yaw = f.stay[2];
-        f.av.animate(dt, 0, false);
+        f.av.animate(dt, { x: f.pos.x, y: f.pos.y, z: f.pos.z, yaw: f.yaw + Math.PI, pitch: 0, ground: true });
         continue;
       }
       f.out = out;
@@ -244,7 +244,8 @@ export function createVillagers(scene) {
       const moving = s.ax !== s.bx || s.az !== s.bz;
       if (moving) f.yaw = Math.atan2(s.bx - s.ax, s.bz - s.az);
       f.pos.set(TOWN.x + x + 0.5, TOWN.y + 1, TOWN.z + z + 0.5);
-      f.av.animate(dt, moving ? SPEED : 0, false);
+      // (The avatar takes a player's yaw, which faces -z at 0; a villager's faces +z.)
+      f.av.animate(dt, { x: f.pos.x, y: f.pos.y, z: f.pos.z, yaw: f.yaw + Math.PI, pitch: 0, ground: true });
     }
   }
   /// Stands everyone who's out on the curved ground, as seen from the camera (just before the render).
