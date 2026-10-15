@@ -19,7 +19,8 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
 /// `game`: { chain, net, ledger() → { signedIn, wallet, today, total, cap, boost }, signIn(), toast(text, kind),
 /// wear(traits, id), leveled(tokenId, level) (a DEGEN was just leveled up), sitesOpen() (mining sites open, as the
-/// world server counts them, or null), refreshCount() (ask the world server again, at most once a minute) }. The ledger's amounts are in units
+/// world server counts them, or null), refreshCount() (ask the world server again, at most once a minute),
+/// siteOpened() (this wallet just opened its site: the world server counts it) }. The ledger's amounts are in units
 /// (rewards.js UNIT).
 export function createPanel(game) {
   const el = document.getElementById("panel");
@@ -105,7 +106,10 @@ export function createPanel(game) {
       case "logout": chain.logout(); return refresh();
       case "devacct": return chain.login(data.a).then(refresh);
       case "signin": return run("Signing in to earn", () => game.signIn());
-      case "open": return run("Opening your mining site", () => chain.openSite(snap.sitePrice));
+      case "open": return run("Opening your mining site", async () => {
+        await chain.openSite(snap.sitePrice);
+        game.siteOpened?.();
+      });
       case "convert": return run("Converting your earnings to $MINE", async () => {
         if (!L.signedIn) throw new Error("Sign in to earn first.");
         const v = await game.net.voucher();

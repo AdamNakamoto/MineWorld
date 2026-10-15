@@ -446,6 +446,9 @@ export function createNet(url, scene, h) {
     /// Ask the room to read the NFTs you use again now (after leveling up the Crafter you wear): it answers with your
     /// ["boost", ...]. The room allows a couple at once, then one every 15 s.
     recheck: () => send(["recheck"]),
+    /// This wallet just opened its mining site: the room checks it (MiningSites.hasSite) and counts it for the title
+    /// screen's "mining sites open". A couple at once, then one every 10 s.
+    siteOpened: () => send(["site"]),
     /// A rocket ticket to `zone`, paid by transaction `hash` (MinePayments, kind 1): the room checks the payment and
     /// answers ["ticketok", zone, count, hash] or ["ticketno", zone, why, hash, retry] (retry 1: worth sending again).
     ticket(hash, zone, ms = 45_000) {

@@ -983,8 +983,9 @@ connectChain().catch((e) => { console.warn("chain unavailable", e); return null;
     chain, net,
     ledger: () => ledger,
     sitesOpen: () => sitesOpen,
-    /// The admin box asks the room again at most once a minute (as often as the room tops its count up).
+    /// The admin box asks the room again at most once a minute.
     refreshCount() { if (Date.now() - countAt > 60_000) loadCount(false); },
+    siteOpened() { net?.siteOpened(); },
     signIn,
     toast,
     wear(traits, tokenId) {
@@ -1282,9 +1283,9 @@ $("play").addEventListener("click", () => {
   drawLedger();
   setTimeout(() => ($("help").hidden = true), 25_000); // (the controls are in the menu too)
 });
-// The title screen: who's playing, and how many mining sites are open (the room counts them from the chain; sitesOpen
-// stays null while it can't tell yet, and is asked again once, a few seconds later). The panel's admin box asks again
-// while it's open (refreshCount).
+// The title screen: who's playing, and how many mining sites are open (the room counts them: see SITES_KEY in
+// multiplayer/src/index.js; sitesOpen stays null while it can't tell yet, and is asked again once, a few seconds
+// later). The panel's admin box asks again while it's open (refreshCount).
 function loadCount(retry = true) {
   if (!url) return;
   countAt = Date.now();

@@ -27,7 +27,7 @@ directory = "../web"
 
 # The chain, once the contracts are deployed. Until MINING_ADDRESS is set the room runs the world on a practice ledger
 # (players see what they'd earn; it's reset at launch and never paid), and trips and the shop are free. The voucher key is a secret: `npx wrangler secret put MINING_KEY` (its address is MiningSites'
-# signer). Locally, ./dev.sh writes the chain's to .dev.vars (LOGS_RPC and SITES_FROM_BLOCK for the local chain too).
+# signer). Locally, ./dev.sh writes the chain's to .dev.vars.
 [vars]
 # Live on Robinhood Chain since 2026-10-15 (contracts/deployments/robinhood*.json). The voucher key is the secret
 # MINING_KEY; its address 0xaA15A39d2841114B7D0C2E1b4cBB88243ecBADdF is MiningSites' signer.
@@ -35,10 +35,9 @@ CHAIN_ID = "4663"
 CHAIN_RPC = "https://robinhood-rpc.publicnode.com"
 # MiningSites (the proxy): vouchers are signed for it; setting it ends the practice ledger.
 MINING_ADDRESS = "0x2B3Ed234eF4A048984cC833Ac52373CC3E27004b"
-# The title screen's "mining sites open": its SiteOpened logs from its deploy block (L2), read from the official RPC
-# (publicnode serves no old logs).
-LOGS_RPC = "https://rpc.mainnet.chain.robinhood.com"
-SITES_FROM_BLOCK = "89298761"
+# The title screen's "mining sites open" starts from these wallets (the sites' owners on 2026-10-15, from its
+# SiteOpened logs); the room adds every wallet with a site that signs in (src/index.js SITES_KEY).
+SITES_SEED = "0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD,0xcac1421a00f488df85bdcee26e65bd2435e619f5,0x9230c1bab72d3ebcda2687a6e20e874b6a1402a5,0x44c0551deb02f75189c7c4075b58212cfb108f2d"
 # I'M DEGEN (MineWorldCrafters): a player wears a DEGEN only once the room has checked they own it.
 CRAFTERS_ADDRESS = "0x263b3c4A9f711E0e28201d5897dA4CDea3831D15"
 # CrafterLevels: each DEGEN's level, for its boost.

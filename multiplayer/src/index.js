@@ -110,17 +110,16 @@ const DEATHS = 3, DEATH_EVERY_S = 20; // knock-outs that make a chest a connecti
 const MAX_CHESTS = 200; // loot chests kept at most, on all planets together (the oldest go first)
 const DEATH_KEEP_MS = 30 * 60_000; // a wallet's last knock-out is remembered this long for a revive from a new connection
 const RECHECKS = 2, RECHECK_EVERY_S = 15; // re-reads of a player's NFTs they may ask for at once, and one more this often
-// The title screen shows how many mining sites are open (`/count`): MiningSites' SiteOpened events from
-// SITES_FROM_BLOCK (its deploy block) on, read from LOGS_RPC, an RPC that serves old logs (CHAIN_RPC may only serve
-// recent ones). Sites never close, so it's every SiteOpened there has been. The count and the next block to read are
-// stored (SITES_KEY), so a room woken from hibernation reads only the blocks since; it's topped up at most every
-// SITES_EVERY_MS, and once there's a count, /count answers with it at once while the top-up runs. One top-up reads at
-// most SITES_SPANS spans of LOG_SPAN blocks (L2 blocks are 0.1 s: a span is about 11 days), well within the free
-// plan's 50 subrequests; a longer backlog (a fresh count) carries on at the next ask.
-const SITE_OPENED = "0xbfc7485718626287a8f732f39f91ddb6a1cbd2a086ee31341378e889838507d7"; // SiteOpened(address,uint256)
-const SITES_KEY = "sites";
-const SITES_EVERY_MS = 60_000, SITES_RETRY_MS = 10_000, SITES_WAIT_MS = 4000, SITES_SPANS = 20;
-const LOG_SPAN = 10_000_000n; // blocks a log request covers (the official RPC's most)
+// The title screen shows how many mining sites are open (`/count`). Old logs can't be read from Cloudflare (the
+// official RPC answers its addresses' log queries with 429 Too Many Requests, and publicnode serves no old logs), so the
+// room keeps the wallets it has seen with a site: `${SITE_KEY}<wallet>` for each, and how many under SITES_KEY. A
+// wallet is checked (MiningSites.hasSite, through CHAIN_RPC) when it signs in to earn and when its game says it just
+// opened one; the first count checks SITES_SEED (the sites' owners when this count began) and every wallet in the
+// ledger, in one multicall. A site whose wallet never signs in to the game isn't counted. Sites never close.
+const SITES_KEY = "sitecount", SITE_KEY = "site:";
+const SITES_WAIT_MS = 4000, SITES_RETRY_MS = 10_000; // (a first count that failed is tried again this soon at most)
+const MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11";
+const SITES_ABI = parseAbi(["function hasSite(address) view returns (bool)"]);
 
 // The game's homes: its own domain (to be decided: add it here), Vercel previews and local development.
 const ORIGINS = [/^https:\/\/(www\.)?mineworldcraft\.fun$/, /^https:\/\/mineworldcraft-mp\.[a-z0-9-]+\.workers\.dev$/, /^https:\/\/[a-z0-9-]+\.vercel\.app$/, /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/];
@@ -242,7 +241,7 @@ export class World extends DurableObject {
   async fetch(req) {
     const url = new URL(req.url);
     if (url.pathname === "/count") {
-      const wait = new Promise((r) => setTimeout(() => r(this.sites?.known ? this.sites.count : null), SITES_WAIT_MS));
+      const wait = new Promise((r) => setTimeout(() => r(this.siteCount ?? null), SITES_WAIT_MS));
       const sites = await Promise.race([this.sitesOpen(), wait]);
       return Response.json({ online: this.players().length, sites }, { headers: { "access-control-allow-origin": "*" } });
     }
@@ -303,6 +302,7 @@ export class World extends DurableObject {
         case "wear": return await this.wear(ws, a, m[1]);
         case "equip": return await this.equip(ws, a, m[1], m[2]);
         case "recheck": return await this.recheckNow(ws, a);
+        case "site": return a.wallet && bucket(a, "siteq", 2, 0.1, 1, Date.now()) ? await this.noteSite(a.wallet) : undefined;
         case "ticket": return await this.buyTicket(ws, a, m[1], m[2]);
         case "dev": return await this.dev(ws, a, m[1], m[2]);
         case "gear": return this.gear(ws, a, m[1]);
@@ -710,42 +710,62 @@ export class World extends DurableObject {
   chainClient() {
     return (this.pub ??= createPublicClient({ transport: http(this.env.CHAIN_RPC) }));
   }
-  /// How many mining sites are open (see SITE_OPENED), or null when it can't be told yet (not configured, or the first
-  /// count isn't done). Concurrent asks share one top-up; a failed read keeps what was counted (stored after every
-  /// span) and tries again in SITES_RETRY_MS.
+  /// How many mining sites are open, as far as the room knows (see SITES_KEY), or null when it can't tell (before
+  /// launch, or until the first count has worked).
   async sitesOpen() {
-    const { MINING_ADDRESS: address, LOGS_RPC, SITES_FROM_BLOCK } = this.env;
-    if (!address || !LOGS_RPC || !SITES_FROM_BLOCK) return null;
-    if (!this.sites) {
-      const saved = await this.ctx.storage.get(SITES_KEY);
-      this.sites ??= saved?.address === address
-        ? { count: saved.count, next: BigInt(saved.next), known: saved.known, at: 0, busy: null }
-        : { count: 0, next: BigInt(SITES_FROM_BLOCK), known: false, at: 0, busy: null };
-    }
-    const s = this.sites;
-    if (!s.busy && Date.now() - s.at >= SITES_EVERY_MS) {
-      s.busy = (async () => {
-        const rpc = (this.logsPub ??= createPublicClient({ transport: http(LOGS_RPC, { timeout: 5000, retryCount: 1 }) }));
-        const hex = (n) => `0x${n.toString(16)}`;
-        const head = await rpc.getBlockNumber();
-        for (let i = 0; i < SITES_SPANS && s.next <= head; i++) {
-          const to = s.next + LOG_SPAN - 1n < head ? s.next + LOG_SPAN - 1n : head;
-          const logs = await rpc.request({ method: "eth_getLogs", params: [{ address, topics: [SITE_OPENED], fromBlock: hex(s.next), toBlock: hex(to) }] });
-          s.count += logs.length;
-          s.next = to + 1n;
-        }
-        const done = s.next > head;
-        s.known ||= done;
-        s.at = done ? Date.now() : 0; // (a backlog left: carry on at the next ask)
-        await this.ctx.storage.put(SITES_KEY, { address, count: s.count, next: String(s.next), known: s.known });
-      })().catch((e) => {
+    if (!this.env.MINING_ADDRESS || !this.env.CHAIN_RPC) return null;
+    if (this.siteCount === undefined) this.siteCount ??= (await this.ctx.storage.get(SITES_KEY)) ?? null;
+    if (this.siteCount === null && (this.siteSeeding || Date.now() - (this.siteFailedAt ?? 0) >= SITES_RETRY_MS)) {
+      this.siteSeeding ??= this.seedSites().catch((e) => {
+        this.siteFailedAt = Date.now();
         console.warn("counting mining sites:", e?.shortMessage ?? e?.message ?? e);
-        s.at = Date.now() - SITES_EVERY_MS + SITES_RETRY_MS;
-      }).finally(() => { s.busy = null; });
+      }).finally(() => { this.siteSeeding = null; });
+      await this.siteSeeding;
     }
-    // Once there's a count it's answered at once (the top-up carries on); the first count is waited for.
-    if (!s.known && s.busy) await s.busy;
-    return s.known ? s.count : null;
+    return this.siteCount;
+  }
+  /// The first count: SITES_SEED and every wallet in the ledger, checked in one multicall (one read each where the
+  /// chain has no Multicall3, as on a bare local chain).
+  async seedSites() {
+    const wallets = new Set((this.env.SITES_SEED ?? "").split(",").map((w) => w.trim()).filter((w) => isAddress(w)).map((w) => getAddress(w)));
+    for (const sh of (await this.ctx.storage.list({ prefix: this.ledgerKey })).values()) for (const w of Object.keys(sh)) wallets.add(w);
+    for (const sh of this.shards.values()) for (const w of Object.keys(sh)) wallets.add(w);
+    const list = [...wallets].filter((w) => isAddress(w));
+    const pub = this.chainClient(), address = this.env.MINING_ADDRESS;
+    const call = (w) => ({ address, abi: SITES_ABI, functionName: "hasSite", args: [w] });
+    let has;
+    try {
+      // (batchSize 0: all of them in one eth_call, rather than viem's 1 KB chunks)
+      has = list.length ? await pub.multicall({ contracts: list.map(call), multicallAddress: MULTICALL3, allowFailure: false, batchSize: 0 }) : [];
+    } catch (e) {
+      if (list.length > 40) throw e;
+      has = await Promise.all(list.map((w) => pub.readContract(call(w))));
+    }
+    const owners = list.filter((w, i) => has[i]);
+    if (this.siteCount !== null && this.siteCount !== undefined) return; // (counted meanwhile)
+    for (let i = 0; i < owners.length; i += 100) {
+      await this.ctx.storage.put(Object.fromEntries(owners.slice(i, i + 100).map((w) => [`${SITE_KEY}${w}`, 1])));
+    }
+    await this.ctx.storage.put(SITES_KEY, owners.length);
+    this.siteCount = owners.length;
+  }
+  /// Counts `wallet`'s mining site if it has one the room hasn't counted (after the first count; see SITES_KEY).
+  async noteSite(wallet) {
+    if (!wallet || (await this.sitesOpen()) === null) return;
+    const key = `${SITE_KEY}${wallet}`;
+    this.siteChecks ??= new Set();
+    if (this.siteChecks.has(wallet) || (await this.ctx.storage.get(key))) return;
+    this.siteChecks.add(wallet);
+    try {
+      const has = await this.chainClient().readContract({ address: this.env.MINING_ADDRESS, abi: SITES_ABI, functionName: "hasSite", args: [wallet] });
+      if (!has || (await this.ctx.storage.get(key))) return;
+      this.siteCount += 1;
+      await this.ctx.storage.put({ [key]: 1, [SITES_KEY]: this.siteCount });
+    } catch (e) {
+      console.warn("checking a mining site:", e?.shortMessage ?? e?.message ?? e);
+    } finally {
+      this.siteChecks.delete(wallet);
+    }
   }
   /// Puts the player on `zone`'s pad: the others on the planet they left see them go, those on the new one see them
   /// land, and the player gets who's there (and the boss, or the loot chests). A signed-in wallet's zone is kept, so a
@@ -1324,6 +1344,7 @@ export class World extends DurableObject {
     this.rename(ws, a);
     const [, l] = await this.ledger(wallet);
     this.send(ws, ["signedin", wallet, token, l.today, l.total, dailyCap(0, a.zone), a.nick && nameShown(a.nick) ? a.nick : null]);
+    this.noteSite(wallet).catch(() => {}); // (a mining site not counted yet: see SITES_KEY)
     if (!this.ticketsFree()) this.send(ws, ["tickets", await this.ticketsOf(wallet)]);
     // Back on the zone this wallet was on (its ticket has no time limit). A game in a zone already (a guest's free
     // trip, only possible while tickets are free) keeps its place, and that becomes the wallet's zone.

@@ -391,10 +391,12 @@ Knock-outs, loot chests and revives on the wire (the rest of the protocol is in 
 | room → game | `["revived", x, y, z, txHash]` / `["reviveno", why, txHash, retry]` | Done, the room has you there / refused: retry 1 the chain couldn't be read, 2 the payment wasn't used (it can pay for a later revive), 0 never |
 | room → game | `["welcome", ..., { practice, ticketsFree, reviveFree }]` | Whether revives are free right now |
 
-`GET /count` answers `{ online, sites }` for the title screen: the players connected, and the mining sites open. The room
-counts MiningSites' `SiteOpened` logs from `SITES_FROM_BLOCK` (its deploy block) through `LOGS_RPC` (the official RPC,
-which serves old logs; publicnode doesn't), keeps the count and the next block under `sites`, and tops it up at most once
-a minute (`sites` is null until the first count is done).
+`GET /count` answers `{ online, sites }` for the title screen: the players connected, and the mining sites open. Old
+logs can't be read from Cloudflare (the official RPC answers its log queries with 429, publicnode serves none), so the
+room keeps the wallets it has seen with a site (`site:<wallet>`, and how many under `sitecount`): it checks
+`MiningSites.hasSite` when a wallet signs in to earn and when its game says it opened one; the first count checks
+`SITES_SEED` (wrangler.toml: the owners when the count began) and every wallet in the ledger, in one multicall. A site
+whose wallet never signs in to the game isn't counted. `sites` is null until the first count has worked.
 
 For tests on your own machine, `npx wrangler dev --var DEV_HOOKS:1` turns on two dev hooks, `["dev", "today", mine]`
 and `["dev", "world", mine]` (set a signed-in wallet's earnings today, or everyone's), so the daily caps can be tried
