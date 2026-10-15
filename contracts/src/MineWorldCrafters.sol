@@ -62,7 +62,9 @@ interface IArbSys {
 ///      the committed secret before the block whose hash completes the seed exists, and anyone then seals it, so the
 ///      owner can't pick looks nor know them before everyone else (see `reveal` and `seal`). Its one lever: if a whole
 ///      window passes with nobody sealing, it alone can re-roll, at most three times, each in public
-///      (`moveEntropyOn`).
+///      (`moveEntropyOn`). As it alone knows when it will reveal, in practice it decides whether a window is sealed
+///      unless holders run a sealer (tools/sealer.sh) at the reveal time it announces: at most a best of four public
+///      seeds. The mint is for wallets only (`mint`), within a per-address limit.
 ///      Ownership moves in two steps and can't be renounced, so the links can always be updated. Holders' Crafters
 ///      and ETH are never within the owner's reach.
 contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICrafterMetadata {
@@ -88,15 +90,19 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
     uint256 public constant ENTROPY_WINDOW = 256;
     /// @notice How many times, in all, the owner can move the entropy block on after a window nobody sealed in.
     uint256 public constant MAX_ENTROPY_MOVES = 3;
+    /// @notice How many of the window's last blocks `revealStatus` already reads as `Expired`, though `seal` still
+    ///         works in them: about 3 seconds of Robinhood Chain's ~0.1 s blocks, so a seal sent on seeing `Sealable`
+    ///         reaches the sequencer and lands in time.
+    uint256 public constant SEAL_MARGIN = 30;
 
     /// @dev validateTransfer(address,address,address,uint256)
     bytes4 private constant VALIDATE_TRANSFER = 0xcaee23ea;
 
     /// @notice Where the reveal stands: `None` (the secret isn't public yet), `Waiting` (it is; the entropy block
-    ///         isn't over), `Sealable` (anyone can `seal` now, with a block to spare, and everyone can already work the
-    ///         seed out), `Expired` (the window is over, or ends this block: only the owner can move the entropy block
-    ///         on, `moveEntropyOn`), `Revealed` (the seed is set), `Stuck` (expired with no move left: the Crafters
-    ///         stay sealed for good).
+    ///         isn't over), `Sealable` (anyone can `seal` now, with SEAL_MARGIN blocks to spare, and everyone can
+    ///         already work the seed out), `Expired` (the window is over or about to be: `seal` still works in its last
+    ///         SEAL_MARGIN blocks, then only the owner can move the entropy block on, `moveEntropyOn`), `Revealed` (the
+    ///         seed is set), `Stuck` (expired with no move left: the Crafters stay sealed for good).
     enum RevealStatus {
         None,
         Waiting,
@@ -170,6 +176,8 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
     error SoldOut();
     /// @notice This wallet would go over the per-wallet limit.
     error WalletLimit();
+    /// @notice Only a wallet minting for itself can mint (msg.sender == tx.origin): not a contract.
+    error OnlyWallets();
     error BadWalletLimit();
     error WrongPayment();
     error NotRevealed();
@@ -224,7 +232,13 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
     // ---------------------------------------------------------------- mint
 
     /// @notice Mint `quantity` sealed Crafters (1 to MAX_PER_TX), paying exactly `price` each (nothing while free).
+    ///         Wallets only: the caller must be the transaction's sender (msg.sender == tx.origin, else `OnlyWallets`),
+    ///         so no contract mints, and one transaction can't sweep the free mint through throwaway contracts, each a
+    ///         fresh address under the per-wallet limit. A determined bot then needs a funded wallet and a transaction
+    ///         for every `walletLimit` Crafters (accepted). An account delegated with EIP-7702 still mints as itself,
+    ///         within the same limit per address. Smart-contract wallets (a Safe, say) can't mint; they can buy.
     function mint(uint256 quantity) external payable {
+        if (msg.sender != tx.origin) revert OnlyWallets();
         if (!saleOpen) revert SaleClosed();
         if (quantity == 0 || quantity > MAX_PER_TX) revert BadQuantity();
         uint256 minted = totalMinted;
@@ -322,15 +336,17 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
     }
 
     /// @notice Where the reveal stands (see `RevealStatus`): what a bot or the game's panel checks before sealing.
-    ///         Sealable only while a seal sent now can still land in the window (a block to spare). (A client can't
-    ///         compare block numbers itself: on Robinhood Chain the entropy block is an L2 block.)
+    ///         Sealable only while a seal sent now can still land in the window: up to SEAL_MARGIN (30) blocks before
+    ///         its end, about 3 seconds, longer than a transaction takes to be sequenced. `seal` itself still accepts
+    ///         the whole window. (A client can't compare block numbers itself: on Robinhood Chain the entropy block is
+    ///         an L2 block; `chainBlock()` and `entropyBlock` give both for a bot that wants to.)
     function revealStatus() public view returns (RevealStatus) {
         if (seed != 0) return RevealStatus.Revealed;
         uint256 b = entropyBlock;
         if (b == 0) return RevealStatus.None;
         uint256 current = _chainBlock();
         if (current <= b) return RevealStatus.Waiting;
-        if (current - b < ENTROPY_WINDOW) return RevealStatus.Sealable;
+        if (current - b < ENTROPY_WINDOW - SEAL_MARGIN) return RevealStatus.Sealable;
         if (entropyMoves >= MAX_ENTROPY_MOVES && current - b > ENTROPY_WINDOW) return RevealStatus.Stuck;
         return RevealStatus.Expired;
     }

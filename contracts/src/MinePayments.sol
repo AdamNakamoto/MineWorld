@@ -12,8 +12,9 @@ import {MinePayer} from "./MinePayer.sol";
 ///         server checks before it hands over what was bought. Prices live in the game's own config, not here, so
 ///         they change without touching the chain.
 ///
-///         Kinds at launch: 0 "shop" (75% burned) and 1 "ticket" (nothing burned: all to the treasury). The owner can
-///         change a kind's burn share (0% to 100%) and add kinds (up to MAX_KINDS); kinds are never removed.
+///         Kinds at launch: 0 "shop" (75% burned), 1 "ticket" and 2 "revive" (a revive on the spot after dying on the
+///         home planet; both burn nothing: all to the treasury). The owner can change a kind's burn share (0% to 100%)
+///         and add kinds (up to MAX_KINDS); kinds are never removed.
 /// @dev Behind a UUPS proxy (see OwnedUUPS); state in ERC-7201 namespaced storage. Trust: the owner sets the burn
 ///      shares and the treasury and can upgrade the code; this contract never holds anyone's $MINE (payments go
 ///      straight from the player's wallet). A player approves exactly what they pay.
@@ -22,6 +23,7 @@ contract MinePayments is MinePayer, ReentrancyGuardTransient {
     uint256 public constant MAX_KINDS = 32;
     uint256 public constant KIND_SHOP = 0;
     uint256 public constant KIND_TICKET = 1;
+    uint256 public constant KIND_REVIVE = 2;
 
     struct Kind {
         string name;
@@ -53,12 +55,15 @@ contract MinePayments is MinePayer, ReentrancyGuardTransient {
         _disableInitializers();
     }
 
-    /// @notice Set up the proxy, with the launch's kinds: "shop" (75% burned) and "ticket" (all to the treasury).
+    /// @notice Set up the proxy, with the launch's kinds: "shop" (75% burned), "ticket" and "revive" (all to the
+    ///         treasury). Only in the proxy's own constructor (OwnedUUPS: `InitializeOutsideConstructor`), never later,
+    ///         by anyone.
     function initialize(IERC20 token_, address owner_, address treasury_) external initializer {
         __Owned_init(owner_);
         __MinePayer_init(token_, treasury_);
         _addKind("shop", 7_500);
         _addKind("ticket", 0);
+        _addKind("revive", 0);
     }
 
     function _payments() private pure returns (PaymentsStorage storage $) {

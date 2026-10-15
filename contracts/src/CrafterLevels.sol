@@ -51,7 +51,8 @@ contract CrafterLevels is UpgradeCosts, ReentrancyGuardTransient, ICrafterAttrib
     }
 
     /// @notice Set up the proxy, with the launch's levels: 2,310, 9,471, 38,831 and 159,207 $MINE to reach levels 2 to
-    ///         5 (half a mining site's: about $500 in all at a $50,000 market cap), 75% of each upgrade burned.
+    ///         5 (half a mining site's: about $500 in all at a $50,000 market cap), 75% of each upgrade burned. Only in
+    ///         the proxy's own constructor (OwnedUUPS: `InitializeOutsideConstructor`), never later, by anyone.
     function initialize(IERC20 token_, IERC721 crafters_, address owner_, address treasury_) external initializer {
         __Owned_init(owner_);
         __MinePayer_init(token_, treasury_);

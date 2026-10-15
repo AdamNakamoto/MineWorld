@@ -323,12 +323,12 @@ export function createPanel(game) {
         <button class="btn gold wide" data-act="reveal" ${!acct || busy ? "disabled" : ""}>Reveal and lock in</button>${statusAt("seal")}`;
     }
     if (st === 5) return `<p class="note">The reveal can't happen any more: its block was moved on three times and the last window passed with nobody locking it in.</p>`;
-    if (st === 3 && !M.isOwner) return `<p class="note">Nobody locked the reveal in within its window. Only the owner can pick a new block now (it can, ${M.movesLeft ?? 0} more time${M.movesLeft === 1 ? "" : "s"}); then anyone locks it in, here.</p>`;
+    if (st === 3 && !M.isOwner) return `<p class="note">The reveal's window is closing or closed. If nobody locked it in, only the owner can pick a new block (it can, ${M.movesLeft ?? 0} more time${M.movesLeft === 1 ? "" : "s"}); then anyone locks it in, here.</p>`;
     const label = st === 3 ? `Pick a new block and lock it in (${M.movesLeft} left)` : "Lock in the reveal";
     const note = {
       1: "The owner has published the reveal's secret. The reveal locks in a moment from now: anyone can press the button (gas only); every DIO's look then shows, for everyone at once.",
       2: "Ready: anyone can lock the reveal in now (gas only). Every DIO's look is fixed then and shows for everyone at once; nobody, the owner included, can change it.",
-      3: "Nobody locked the reveal in within its window. As the owner you can pick a new block (in public, at most three times in all); the panel then locks it in at once.",
+      3: "The reveal's window is closing or closed. As the owner you can pick a new block once it has closed (in public, at most three times in all; until then the panel tries to lock it in), and the panel then locks it in at once.",
     }[st];
     return `<p class="note">${note}</p><button class="btn gold wide" data-act="seal" ${!acct || busy ? "disabled" : ""}>${label}</button>${statusAt("seal")}`;
   }

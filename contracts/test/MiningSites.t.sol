@@ -16,6 +16,9 @@ import {MiningSites} from "../src/MiningSites.sol";
 import {MinePayer} from "../src/MinePayer.sol";
 import {UpgradeCosts} from "../src/UpgradeCosts.sol";
 import {OwnedUUPS} from "../src/lib/OwnedUUPS.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {CrafterLevels} from "../src/CrafterLevels.sol";
+import {MinePayments} from "../src/MinePayments.sol";
 import {MineDeployer} from "../script/Deploy.s.sol";
 
 /// MiningSites' next version, for the upgrade test: the same contract, plus a way to tell it apart.
@@ -677,10 +680,10 @@ contract MiningSitesTest is SitesFixture {
         address p = address(new ERC1967Proxy(address(impl), ""));
         assertEq(p, predicted);
         vm.prank(alice);
-        vm.expectRevert(MiningSites.InitializeOutsideConstructor.selector);
+        vm.expectRevert(OwnedUUPS.InitializeOutsideConstructor.selector);
         MiningSites(p).initialize(IERC20(address(token)), v, alice, alice, alice, PRICE, WALLET_CAP, DAILY_CAP);
         vm.prank(owner);
-        vm.expectRevert(MiningSites.InitializeOutsideConstructor.selector);
+        vm.expectRevert(OwnedUUPS.InitializeOutsideConstructor.selector);
         MiningSites(p).initialize(IERC20(address(token)), v, owner, treasury, signer, PRICE, WALLET_CAP, DAILY_CAP);
         assertEq(MiningSites(p).owner(), address(0));
 
@@ -1453,20 +1456,20 @@ contract DistributorRaceTest is Test {
         vm.prank(owner);
         vault.proposeDistributor(replacement);
         vm.prank(attacker);
-        vm.expectRevert(MiningSites.InitializeOutsideConstructor.selector);
+        vm.expectRevert(OwnedUUPS.InitializeOutsideConstructor.selector);
         MiningSites(replacement)
             .initialize(IERC20(address(token)), vault, attacker, attacker, vm.addr(attackerKey), 1, 3_500e18, 35_000e18);
         vm.prank(attacker);
-        vm.expectRevert(MiningSites.InitializeOutsideConstructor.selector);
+        vm.expectRevert(OwnedUUPS.InitializeOutsideConstructor.selector);
         MiningSites(replacement)
             .initialize(IERC20(address(token)), vault, owner, attacker, vm.addr(attackerKey), 1, 3_500e18, 35_000e18);
         MineVault own = new MineVault(token, attacker, replacement);
         vm.prank(attacker);
-        vm.expectRevert(MiningSites.InitializeOutsideConstructor.selector);
+        vm.expectRevert(OwnedUUPS.InitializeOutsideConstructor.selector);
         MiningSites(replacement)
             .initialize(IERC20(address(token)), own, attacker, attacker, vm.addr(attackerKey), 1, 3_500e18, 35_000e18);
         vm.prank(owner);
-        vm.expectRevert(MiningSites.InitializeOutsideConstructor.selector);
+        vm.expectRevert(OwnedUUPS.InitializeOutsideConstructor.selector);
         MiningSites(replacement).initialize(IERC20(address(token)), vault, owner, treasury, owner, 1, 1_500e18, 35_000e18);
         vm.warp(vm.getBlockTimestamp() + 2 days);
         vm.prank(owner);
@@ -2174,5 +2177,169 @@ contract StrangerInitializesWithOwnVaultTest is Test {
         );
         assertFalse(initialised, "a stranger initialised the proxy the owner proposed");
         assertEq(MiningSites(replacement).owner(), address(0));
+    }
+}
+
+/// Third re-check 10d532d5 #1, the auditor's proof as submitted (moved into this file; imports above): a vault whose
+/// distributor of the moment has no code (a predicted address nothing was deployed at) can still be given a working
+/// distributor.
+contract CodelessDistributorProofTest is Test {
+    address owner = makeAddr("owner");
+    address treasury = makeAddr("treasury");
+
+    /// A vault whose distributor of the moment has no code must still be replaceable by its owner (AUDIT.md section 4,
+    /// guarantee 6: "a distributor can always be replaced").
+    function test_AVaultWithACodelessDistributorCanStillBeReplaced() public {
+        MineToken token = new MineToken(address(this), address(0), 0);
+        MiningSites impl = new MiningSites();
+        address never = makeAddr("neverDeployed");
+        MineVault vault = new MineVault(token, owner, never);
+        token.setMinter(address(vault));
+        token.renounceOwnership();
+
+        address next = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.prank(owner);
+        vault.proposeDistributor(next);
+        MiningSites replacement = MiningSites(
+            address(
+                new ERC1967Proxy(
+                    address(impl),
+                    abi.encodeCall(
+                        MiningSites.initialize,
+                        (IERC20(address(token)), vault, owner, treasury, owner, 1, 1_500e18, 35_000e18)
+                    )
+                )
+            )
+        );
+        assertEq(address(replacement), next);
+        vm.warp(block.timestamp + 2 days);
+        vm.prank(owner);
+        vault.acceptDistributor();
+        assertEq(vault.distributor(), next, "the vault never got a working distributor");
+    }
+}
+
+/// Third re-check 10d532d5 #1, end to end: the replacement records the codeless distributor as its predecessor
+/// without calling it, reads its books as empty, and then sells sites and pays claims; a predecessor with code that
+/// doesn't keep books is still refused.
+contract CodelessPredecessorTest is Test {
+    uint256 constant SIGNER_KEY = 0xC0DE;
+    address owner = makeAddr("owner");
+    address treasury = makeAddr("treasury");
+    address alice = makeAddr("alice");
+    address never = makeAddr("neverDeployed");
+
+    MineToken token;
+    MiningSites impl;
+    MineVault vault;
+
+    function setUp() public {
+        vm.warp(20_000 days + 12 hours);
+        token = new MineToken(address(this), address(0), 0);
+        impl = new MiningSites();
+        vault = new MineVault(token, owner, never);
+        token.setMinter(address(vault));
+        token.renounceOwnership();
+    }
+
+    function _replacement() internal returns (MiningSites) {
+        address next = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.prank(owner);
+        vault.proposeDistributor(next);
+        return MiningSites(
+            address(
+                new ERC1967Proxy(
+                    address(impl),
+                    abi.encodeCall(
+                        MiningSites.initialize,
+                        (IERC20(address(token)), vault, owner, treasury, vm.addr(SIGNER_KEY), 1, 1_500e18, 35_000e18)
+                    )
+                )
+            )
+        );
+    }
+
+    function test_ACodelessPredecessorHasEmptyBooks() public {
+        MiningSites sites = _replacement();
+        assertEq(sites.predecessor(), never);
+        (uint64 openedAt, uint256 level, uint256 settledTotal, uint256 claimedTotal) = sites.bookOf(alice);
+        assertEq(openedAt, 0);
+        assertEq(level, 0);
+        assertEq(settledTotal, 0);
+        assertEq(claimedTotal, 0);
+        vm.warp(vm.getBlockTimestamp() + 2 days);
+        vm.prank(owner);
+        vault.acceptDistributor();
+
+        vm.deal(alice, 1);
+        vm.prank(alice);
+        sites.openSite{value: 1}();
+        assertEq(sites.siteLevel(alice), 1);
+        uint64 deadline = uint64(vm.getBlockTimestamp() + 1 hours);
+        bytes32 digest = keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                sites.domainSeparator(),
+                keccak256(abi.encode(keccak256("Earnings(address player,uint256 total,uint64 deadline)"), alice, 100e18, deadline))
+            )
+        );
+        (uint8 v, bytes32 r, bytes32 sg) = vm.sign(SIGNER_KEY, digest);
+        vm.prank(alice);
+        sites.claim(100e18, deadline, abi.encodePacked(r, sg, v));
+        assertEq(token.balanceOf(alice), 50e18, "level 1 converts half");
+        assertEq(sites.settled(alice), 100e18);
+    }
+
+    function test_APredecessorWithCodeMustStillKeepBooks() public {
+        // The vault named an address that turned out to hold some other contract (here one that reverts every call):
+        // it must answer bookOf, as before.
+        vm.etch(never, hex"60006000fd");
+        address next = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.prank(owner);
+        vault.proposeDistributor(next);
+        vm.expectRevert(MiningSites.BadPredecessor.selector);
+        new ERC1967Proxy(
+            address(impl),
+            abi.encodeCall(
+                MiningSites.initialize,
+                (IERC20(address(token)), vault, owner, treasury, vm.addr(SIGNER_KEY), 1, 1_500e18, 35_000e18)
+            )
+        );
+    }
+}
+
+/// Third re-check 10d532d5 #2, the auditor's proof as submitted (moved into this file): CrafterLevels' and
+/// MinePayments' proxies, like MiningSites', are set up only in their own constructor (OwnedUUPS.__Owned_init).
+contract LateInitProofTest is Test {
+    address stranger = makeAddr("stranger");
+
+    /// CrafterLevels' and MinePayments' proxies, like MiningSites', must not be anyone's to set up after deployment.
+    function test_StrangerCannotInitialiseLateLevelsOrPaymentsProxies() public {
+        MineToken token = new MineToken(address(this), address(0), 0);
+        address levels = address(new ERC1967Proxy(address(new CrafterLevels()), ""));
+        address payments = address(new ERC1967Proxy(address(new MinePayments()), ""));
+
+        vm.startPrank(stranger);
+        (bool okLevels,) = levels.call(
+            abi.encodeCall(CrafterLevels.initialize, (IERC20(address(token)), IERC721(address(token)), stranger, stranger))
+        );
+        (bool okPayments,) =
+            payments.call(abi.encodeCall(MinePayments.initialize, (IERC20(address(token)), stranger, stranger)));
+        vm.stopPrank();
+        assertFalse(okLevels, "a stranger initialised a CrafterLevels proxy deployed uninitialised");
+        assertFalse(okPayments, "a stranger initialised a MinePayments proxy deployed uninitialised");
+        assertEq(CrafterLevels(levels).owner(), address(0));
+        assertEq(MinePayments(payments).owner(), address(0));
+    }
+
+    /// And the reason is the shared guard, for the owner too: neither can be set up late by anyone.
+    function test_TheGuardIsSharedByEveryProxyOfTheFamily() public {
+        MineToken token = new MineToken(address(this), address(0), 0);
+        address levels = address(new ERC1967Proxy(address(new CrafterLevels()), ""));
+        address payments = address(new ERC1967Proxy(address(new MinePayments()), ""));
+        vm.expectRevert(OwnedUUPS.InitializeOutsideConstructor.selector);
+        CrafterLevels(levels).initialize(IERC20(address(token)), IERC721(address(token)), address(this), address(this));
+        vm.expectRevert(OwnedUUPS.InitializeOutsideConstructor.selector);
+        MinePayments(payments).initialize(IERC20(address(token)), address(this), address(this));
     }
 }

@@ -44,6 +44,8 @@ interface IDistributor {
 ///         4. Two days later, `acceptDistributor()`: it checks P has code, and that P's `owner()` is this vault's
 ///            owner, P's `vault()` this vault and P's `predecessor()` the current distributor, and reverts otherwise
 ///            (then propose again). A pending distributor can't mint: only `distributor` can.
+///         This works whatever the current distributor is, one without code too (the predicted address of a launch
+///         whose proxy never landed there): the replacement records it without calling it, with empty books.
 /// @dev Not upgradeable and not a proxy, on purpose: this and the token are the parts that stay fixed. Trust, plainly:
 ///      the distributor decides who is paid (within the limits), so a bad distributor could mint up to 35,000 a day to
 ///      whomever it likes; that is no more than an owner who made itself MiningSites' signer could already take. The

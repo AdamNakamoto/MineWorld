@@ -76,9 +76,9 @@ contract CrafterLevelsTest is Test {
         levels = _newLevels(owner, treasury);
         vm.prank(owner);
         crafters.setSaleOpen(true);
-        vm.prank(alice);
+        vm.prank(alice, alice);
         crafters.mint(3);
-        vm.prank(bob);
+        vm.prank(bob, bob);
         crafters.mint(1);
         vm.startPrank(owner);
         crafters.setSaleOpen(false);

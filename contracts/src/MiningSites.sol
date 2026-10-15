@@ -48,15 +48,17 @@ import {MineVault} from "./MineVault.sol";
 ///        cost it shows). The treasury must accept ETH (checked when it's set): `openSite` pays it directly.
 ///      - Upgrades keep every site, level and total: the state lives in ERC-7201 namespaced storage.
 ///      - Replacing this contract as the vault's distributor (a new proxy rather than an upgrade in place; MineVault
-///        has the steps): the replacement is initialised in its own constructor, never later, and records the distributor of the moment as its `predecessor`. Each player's site (when it
-///        opened, its level), `settled` and `claimed` carry over: the views read through to the predecessor, and a
-///        player's first `openSite`, `upgradeSite` or `claim` here imports them for good (the higher of the two of
-///        each; a level is kept as bought, even above this contract's top, which converts at the top level's rate
-///        until levels are added). So lifetime vouchers never pay twice, and
-///        chains of replacements work. The per-day counters (`paidToday`, `walletPaidToday`) restart at a
-///        replacement; the vault's 35,000 a day still holds across it. Once replaced, this contract is retired: its
-///        `openSite`, `upgradeSite` and `claim` revert `NotActive` (as a replacement's do until it is accepted), so
-///        nobody can buy a site or a level here that could never pay.
+///        has the steps): the replacement is initialised in its own constructor, never later, and records the
+///        distributor of the moment as its `predecessor`. Each player's site (when it opened, its level), `settled`
+///        and `claimed` carry over: the views read through to the predecessor, and a player's first `openSite`,
+///        `upgradeSite` or `claim` here imports them for good (the higher of the two of each; a level is kept as
+///        bought, even above this contract's top, which converts at the top level's rate until levels are added). So
+///        lifetime vouchers never pay twice, and chains of replacements work. A distributor without code (a predicted
+///        address nothing was deployed at, after a launch gone wrong) can be replaced too: it has no books, so the
+///        replacement records it without calling it and reads its books as empty. The per-day counters
+///        (`paidToday`, `walletPaidToday`) restart at a replacement; the vault's 35,000 a day still holds across it.
+///        Once replaced, this contract is retired: its `openSite`, `upgradeSite` and `claim` revert `NotActive` (as a
+///        replacement's do until it is accepted), so nobody can buy a site or a level here that could never pay.
 contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
@@ -146,9 +148,8 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
     /// @notice The treasury refused a plain call with no ETH (a contract with no receive or fallback, say), so it
     ///         would refuse site payments too and every openSite would fail.
     error TreasuryRefusesEth();
-    /// @notice `initialize` runs only in the proxy's own constructor (ERC1967Proxy's data).
-    error InitializeOutsideConstructor();
-    /// @notice The vault's distributor of the moment, which a replacement follows, doesn't answer `bookOf`.
+    /// @notice The vault's distributor of the moment, which a replacement follows, has code but doesn't answer
+    ///         `bookOf` (one without code is fine: it has no books).
     error BadPredecessor();
     /// @notice This contract isn't the vault's distributor: it was replaced (retired), or isn't accepted yet.
     error NotActive();
@@ -172,7 +173,8 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
     ///         60%, 70%, 85% and 100%; 75% of each upgrade burned). The vault must already name this proxy its
     ///         distributor (the launch: the vault was given the proxy's predicted address) or its pending distributor
     ///         (a replacement: proposed at its predicted address first, see MineVault; it then follows the vault's
-    ///         distributor of the moment, its `predecessor`). It runs only in the proxy's own constructor
+    ///         distributor of the moment, its `predecessor`, which must answer `bookOf` unless it has no code at
+    ///         all, in which case its books are empty). It runs only in the proxy's own constructor
     ///         (ERC1967Proxy's data), never later, by anyone: a proxy deployed without it can never be set up, so
     ///         nobody can make one theirs (deploy another). Its arguments, `vault_` included, are trusted only because
     ///         whoever deploys the proxy chooses them. The vault then accepts a replacement only if its `owner()` is
@@ -187,10 +189,8 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
         uint256 walletDailyCap_,
         uint256 dailyCap_
     ) external initializer {
-        // Only in the proxy's own constructor: a proxy has no code of its own until its constructor returns.
-        if (address(this).code.length != 0) revert InitializeOutsideConstructor();
+        __Owned_init(owner_); // first: only in the proxy's own constructor (OwnedUUPS, InitializeOutsideConstructor)
         if (address(vault_) == address(0) || signer_ == address(0)) revert ZeroAddress();
-        __Owned_init(owner_);
         __MinePayer_init(token_, treasury_);
         uint256[] memory costs = new uint256[](4);
         (costs[0], costs[1], costs[2], costs[3]) = (4_620e18, 18_942e18, 77_662e18, 318_415e18);
@@ -201,9 +201,13 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
         if (current != address(this)) {
             if (vault_.pendingDistributor() != address(this)) revert BadVault();
             // A replacement: it follows the distributor of the moment, and carries each player's books over from it.
-            try MiningSites(current).bookOf(address(0)) {}
-            catch {
-                revert BadPredecessor();
+            // One without code (a predicted address nothing was ever deployed at) has no books: recorded as it is,
+            // never called (a call to it would revert before any catch), and read as empty.
+            if (current.code.length != 0) {
+                try MiningSites(current).bookOf(address(0)) {}
+                catch {
+                    revert BadPredecessor();
+                }
             }
             $.predecessor = MiningSites(current);
             emit PredecessorSet(current);
@@ -252,11 +256,12 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
 
     /// @dev `player`'s site and books, imported for good from the predecessor the first time the player acts here
     ///      (once this is active, so the predecessor's are final): the higher of the two of each, the level as bought
-    ///      (never above MAX_LEVELS, so it fits a uint8), even above this contract's top.
+    ///      (never above MAX_LEVELS, so it fits a uint8), even above this contract's top. A predecessor without code
+    ///      has no books: nothing to import.
     function _import(address player) private {
         SitesStorage storage $ = _sites();
         MiningSites pred = $.predecessor;
-        if (address(pred) == address(0) || $.imported[player]) return;
+        if (address(pred) == address(0) || $.imported[player] || address(pred).code.length == 0) return;
         $.imported[player] = true;
         (uint64 openedAt, uint256 level, uint256 done, uint256 paid) = pred.bookOf(player);
         Site storage site = $.sites[player];
@@ -283,7 +288,9 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
         Site memory site = $.sites[player];
         (openedAt, level, settledTotal, claimedTotal) = (site.openedAt, site.level, $.settled[player], $.claimed[player]);
         MiningSites pred = $.predecessor;
-        if (address(pred) == address(0) || $.imported[player]) return (openedAt, level, settledTotal, claimedTotal);
+        if (address(pred) == address(0) || $.imported[player] || address(pred).code.length == 0) {
+            return (openedAt, level, settledTotal, claimedTotal); // (none, or one without code: no books)
+        }
         (uint64 o, uint256 l, uint256 st, uint256 cl) = pred.bookOf(player);
         if (l > MAX_LEVELS) l = MAX_LEVELS;
         if (l > level) {

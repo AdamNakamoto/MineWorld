@@ -10,6 +10,9 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeab
 ///         `acceptOwnership` by the new owner), so a typo can't lose it, and can't be renounced, so the settings
 ///         and the code stay manageable. The owner can be handed to a multisig or a timelock at any time, which then
 ///         puts every upgrade and setting behind its signers or its delay.
+///         A proxy of this family is set up only in its own constructor (ERC1967Proxy's data): `__Owned_init`, which
+///         every `initialize` calls first, refuses to run anywhere else, so a proxy deployed without its setup can
+///         never be set up, by anyone, and nobody can make a proxy someone else deployed theirs.
 /// @dev OpenZeppelin's Ownable2Step, with its state in ERC-7201 namespaced storage (OpenZeppelin's own upgradeable
 ///      package isn't installed here). Same events and errors, so tools and tests read it the same way.
 abstract contract OwnedUUPS is Initializable, UUPSUpgradeable {
@@ -29,6 +32,8 @@ abstract contract OwnedUUPS is Initializable, UUPSUpgradeable {
     error OwnableInvalidOwner(address owner);
     /// @notice Ownership can only be handed over (two-step), never renounced.
     error CannotRenounce();
+    /// @notice A proxy's setup (`initialize`) runs only in the proxy's own constructor (ERC1967Proxy's data).
+    error InitializeOutsideConstructor();
 
     modifier onlyOwner() {
         if (msg.sender != _owned().owner) revert OwnableUnauthorizedAccount(msg.sender);
@@ -41,7 +46,11 @@ abstract contract OwnedUUPS is Initializable, UUPSUpgradeable {
         }
     }
 
+    /// @dev The first step of every `initialize` in the family. Only in the proxy's own constructor: a proxy has no
+    ///      code of its own until its constructor returns (an upgrade's reinitializer, if one is ever written, doesn't
+    ///      call this).
     function __Owned_init(address owner_) internal onlyInitializing {
+        if (address(this).code.length != 0) revert InitializeOutsideConstructor();
         if (owner_ == address(0)) revert OwnableInvalidOwner(address(0));
         _owned().owner = owner_;
         emit OwnershipTransferred(address(0), owner_);

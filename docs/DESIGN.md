@@ -15,9 +15,9 @@ $STAMP hook for the 4% fee, the audited enforced-royalty NFT pattern, and server
 | 4% trading fee | Every swap pays 4% of its IMD side to `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` (the fee recipient). Plain transfers are never taxed |
 | Mining site | Opened once per wallet with ETH (0.005 ETH at launch, owner-settable, never zero), paid straight to the treasury. Needed to convert earnings to $MINE. Not transferable. Levels 1 to 5 convert 50%, 60%, 70%, 85% and 100% of the earnings claimed; upgrades cost 4,620, 18,942, 77,662 and 318,415 $MINE |
 | DIO levels | `CrafterLevels`: a DIO's holder raises it from level 1 to 5 for 2,310, 9,471, 38,831 and 159,207 $MINE. The level belongs to the token (it stays when sold) and adds to its boost |
-| Shop and tickets | `MinePayments`: the Smithy's shop (kind 0) and rocket tickets (kind 1, 2,100 $MINE to Deepvein or Cinderfall, 210 to Red Mesa), at the prices in `web/shop.js` and `web/zones.js` |
-| Burns | Site upgrades, DIO levels and the shop burn 75% of what they cost (owner-settable, 0-100%) and send the rest to the treasury; tickets burn nothing. Taken straight from the player's wallet with an exact approval: the contracts never hold anyone's $MINE |
-| NFT | "I'M DIO" (symbol DIO; contract `MineWorldCrafters`, first named MineWorld Crafters: the code keeps that name): 3,333 characters from the user's own pixel-art designs, drawn and stored fully on-chain (the contract builds each SVG from the trait layers in `web/crafters-art.js`). Free mint (gas only; price owner-settable), at most 3 per wallet (owner-settable, 1 to 50), commit-reveal (the owner publishes the secret, the seed waits for the next block's hash, anyone seals it within the 256 blocks the chain keeps a hash for, about 26 seconds; the panel sends both at once. If nobody seals in time, only the owner can move it on to a new block, in public and at most 3 times; after that the reveal stays stuck rather than fall back to anything that could be steered). No two alike: hair x outfit x eyes x gaze is a different one of 6,912 combinations for every token; background, skin, hat and blush are weighted. The DIO a player wears is how their miner looks in the game, and boosts their mining by its rarity and level (`web/boosts.js`). 5% royalty, enforced (ERC721-C, OpenSea's registry), rate fixed. Owner can update the collection's website and social links shown on OpenSea at any time; its ownership can never be renounced, so OpenSea Studio, which lets only `owner()` edit, stays usable |
+| Shop and tickets | `MinePayments`: the Smithy's shop (kind 0), rocket tickets (kind 1, 2,100 $MINE to Deepvein or Cinderfall, 210 to Red Mesa) and revives (kind 2, 420 $MINE to revive on the spot after dying on the home planet), at the game's prices (`web/shop.js`, `web/zones.js`) |
+| Burns | Site upgrades, DIO levels and the shop burn 75% of what they cost (owner-settable, 0-100%) and send the rest to the treasury; tickets and revives burn nothing. Taken straight from the player's wallet with an exact approval: the contracts never hold anyone's $MINE |
+| NFT | "I'M DIO" (symbol DIO; contract `MineWorldCrafters`, first named MineWorld Crafters: the code keeps that name): 3,333 characters from the user's own pixel-art designs, drawn and stored fully on-chain (the contract builds each SVG from the trait layers in `web/crafters-art.js`). Free mint (gas only; price owner-settable) for wallets only (`msg.sender == tx.origin`, so no contract mints and one transaction can't sweep it through throwaway contracts; an EIP-7702 account mints as itself), at most 3 per wallet (owner-settable, 1 to 50), commit-reveal (the owner publishes the secret, the seed waits for the next block's hash, anyone seals it within the 256 blocks the chain keeps a hash for, about 26 seconds; the panel sends both at once. `revealStatus` says Sealable only with 30 blocks, about 3 seconds, to spare. If nobody seals in time, only the owner can move it on to a new block, in public and at most 3 times; after that the reveal stays stuck rather than fall back to anything that could be steered. `tools/sealer.sh` lets anyone seal the moment it can be, so the owner announces the reveal time). No two alike: hair x outfit x eyes x gaze is a different one of 6,912 combinations for every token; background, skin, hat and blush are weighted. The DIO a player wears is how their miner looks in the game, and boosts their mining by its rarity and level (`web/boosts.js`). 5% royalty, enforced (ERC721-C, OpenSea's registry), rate fixed. Owner can update the collection's website and social links shown on OpenSea at any time; its ownership can never be renounced, so OpenSea Studio, which lets only `owner()` edit, stays usable |
 | Treasury | Site sales, the unburned share of upgrades and shop payments, tickets, any NFT mint price and the NFT royalty. Defaults to the fee recipient `0x6e85…70eD`; separate setting |
 | Owner | `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` owns the vault, the three proxies and I'M DIO. Two-step transfer, never renounced (`OwnedUUPS`); can be a multisig or a timelock |
 
@@ -87,11 +87,15 @@ the vault caps what can be minted at 35,000 a day.
 Owner: `proposeDistributor` (an address, code or not: a proxy's predicted address), `cancelDistributor`,
 `acceptDistributor` (after `DISTRIBUTOR_DELAY`, 2 days, and only a contract whose `owner()` is the vault's owner,
 `vault()` the vault and `predecessor()` the current distributor), `sweep`. A replacement MiningSites proxy is deployed
-with `initialize` in its constructor (the only place it can run: a proxy deployed without it can never be set up; it
-accepts the vault's pending distributor and records the current one as its predecessor). The vault's checks catch
-mistakes, not a contract built to lie, so the owner proposes only a proxy it deploys itself, from its own wallet. It carries each player's site, `settled` and `claimed`
-over (`bookOf` reads through; a player's first `openSite`, `upgradeSite` or `claim` imports them; levels as they are), and the replaced
-one retires: its `openSite`, `upgradeSite` and `claim` revert `NotActive`. Per-day counters restart at a replacement.
+with `initialize` in its constructor (the only place it can run, for every proxy of the family: `OwnedUUPS.__Owned_init`
+refuses anywhere else, so a proxy deployed without it can never be set up; it accepts the vault's pending distributor
+and records the current one as its predecessor, which must answer `bookOf` unless it has no code at all, a predicted
+address nothing was deployed at, whose books are empty). The vault's checks catch mistakes, not a contract built to
+lie, so the owner proposes only a proxy it deploys itself, from its own wallet. It carries each player's site,
+`settled` and `claimed` over (`bookOf` reads through; a player's first `openSite`, `upgradeSite` or `claim` imports
+them; levels as they are), and the replaced one retires: its `openSite`, `upgradeSite` and `claim` revert `NotActive`.
+Per-day counters restart at a replacement. The launch's vault is given the MiningSites proxy's predicted address: a
+hard precondition the deploy script checks (the deploying wallet sends nothing else meanwhile).
 
 **CrafterLevels** (UUPS proxy): `levelOf(tokenId)` (1 until upgraded), `upgrade(tokenId, maxCost)` by the token's
 holder for `upgradeCost(level + 1)`, never more than `maxCost` (75% burned; costs 2,310, 9,471, 38,831, 159,207 at launch, each at most 2,000,000), `maxLevel`,
@@ -101,7 +105,7 @@ uint256 cost, uint256 burned)`. `attributesOf(tokenId)` is the DIO's "Level" tra
 
 **MinePayments** (UUPS proxy): `pay(kind, amount, ref)` takes `amount` from the caller (exact approval), burns the
 kind's `burnBps` and sends the rest to the treasury; event `Paid(address indexed player, uint256 indexed kind, uint256
-amount, uint256 burned, bytes32 indexed ref)`. Kinds: 0 "shop" (7,500), 1 "ticket" (0); `kind(i) → (name, burnBps)`,
+amount, uint256 burned, bytes32 indexed ref)`. Kinds: 0 "shop" (7,500), 1 "ticket" (0), 2 "revive" (0: 420 $MINE to revive on the spot after dying on the home planet); `kind(i) → (name, burnBps)`,
 `kindCount()`. Owner: `setKindBurn`, `addKind` (up to 32), treasury, upgrades. Prices are the game's, not the
 contract's. The game makes `ref` 32 random bytes per payment.
 

@@ -54,12 +54,16 @@ contract MinePaymentsTest is Test {
         assertEq(address(payments.token()), address(token));
         assertEq(payments.owner(), owner);
         assertEq(payments.treasury(), treasury);
-        assertEq(payments.kindCount(), 2);
+        assertEq(payments.kindCount(), 3);
         (string memory name, uint256 burn) = payments.kind(payments.KIND_SHOP());
         assertEq(name, "shop");
         assertEq(burn, 7_500);
         (name, burn) = payments.kind(payments.KIND_TICKET());
         assertEq(name, "ticket");
+        assertEq(burn, 0);
+        assertEq(payments.KIND_REVIVE(), 2);
+        (name, burn) = payments.kind(payments.KIND_REVIVE());
+        assertEq(name, "revive");
         assertEq(burn, 0);
     }
 
@@ -85,10 +89,26 @@ contract MinePaymentsTest is Test {
         assertEq(token.totalBurned(), 0);
     }
 
+    /// Revives (420 $MINE in the game, on the spot after dying on the home planet): nothing burned, all to the
+    /// treasury, straight from the player's wallet.
+    function test_RevivesGoToTheTreasury() public {
+        bytes32 ref = keccak256("revive 1");
+        vm.startPrank(alice);
+        token.approve(address(payments), 420e18);
+        vm.expectEmit(address(payments));
+        emit MinePayments.Paid(alice, 2, 420e18, 0, ref);
+        assertEq(payments.pay(2, 420e18, ref), 0);
+        vm.stopPrank();
+        assertEq(token.balanceOf(alice), 100_000e18 - 420e18);
+        assertEq(token.balanceOf(treasury), 420e18);
+        assertEq(token.totalBurned(), 0);
+        assertEq(token.balanceOf(address(payments)), 0, "never holds $MINE");
+    }
+
     function test_PayChecks() public {
         vm.startPrank(alice);
         vm.expectRevert(MinePayments.NoSuchKind.selector);
-        payments.pay(2, 1e18, 0);
+        payments.pay(3, 1e18, 0);
         vm.expectRevert(MinePayments.ZeroAmount.selector);
         payments.pay(0, 0, 0);
         vm.expectRevert(); // not approved
@@ -103,8 +123,8 @@ contract MinePaymentsTest is Test {
     function test_KindsAreTheOwners() public {
         vm.startPrank(owner);
         vm.expectEmit(address(payments));
-        emit MinePayments.KindAdded(2, "boost", 10_000);
-        assertEq(payments.addKind("boost", 10_000), 2);
+        emit MinePayments.KindAdded(3, "boost", 10_000);
+        assertEq(payments.addKind("boost", 10_000), 3);
         vm.expectRevert(MinePayer.BadBurn.selector);
         payments.addKind("too much", 10_001);
         vm.expectRevert(MinePayments.BadName.selector);
@@ -117,14 +137,14 @@ contract MinePaymentsTest is Test {
         vm.expectRevert(MinePayer.BadBurn.selector);
         payments.setKindBurn(1, 10_001);
         vm.expectRevert(MinePayments.NoSuchKind.selector);
-        payments.setKindBurn(3, 0);
+        payments.setKindBurn(4, 0);
         vm.stopPrank();
-        assertEq(_pay(2, 10e18, 0), 10e18, "all burned");
+        assertEq(_pay(3, 10e18, 0), 10e18, "all burned");
         assertEq(_pay(1, 10e18, 0), 2e18);
         assertEq(token.balanceOf(treasury), 8e18);
         // Up to 32 kinds.
         vm.startPrank(owner);
-        for (uint256 i = 3; i < 32; i++) {
+        for (uint256 i = 4; i < 32; i++) {
             payments.addKind("more", 0);
         }
         vm.expectRevert(MinePayments.TooManyKinds.selector);
@@ -157,8 +177,8 @@ contract MinePaymentsTest is Test {
         vm.prank(owner);
         payments.upgradeToAndCall(address(v2), "");
         assertEq(MinePaymentsV2(address(payments)).version(), 2);
-        assertEq(payments.kindCount(), 3);
-        (string memory name, uint256 burn) = payments.kind(2);
+        assertEq(payments.kindCount(), 4);
+        (string memory name, uint256 burn) = payments.kind(3);
         assertEq(name, "boost");
         assertEq(burn, 5_000);
         assertEq(payments.treasury(), treasury);

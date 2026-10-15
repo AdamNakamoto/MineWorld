@@ -108,7 +108,7 @@ contract MineWorldCraftersTest is Test {
 
     function _mint(address who, uint256 n) internal {
         uint256 value = crafters.price() * n;
-        vm.prank(who);
+        vm.prank(who, who);
         crafters.mint{value: value}(n);
     }
 
@@ -167,7 +167,7 @@ contract MineWorldCraftersTest is Test {
         assertEq(treasury.balance, 0);
         assertEq(address(crafters).balance, 0);
         // While free, sending ETH is a mistake: refused.
-        vm.prank(bob);
+        vm.prank(bob, bob);
         vm.expectRevert(MineWorldCrafters.WrongPayment.selector);
         crafters.mint{value: 1}(1);
     }
@@ -191,7 +191,7 @@ contract MineWorldCraftersTest is Test {
         _setPrice(PRICE);
         vm.prank(owner);
         crafters.setWalletLimit(10); // (the per-transaction rules, above the launch's 3 a wallet)
-        vm.startPrank(alice);
+        vm.startPrank(alice, alice);
         vm.expectRevert(MineWorldCrafters.WrongPayment.selector);
         crafters.mint{value: PRICE}(2);
         vm.expectRevert(MineWorldCrafters.WrongPayment.selector);
@@ -204,7 +204,7 @@ contract MineWorldCraftersTest is Test {
         vm.stopPrank();
         vm.prank(owner);
         crafters.setSaleOpen(false);
-        vm.prank(alice);
+        vm.prank(alice, alice);
         vm.expectRevert(MineWorldCrafters.SaleClosed.selector);
         crafters.mint{value: PRICE}(1);
     }
@@ -216,13 +216,13 @@ contract MineWorldCraftersTest is Test {
         _mint(alice, 1);
         _mint(alice, 2);
         assertEq(crafters.balanceOf(alice), 3);
-        vm.prank(alice);
+        vm.prank(alice, alice);
         vm.expectRevert(MineWorldCrafters.WalletLimit.selector);
         crafters.mint(1);
         // Three at once from a fresh wallet: fine; four at once: refused whole.
         _mint(bob, 3);
         address carol = makeAddr("carol");
-        vm.prank(carol);
+        vm.prank(carol, carol);
         vm.expectRevert(MineWorldCrafters.WalletLimit.selector);
         crafters.mint(4);
         assertEq(crafters.balanceOf(carol), 0);
@@ -231,19 +231,19 @@ contract MineWorldCraftersTest is Test {
     /// Each wallet mints at most `walletLimit` in all (3 at launch), counted by what it minted, not what it holds.
     function test_WalletLimit() public {
         _mint(alice, 3);
-        vm.prank(alice);
+        vm.prank(alice, alice);
         vm.expectRevert(MineWorldCrafters.WalletLimit.selector);
         crafters.mint(1);
         // Giving them away doesn't make room.
         vm.prank(alice);
         crafters.transferFrom(alice, bob, 1);
-        vm.prank(alice);
+        vm.prank(alice, alice);
         vm.expectRevert(MineWorldCrafters.WalletLimit.selector);
         crafters.mint(1);
         assertEq(crafters.mintedBy(alice), 3);
         // A partial mint over the limit is refused whole.
         _mint(bob, 2);
-        vm.prank(bob);
+        vm.prank(bob, bob);
         vm.expectRevert(MineWorldCrafters.WalletLimit.selector);
         crafters.mint(2);
         _mint(bob, 1);
@@ -267,7 +267,7 @@ contract MineWorldCraftersTest is Test {
         assertEq(crafters.walletLimit(), 1);
         address carol = makeAddr("carol");
         _mint(carol, 1);
-        vm.prank(carol);
+        vm.prank(carol, carol);
         vm.expectRevert(MineWorldCrafters.WalletLimit.selector);
         crafters.mint(1);
     }
@@ -282,13 +282,13 @@ contract MineWorldCraftersTest is Test {
         assertEq(crafters.totalMinted(), 3300);
         address last = makeAddr("last");
         for (uint256 i; i < 6; i++) _mint(last, 5);
-        vm.prank(last);
+        vm.prank(last, last);
         vm.expectRevert(MineWorldCrafters.SoldOut.selector);
         crafters.mint(4);
         _mint(last, 3);
         assertEq(crafters.totalMinted(), 3333);
         assertEq(crafters.ownerOf(3333), last);
-        vm.prank(bob);
+        vm.prank(bob, bob);
         vm.expectRevert(MineWorldCrafters.SoldOut.selector);
         crafters.mint(1);
     }
@@ -402,7 +402,7 @@ contract MineWorldCraftersTest is Test {
         vm.expectRevert(MineWorldCrafters.AlreadyRevealed.selector);
         crafters.setSaleOpen(false);
         vm.stopPrank();
-        vm.prank(alice);
+        vm.prank(alice, alice);
         vm.expectRevert(MineWorldCrafters.SaleClosed.selector);
         crafters.mint(1);
         assertEq(crafters.totalMinted(), 3);
@@ -415,7 +415,7 @@ contract MineWorldCraftersTest is Test {
         _mint(alice, 3);
         uint256 b = vm.getBlockNumber() + 10;
         vm.roll(b);
-        vm.startPrank(owner);
+        vm.startPrank(owner, owner);
         crafters.mint(3);
         vm.expectRevert(MineWorldCrafters.SaleStillOpen.selector);
         crafters.reveal(SECRET);
@@ -599,9 +599,9 @@ contract MineWorldCraftersTest is Test {
     }
 
     /// If nobody seals within 256 blocks the hash can't be read any more: `seal` reverts, the owner moves the entropy
-    /// block on to the next block, in public, and sealing once that block is over sets the seed from it. Second
-    /// re-check 52b534f9 #4: the status says Sealable only with a block to spare (a seal landing on the window's last
-    /// block still works).
+    /// block on to the next block, in public, and sealing once that block is over sets the seed from it. Third
+    /// re-check 10d532d5 #5: the status says Sealable only with SEAL_MARGIN (30) blocks to spare, and a seal landing in
+    /// those last blocks still works.
     function test_AnExpiredEntropyBlockMovesOn() public {
         _mint(alice, 2);
         vm.prank(owner);
@@ -610,13 +610,23 @@ contract MineWorldCraftersTest is Test {
         vm.prank(owner);
         crafters.reveal(SECRET);
         uint256 e = b + 1;
-        vm.roll(e + 255);
+        vm.roll(e + 225);
         assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Sealable));
-        vm.roll(e + 256); // the last block its hash can be read in: a seal sent now would land after it
+        vm.roll(e + 226); // SEAL_MARGIN blocks before the end: a seal sent now might be sequenced too late
         assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Expired));
         uint256 snap = vm.snapshotState();
         vm.prank(bob);
-        crafters.seal(); // (one already landing in it still works)
+        crafters.seal(); // (one landing in the margin still works)
+        assertEq(crafters.seed(), uint256(keccak256(abi.encode(SECRET, this.hashOf(e)))));
+        vm.revertToState(snap);
+        vm.prank(owner);
+        vm.expectRevert(MineWorldCrafters.NotExpired.selector);
+        crafters.moveEntropyOn();
+        vm.roll(e + 256); // the last block its hash can be read in
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Expired));
+        snap = vm.snapshotState();
+        vm.prank(bob);
+        crafters.seal();
         assertEq(crafters.seed(), uint256(keccak256(abi.encode(SECRET, this.hashOf(e)))));
         vm.revertToState(snap);
         vm.prank(owner);
@@ -645,6 +655,32 @@ contract MineWorldCraftersTest is Test {
         vm.prank(alice);
         crafters.seal();
         assertEq(crafters.seed(), uint256(keccak256(abi.encode(SECRET, h))));
+    }
+
+    /// Third re-check 10d532d5 #5: at any block of the window, `revealStatus` says Sealable only with SEAL_MARGIN
+    /// blocks to spare, while `seal` itself takes the whole window and the owner's move waits until it is over.
+    function testFuzz_SealableLeavesAMarginButSealTakesTheWholeWindow(uint256 offset) public {
+        offset = bound(offset, 1, 256);
+        _mint(alice, 1);
+        vm.prank(owner);
+        crafters.setSaleOpen(false);
+        vm.prank(owner);
+        crafters.reveal(SECRET);
+        uint256 e = crafters.entropyBlock();
+        vm.roll(e + offset);
+        MineWorldCrafters.RevealStatus st = crafters.revealStatus();
+        if (offset < crafters.ENTROPY_WINDOW() - crafters.SEAL_MARGIN()) {
+            assertEq(uint8(st), uint8(MineWorldCrafters.RevealStatus.Sealable));
+        } else {
+            assertEq(uint8(st), uint8(MineWorldCrafters.RevealStatus.Expired));
+        }
+        vm.prank(owner);
+        vm.expectRevert(MineWorldCrafters.NotExpired.selector);
+        crafters.moveEntropyOn();
+        vm.prank(bob);
+        crafters.seal();
+        assertEq(crafters.seed(), uint256(keccak256(abi.encode(SECRET, this.hashOf(e)))));
+        assertEq(crafters.SEAL_MARGIN(), 30);
     }
 
     // ---------------------------------------------------------------- the reveal on an Arbitrum chain (ArbSys)
@@ -709,8 +745,10 @@ contract MineWorldCraftersTest is Test {
         crafters.setSaleOpen(false);
         vm.prank(owner);
         crafters.reveal(SECRET);
-        sys.setNumber(1_001 + 255);
+        sys.setNumber(1_001 + 225);
         assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Sealable));
+        sys.setNumber(1_001 + 226);
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Expired));
         sys.setNumber(1_001 + 257);
         assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Expired));
         vm.prank(bob);
@@ -756,7 +794,7 @@ contract MineWorldCraftersTest is Test {
         MineWorldCrafters s = new MineWorldCrafters(owner, treasury, 0, keccak256(abi.encode(secret)), address(validator), art);
         vm.prank(owner);
         s.setSaleOpen(true);
-        vm.prank(alice);
+        vm.prank(alice, alice);
         s.mint(3);
         vm.prank(owner);
         s.setSaleOpen(false);
@@ -974,7 +1012,7 @@ contract MineWorldCraftersTest is Test {
             }
         }
         assertEq(crafters.totalMinted(), crafters.MAX_SUPPLY());
-        vm.prank(alice);
+        vm.prank(alice, alice);
         vm.expectRevert(MineWorldCrafters.SoldOut.selector);
         crafters.mint(1);
         _reveal();
@@ -1473,7 +1511,7 @@ contract RevealSeedTest is Test {
         c = new MineWorldCrafters(owner, owner, 0, keccak256(abi.encode(secret)), address(v), art);
         vm.prank(owner);
         c.setSaleOpen(true);
-        vm.prank(alice);
+        vm.prank(alice, alice);
         c.mint(3); // (5 in the auditor's original: the launch allows 3 a wallet now)
         vm.prank(owner);
         c.setSaleOpen(false);
@@ -1617,7 +1655,7 @@ contract MineWorldCraftersForkTest is Test {
         crafters = new MineWorldCrafters(owner, makeAddr("treasury"), 0, keccak256(abi.encode(uint256(7))), REGISTRY, new CrafterArt());
         vm.prank(owner);
         crafters.setSaleOpen(true);
-        vm.prank(alice);
+        vm.prank(alice, alice);
         crafters.mint(2);
     }
 
@@ -1719,5 +1757,109 @@ contract MineWorldCraftersForkTest is Test {
         crafters.seal();
         assertEq(crafters.seed(), uint256(keccak256(abi.encode(uint256(7), keccak256("L2 block")))));
         assertTrue(bytes(crafters.tokenURI(1)).length > 10_000);
+    }
+}
+
+/// Third re-check 10d532d5 #3, the auditor's SybilMintTest, adapted to the fix (I'M DIO mints for wallets only).
+/// A validator that allows every transfer (stands in for OpenSea's registry).
+contract OpenValidator {
+    function validateTransfer(address, address, address, uint256) external pure {}
+}
+
+/// A throwaway wallet: mints the per-wallet maximum and hands the Crafters to its maker, all in its constructor.
+contract Child {
+    constructor(MineWorldCrafters c, address to) {
+        uint256 first = c.totalMinted() + 1;
+        c.mint(3);
+        for (uint256 i; i < 3; i++) {
+            c.transferFrom(address(this), to, first + i);
+        }
+    }
+}
+
+/// One actor, one transaction: `n` fresh wallets, 3 each.
+contract Sweeper {
+    function sweep(MineWorldCrafters c, uint256 n) external {
+        for (uint256 i; i < n; i++) {
+            new Child(c, msg.sender);
+        }
+    }
+}
+
+/// An account's delegated code (EIP-7702) that mints twice in one call.
+contract BatchMinter {
+    function mintThreeTwice(MineWorldCrafters c) external {
+        c.mint(3);
+        c.mint(3);
+    }
+
+    function mintThree(MineWorldCrafters c) external {
+        c.mint(3);
+    }
+}
+
+contract SybilMintTest is Test {
+    MineWorldCrafters crafters;
+    address owner = makeAddr("owner");
+    address treasury = makeAddr("treasury");
+    address attacker = makeAddr("attacker");
+
+    function setUp() public {
+        crafters = new MineWorldCrafters(
+            owner, treasury, 0, keccak256(abi.encode(uint256(1))), address(new OpenValidator()), new CrafterArt()
+        );
+        vm.prank(owner);
+        crafters.setSaleOpen(true);
+    }
+
+    /// The auditor's sweep (100 throwaway contracts in one transaction) reverts as a whole: the attacker holds
+    /// nothing and nothing was minted. (Adapted: the attacker sends the transaction itself, tx.origin included, and
+    /// the assertions are the fix's.)
+    function test_OneActorHoldsAtMostThreeAfterOneTx() public {
+        Sweeper s = new Sweeper();
+        vm.prank(attacker, attacker);
+        (bool ok,) = address(s).call{gas: 30_000_000}(abi.encodeCall(Sweeper.sweep, (crafters, 100)));
+        assertFalse(ok, "the sweep went through");
+        assertEq(crafters.balanceOf(attacker), 0);
+        assertEq(crafters.totalMinted(), 0);
+        assertLe(crafters.balanceOf(attacker), 3, "one actor holds more than the per-wallet limit after one tx");
+    }
+
+    /// The reason: a contract can't mint, from its constructor or later.
+    function test_AContractCantMint() public {
+        vm.prank(attacker, attacker);
+        vm.expectRevert(MineWorldCrafters.OnlyWallets.selector);
+        new Child(crafters, attacker);
+        BatchMinter m = new BatchMinter();
+        vm.prank(attacker, attacker);
+        vm.expectRevert(MineWorldCrafters.OnlyWallets.selector);
+        m.mintThree(crafters);
+    }
+
+    /// A wallet minting for itself still mints its 3, and no more.
+    function test_AWalletStillMintsThree() public {
+        address wallet = makeAddr("wallet");
+        vm.prank(wallet, wallet);
+        crafters.mint(3);
+        assertEq(crafters.balanceOf(wallet), 3);
+        vm.prank(wallet, wallet);
+        vm.expectRevert(MineWorldCrafters.WalletLimit.selector);
+        crafters.mint(1);
+    }
+
+    /// An account delegated with EIP-7702 mints as itself (msg.sender == tx.origin), within the same limit per
+    /// address: its code can mint 3, not 6.
+    function test_ADelegatedAccountMintsAsItselfWithinTheLimit() public {
+        vm.setEvmVersion("prague");
+        (address account, uint256 key) = makeAddrAndKey("delegated");
+        BatchMinter code = new BatchMinter();
+        vm.signAndAttachDelegation(address(code), key);
+        vm.prank(account, account);
+        vm.expectRevert(MineWorldCrafters.WalletLimit.selector);
+        BatchMinter(account).mintThreeTwice(crafters);
+        vm.prank(account, account);
+        BatchMinter(account).mintThree(crafters);
+        assertEq(crafters.balanceOf(account), 3);
+        assertEq(crafters.mintedBy(account), 3);
     }
 }

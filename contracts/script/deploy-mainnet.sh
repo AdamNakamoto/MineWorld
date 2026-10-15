@@ -15,7 +15,10 @@
 #   the token's minter set to the vault and its ownership renounced; the pool opened (the 10.5M locked for good), then
 #   the hook renounced (after that only the fee recipient moves its fees). OWNER owns the vault and the proxies.
 #   MINING_SIGNER is the game server's voucher key's address (never the key). With CRAFTERS set (I'M DIO came first),
-#   CrafterLevels too.
+#   CrafterLevels too. A hard precondition: the vault is given the address of the deploying wallet's next contract
+#   (MiningSites' proxy), and the script requires the proxy landed there, so the wallet sends nothing else until the
+#   stage is done. Every stage broadcasts with --slow: a transaction goes out only once the one before succeeded, so a
+#   failed step stops the run (before the token's renounce, say).
 # crafters: the on-chain art (CrafterArt) and I'M DIO (contract MineWorldCrafters) with the sale closed (open it later),
 #   owned by OWNER (handed over in two steps if the deploying wallet sets anything up first: OWNER then accepts).
 # levels: CrafterLevels (implementation and proxy; DIO levels paid in $MINE), for $MINE and I'M DIO in
@@ -43,7 +46,9 @@
 #     && until cast send <I'M DIO> "seal()" --account <owner> --rpc-url robinhood; do sleep 1; done
 # Anyone can seal() for 256 L2 blocks (about 26 seconds on Robinhood Chain). After a window nobody sealed in, only OWNER
 # can move the entropy block on (moveEntropyOn, at most 3 times in all, each in public), then seal again. Nobody, the
-# owner included, can see the looks before everyone can.
+# owner included, can see the looks before everyone can. Announce the reveal time in advance, so holders can run
+# tools/sealer.sh (RPC_URL=... ./tools/sealer.sh --account <keystore name>), which seals the moment it can: then the
+# owner doesn't decide alone whether a window gets sealed.
 #
 # I'M DIO's ownership can never be renounced, so OpenSea Studio (which lets only owner() edit the collection) always
 # works: deploy it from the OWNER wallet itself, so OWNER is its creator and its owner.
@@ -152,6 +157,8 @@ if [ "$BROADCAST" = 1 ]; then
   if [ "$STAGE" = launch ]; then
     grep -E '^(OWNER|FEE_RECIPIENT|TREASURY|START_MCAP_USD|SITE_PRICE|WALLET_DAILY_CAP|DAILY_CAP|SITE_UPGRADE_COSTS|CRAFTERS|CRAFTER_UPGRADE_COSTS)=' launch.env | sed 's/^/  /'
     echo "  MINING_SIGNER=$MINING_SIGNER"
+    echo "  Send nothing else from the deploying wallet until this stage is done: the vault is given the address of its"
+    echo "  next contract (MiningSites' proxy), a hard precondition the script checks."
   elif [ "$STAGE" = levels ]; then
     grep -E '^(OWNER|TREASURY|CRAFTER_UPGRADE_COSTS)=' launch.env | sed 's/^/  /'
     echo "  MINE=$MINE"
@@ -165,7 +172,7 @@ if [ "$BROADCAST" = 1 ]; then
   fi
   read -r -p "Type DEPLOY to continue: " ok
   [ "$ok" = "DEPLOY" ] || { echo "Cancelled."; exit 1; }
-  forge script "${SCRIPT[@]}" --rpc-url "$RPC" "$@"
+  forge script "${SCRIPT[@]}" --rpc-url "$RPC" --slow "$@"
   # (forge writes the record even when sending fails: only contracts actually on chain count.)
   for k in "${KEYS[@]}"; do
     a=$(jq -r ".$k" "$RECORD")

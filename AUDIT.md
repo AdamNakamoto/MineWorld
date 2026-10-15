@@ -1,10 +1,11 @@
 # Audit brief
 
 What MineWorldCraft's contracts do, what they must guarantee, and where reviewers should look hardest. Everything
-referenced is in https://github.com/AdamNakamoto/MineWorld at the commit that adds section 10. IMD Swarm audited the
+referenced is in https://github.com/AdamNakamoto/MineWorld at the commit that adds section 11. IMD Swarm audited the
 contracts at `ba2a8ed` (job 0792975e; section 8 lists its eight findings and their fixes), re-checked the fixes at
-`49830f2` (job 8c7ba957; section 9) and re-checked them again at `4de227d` (job 52b534f9; section 10 lists its four
-findings and how each is fixed now). The sections before them describe the contracts as they are now. Nothing is deployed yet: every contract in `contracts/src` is audited before
+`49830f2` (job 8c7ba957; section 9), again at `4de227d` (job 52b534f9; section 10) and a third time at `25121ea` (job
+10d532d5; section 11 lists its five findings and how each is resolved, with one addition since: a "revive" payment
+kind). The sections before them describe the contracts as they are now. Nothing is deployed yet: every contract in `contracts/src` is audited before
 anything goes to Robinhood Chain. The deploy settings are in `contracts/launch.env`.
 
 **The NFT collection was renamed "I'M DIO"** (symbol DIO; one character is a DIO). Only what people see changed: the
@@ -35,11 +36,13 @@ Players earn **$MINE** for what they do in the game. $MINE trades in one **Unisw
   (`MiningSites`) asks, never more than 35,000 in a UTC day and 10,500,000 in all, whoever the distributor is.
   35,000 × 300 = 10,500,000, so the vault can't be emptied in under 300 days. The owner can replace the distributor
   only in the open: propose, wait two days, accept; and only with a contract whose `owner()` is the vault's owner,
-  whose `vault()` is the vault and whose `predecessor()` is the distributor it replaces. A MiningSites proxy can only
-  be set up in its own constructor, never later, by anyone, so nobody can make a proxy someone else deployed theirs;
-  the vault's reads are answered by the candidate's own code, so they catch mistakes, not a contract built to lie, and
-  the owner proposes only a proxy it deploys itself. A replacement carries each player's site (its level as bought),
-  `settled` and `claimed` over from its predecessor, and the replaced one retires.
+  whose `vault()` is the vault and whose `predecessor()` is the distributor it replaces. Every proxy of the family
+  (`MiningSites`, `MinePayments`, `CrafterLevels`) can only be set up in its own constructor, never later, by anyone
+  (`OwnedUUPS`), so nobody can make a proxy someone else deployed theirs; the vault's reads are answered by the
+  candidate's own code, so they catch mistakes, not a contract built to lie, and the owner proposes only a proxy it
+  deploys itself. A replacement carries each player's site (its level as bought), `settled` and `claimed` over from its
+  predecessor, and the replaced one retires. Any distributor can be replaced, one without code too (a predicted
+  address nothing was deployed at), whose books are empty.
 - **Earning and converting** (`MiningSites`, UUPS proxy): the game's server (a Cloudflare Worker, out of scope) keeps
   a ledger of what each signed-in wallet earns and signs an EIP-712 voucher `Earnings(player, total, deadline)` for
   the wallet's **lifetime** earnings. To convert, a wallet opens a mining site once, for ETH (0.005 at launch, sent
@@ -49,7 +52,8 @@ Players earn **$MINE** for what they do in the game. $MINE trades in one **Unisw
   can still mint today. The vault mints to the player. The share a rate doesn't convert is never minted.
 - **Spending $MINE:** site upgrades (`MiningSites.upgradeSite`), Crafter levels (`CrafterLevels.upgrade`) and the
   game's shop (`MinePayments.pay`, kind 0) burn 75% of the payment and send 25% to the treasury; rocket tickets
-  (kind 1) burn nothing and send it all to the treasury. Every payment is taken straight from the player's wallet
+  (kind 1) and revives (kind 2: the game's 420 $MINE revive on the spot after dying on the home planet) burn nothing
+  and send it all to the treasury. Every payment is taken straight from the player's wallet
   with an exact approval: no contract holds anyone's $MINE, and payments never touch the vault. Upgrades also name the
   most they'll pay (`maxCost`), and a site upgrade the least rate it buys (`minRateBps`), so a cost raised or a rate
   cut meanwhile reverts them whatever the allowance.
@@ -60,14 +64,17 @@ Players earn **$MINE** for what they do in the game. $MINE trades in one **Unisw
   multisig or a timelock later. The same wallet owns the vault and I'M DIO, and is the treasury and the fee
   recipient.
 - **I'M DIO** (`MineWorldCrafters`, pictures by `CrafterArt`): 3,333 pixel-art NFTs drawn and stored entirely on
-  chain. Blind mint (free at launch, 5 per transaction, 3 per wallet), then commit-reveal: `seedCommit` is fixed at
+  chain. Blind mint for wallets only (`msg.sender == tx.origin`; free at launch, 5 per transaction, 3 per wallet), then
+  commit-reveal: `seedCommit` is fixed at
   deploy; after the mint the owner publishes the secret (`reveal(secret)`, sale closed for good), and the seed waits
   for the hash of the chain's next block (an L2 block, from Arbitrum's ArbSys at `0x64`); once that block is over,
   anyone sets the seed with `seal()`, within the 256 L2 blocks ArbSys gives a hash for (about 26 seconds; the owner's
   panel seals straight after the reveal). After a window nobody sealed in, `seal` reverts and only the owner can move
   the entropy block on (`moveEntropyOn`), in public, at most 3 times; then the reveal is stuck for good. Nobody can
   mint knowing a look, nobody, the owner included, can see one before everyone can, and the owner's only lever is
-  those three public re-rolls of a window nobody sealed in. A keyed shuffle gives every token a different hair/outfit/eyes/gaze combination; background, skin, hat and
+  those three public re-rolls of a window nobody sealed in. As the owner alone knows when it reveals, in practice it
+  decides whether a window is sealed unless holders run the sealer (`tools/sealer.sh`) at the reveal time it
+  announces: at most a best of four public seeds. A keyed shuffle gives every token a different hair/outfit/eyes/gaze combination; background, skin, hat and
   blush are weighted picks. ERC-2981 royalty fixed at 5% to the treasury, enforced with ERC721-C (OpenSea's registry
   `0xA000027A9B2802E1ddf7000061001e5c005A0000` at launch; the owner picks the validator, and so can relax
   enforcement). `CrafterLevels` keeps each Crafter's level, which the collection shows as a "Level" trait through its
@@ -80,7 +87,8 @@ The launch (`contracts/script/deploy-mainnet.sh`) has two stages, from one walle
    publishes the secret and seals at once (anyone can seal).
 2. `launch` (`Deploy.s.sol`, `run()`): `MineHook` at a mined CREATE2 address (its constructor deploys both routers);
    `MineToken` (10.5M to the hook); `MiningSites`' implementation; `MineVault`, naming as its distributor the address
-   `MiningSites`' proxy is about to get (the deploying wallet's next contract); the proxy, initialized in its
+   `MiningSites`' proxy is about to get (the deploying wallet's next contract: a hard precondition the script checks,
+   so the wallet sends nothing else meanwhile, and the stage broadcasts with `--slow`); the proxy, initialized in its
    constructor; the token's `setMinter(vault)`, then its `renounceOwnership()`; `MinePayments` (implementation and
    proxy); `openPool`, then the hook's `renounceOwnership()`. With `CRAFTERS` set, `CrafterLevels` too (or later, as
    the `levels` stage), and `setAttributesExtension(levels)` on I'M DIO if the deploying wallet owns it
@@ -97,8 +105,8 @@ owned by `0x6e85…70eD`.
 | `MineHook`, `MineRouter`, `MineEthRouter` | The panel's trade box: buy and sell with IMD or ETH; price and market cap |
 | `MiningSites` | Open a site, upgrade it (`upgradeSite(cost shown, rate shown)`), convert earnings with the server's voucher; the panel reads rates, caps, `claimable` |
 | `MineVault` | Only through `MiningSites`; the panel shows `vaultBalance()` |
-| `MinePayments` | The Smithy's shop (kind 0: the browser checks its own `Paid` event and adds the items to an inventory kept in the browser) and rocket tickets (kind 1: the server checks the `Paid` event) |
-| `MineWorldCrafters` | Mint (free, at most 3 per wallet: the panel offers no more and explains a refused fourth); the owner's "Reveal and lock in" sends `reveal(secret)` then `seal()`, retrying until the seed is set; anyone's "Lock in the reveal" sends `seal()` while `revealStatus()` is Sealable, and after a window nobody sealed in the owner's "Pick a new block" sends `moveEntropyOn` then `seal()`; the DIO a player wears is how their miner looks; the server reads `ownerOf` and `seed()` (rarity worked out off chain by `web/crafters.js`) |
+| `MinePayments` | The Smithy's shop (kind 0: the browser checks its own `Paid` event and adds the items to an inventory kept in the browser), rocket tickets (kind 1: the server checks the `Paid` event) and revives (kind 2, 420 $MINE: the game's side, out of scope, as tickets are) |
+| `MineWorldCrafters` | Mint (free, wallets only, at most 3 per wallet: the panel offers no more and explains a refused fourth or a contract's `OnlyWallets`); the owner's "Reveal and lock in" sends `reveal(secret)` then `seal()`, retrying until the seed is set; anyone's "Lock in the reveal" sends `seal()` while `revealStatus()` is Sealable, and after a window nobody sealed in the owner's "Pick a new block" sends `moveEntropyOn` then `seal()`; the DIO a player wears is how their miner looks; the server reads `ownerOf` and `seed()` (rarity worked out off chain by `web/crafters.js`) |
 | `CrafterLevels` | "Level up" in the panel (`upgrade(id, cost shown)`); the server reads `levelOf` |
 | `CrafterArt` | Only through the collection's `tokenURI` (marketplaces) |
 
@@ -108,27 +116,28 @@ limits.
 
 ## 2. Scope
 
-Repository https://github.com/AdamNakamoto/MineWorld, at the commit that adds section 10 (IMD Swarm's 0792975e ran on
-`ba2a8ed`, its re-check 8c7ba957 on `49830f2` and its second re-check 52b534f9 on `4de227d`; sections 8, 9 and 10 list
-what changed since). Solidity 0.8.26, via-IR, optimizer 200
+Repository https://github.com/AdamNakamoto/MineWorld, at the commit that adds section 11 (IMD Swarm's 0792975e ran on
+`ba2a8ed`, its re-check 8c7ba957 on `49830f2`, its second re-check 52b534f9 on `4de227d` and its third re-check
+10d532d5 on `25121ea`; sections 8 to 11 list what changed since). Solidity 0.8.26, via-IR, optimizer 200
 runs, EVM `cancun` (transient storage: `MineHook`'s fee slot and OpenZeppelin's `ReentrancyGuardTransient`). Libraries
 are the same commits Courier World uses: OpenZeppelin Contracts 5.4.0, Uniswap v4-core `46c6834`, forge-std 1.17.0.
 
-Lines: all lines / code lines (neither blank nor comment). 3,589 / 2,461 in all (3,533 / 2,443 at `4de227d`, 3,383 /
+Lines: all lines / code lines (neither blank nor comment). 3,629 / 2,470 in all (3,589 / 2,461 at `25121ea`, 3,533 /
+2,443 at `4de227d`, 3,383 /
 2,356 at `49830f2`, 3,184 / 2,262 at `ba2a8ed`).
 
 | File | Lines | Origin | Role |
 | --- | --- | --- | --- |
 | `contracts/src/MineToken.sol` | 61 / 42 | Courier's `StampToken`, renamed | $MINE: 21M cap, one-shot minter, renounced at launch |
-| `contracts/src/MineVault.sol` | 216 / 112 | New | The one minter: 35,000 a day, 10.5M in all, distributor change after 2 days, only to a contract its owner owns that follows the current one |
-| `contracts/src/MiningSites.sol` | 630 / 402 | New (voucher check in the style of Courier's `TokenDrops`) | UUPS: sites, levels, rates, vouchers, caps, claims; set up only in its constructor; a replacement's books carried over, levels as bought |
-| `contracts/src/MinePayments.sol` | 114 / 72 | New | UUPS: shop and ticket payments, burn share per kind |
-| `contracts/src/CrafterLevels.sol` | 124 / 72 | New | UUPS: each Crafter's level, bought in $MINE; the "Level" trait |
+| `contracts/src/MineVault.sol` | 218 / 112 | New | The one minter: 35,000 a day, 10.5M in all, distributor change after 2 days, only to a contract its owner owns that follows the current one |
+| `contracts/src/MiningSites.sol` | 637 / 404 | New (voucher check in the style of Courier's `TokenDrops`) | UUPS: sites, levels, rates, vouchers, caps, claims; a replacement's books carried over, levels as bought, from any predecessor (one without code: empty books) |
+| `contracts/src/MinePayments.sol` | 119 / 74 | New | UUPS: shop, ticket and revive payments, burn share per kind |
+| `contracts/src/CrafterLevels.sol` | 125 / 72 | New | UUPS: each Crafter's level, bought in $MINE; the "Level" trait |
 | `contracts/src/MinePayer.sol` | 93 / 56 | New | Shared base: take a payment (burn share burned, rest to the treasury), treasury |
 | `contracts/src/UpgradeCosts.sol` | 140 / 84 | New | Shared base: level costs, burn share, adding levels, `maxCost` |
-| `contracts/src/lib/OwnedUUPS.sol` | 79 / 50 | New (OpenZeppelin's `Ownable2Step` logic in ERC-7201 storage) | Shared base: two-step ownership, no renounce, owner-only upgrades |
+| `contracts/src/lib/OwnedUUPS.sol` | 88 / 52 | New (OpenZeppelin's `Ownable2Step` logic in ERC-7201 storage) | Shared base: two-step ownership, no renounce, owner-only upgrades, each proxy set up only in its own constructor |
 | `contracts/src/ICrafterAttributes.sol` | 17 / 7 | New | Interfaces between the Crafters and their attributes extension |
-| `contracts/src/MineWorldCrafters.sol` | 677 / 422 | New, built on Courier's `CourierSkins` (see below) | The NFT, I'M DIO: mint (3 per wallet at launch), commit-reveal (secret published first, L2 block entropy, sealed by anyone within the window; after it, at most 3 public move-ons by the owner), traits, on-chain metadata, enforced royalty |
+| `contracts/src/MineWorldCrafters.sol` | 693 / 425 | New, built on Courier's `CourierSkins` (see below) | The NFT, I'M DIO: mint (wallets only, 3 per wallet at launch), commit-reveal (secret published first, L2 block entropy, sealed by anyone within the window; after it, at most 3 public move-ons by the owner), traits, on-chain metadata, enforced royalty |
 | `contracts/src/CrafterArt.sol` | 534 / 436 | New, generated (about 170 of its lines are the art and names as constants) | On-chain SVG pictures, trait names, rarity; no state |
 | `contracts/src/lib/FastBase64.sol` | 50 / 40 | New (Solady's technique) | Base64 for `tokenURI` |
 | `contracts/src/MineHook.sol` | 490 / 376 | Courier's `StampHook`, one bound changed | Pool owner and v4 hook: 4% fee, one-time `openPool`, locked liquidity |
@@ -165,7 +174,7 @@ it is the code live for $STAMP at `0xb07382187852485D485a171dd87b100BF4f1a8Cc`):
 - **`lib/SafeTransfer.sol`:** identical.
 - **`MineWorldCrafters` vs `CourierSkins`** (audited in 25e6a0b3): `_setValidator`, `_update` and `supportsInterface`
   are `CourierSkins`' line for line, and the ERC721-C interfaces are the same. New: the mint (price may be 0,
-  per-wallet limit, 3 at launch, 5 per transaction), the reveal (`reveal` and `setSaleOpen` no longer match
+  wallets only, per-wallet limit, 3 at launch, 5 per transaction), the reveal (`reveal` and `setSaleOpen` no longer match
   `CourierSkins`': the owner publishes the secret, and the seed waits for the next L2 block's hash from ArbSys, set by
   anyone with `seal` within the window, after which only the owner can move it on, at most 3 times with
   `moveEntropyOn`; audit 0792975e #1, re-check 8c7ba957 #2, second re-check 52b534f9 #2 and #4), the user-visible names (the collection is I'M DIO), the traits
@@ -176,7 +185,8 @@ it is the code live for $STAMP at `0xb07382187852485D485a171dd87b100BF4f1a8Cc`):
 
 ### Out of scope
 
-The tests, the scripts, `script/DevTransferValidator.sol` (local chains only), `web/`, `multiplayer/` and `tools/`.
+The tests, the scripts, `script/DevTransferValidator.sol` (local chains only), `web/`, `multiplayer/` and `tools/`
+(among them `tools/sealer.sh`, the sealer anyone can run: it only sends `seal()`).
 
 Two pieces of the server are trust assumptions the contracts rely on (read them; findings there are welcome, but the
 contracts are what's audited):
@@ -197,11 +207,14 @@ contracts are what's audited):
 
 1. **The predicted proxy address.** `MineVault` is constructed with
    `vm.computeCreateAddress(deployer, vm.getNonce(deployer) + 1)`, the address of the deploying wallet's next contract,
-   which is `MiningSites`' proxy, initialised in its constructor (the only place `initialize` can ever run). The script
-   requires the proxy landed there, and `MiningSites.initialize` independently requires
+   which is `MiningSites`' proxy, initialised in its constructor (the only place `initialize` can ever run). **A hard
+   launch precondition:** the script requires the proxy landed there (and `deploy-mainnet.sh` tells the deploying
+   wallet to send nothing else meanwhile, and broadcasts with `--slow`, so a failed step stops everything after it,
+   the token's renounce included), and `MiningSites.initialize` independently requires
    that the vault names it (its distributor, or for a later replacement its pending distributor) and
    `vault.token() == token`, so a wrong prediction reverts instead of wiring another contract (the vault would then
-   need a new distributor, two days later). A replacement works the same way round: propose the owner's own wallet's
+   name an address without code and need a new distributor, two days later, which a replacement can be: third re-check
+   10d532d5 #1). A replacement works the same way round: propose the owner's own wallet's
    next CREATE address, then deploy the proxy there from that wallet, initialised (3.2); the scripts don't deploy one.
 2. **The renounce order.** The token's `setMinter(vault)` comes before its `renounceOwnership()` (the other way round,
    $MINE could never be minted); the hook's `openPool` comes before its `renounceOwnership()` (the hook refuses
@@ -231,16 +244,17 @@ contracts are what's audited):
 8. **OpenSea's registry needs nothing registered on chain.** A collection that never configured anything there gets
    the registry's default list (list 0), whose one authorizer is OpenSea's SignedZone (`getAuthorizerAccountsByCollection`
    on Robinhood Chain, and `test_Fork_EnforcedWithoutRegistering`). `DeployCrafters` prints the owner's launch steps:
-   turn on creator earnings in OpenSea Studio, which lets only `owner()` edit the collection (its ownership can never
+   announce the reveal time so holders can run `tools/sealer.sh`; turn on creator earnings in OpenSea Studio, which
+   lets only `owner()` edit the collection (its ownership can never
    be renounced; never hand it to a contract wallet that can't sign in there); and how the reveal goes (close, then
    publish the secret and seal at once, from the panel or with a one-line `cast send` sequence; the owner-only
    `moveEntropyOn` after a window nobody sealed in). It logs the collection as `MineWorldCrafters <address>` (I'M DIO).
 
 ### Tests
 
-`forge test` on this commit: **243 passed, 10 skipped, 253 in 22 suites** (the 10 are fork tests, which skip without a
-Robinhood Chain fork; all 10 pass on one). At `4de227d` it was 235 passed, 10 skipped; at `49830f2`, 225 and 9; at
-`ba2a8ed`, 205 and 8.
+`forge test` on this commit: **254 passed, 10 skipped, 264 in 26 suites** (the 10 are fork tests, which skip without a
+Robinhood Chain fork; all 10 pass on one). At `25121ea` it was 243 passed, 10 skipped; at `4de227d`, 235 and 10; at
+`49830f2`, 225 and 9; at `ba2a8ed`, 205 and 8.
 
 | Suite | Tests | Covers |
 | --- | --- | --- |
@@ -255,10 +269,14 @@ Robinhood Chain fork; all 10 pass on one). At `4de227d` it was 235 passed, 10 sk
 | `ReplacementTest` | 7 | Re-check 8c7ba957 #3, #4 and second re-check 52b534f9 #3: books carried over through a chain of replacements, a level above the new top kept (and earning the top rate), kept through a hop and restored by `addLevel`, kept through three hops, per-day counters, a retired distributor sells nothing, a predecessor must keep books |
 | `FakeVaultHijackTest` | 1 | Second re-check 52b534f9 #1: the auditor's proof (a stranger initialises the owner's proposed, uninitialised proxy with a vault of its own, upgrades it to code that answers the vault's checks, and is accepted) |
 | `StrangerInitializesWithOwnVaultTest` | 1 | 52b534f9 #1, the variant: the same with a real `MineVault` of the stranger's own |
+| `CodelessDistributorProofTest` | 1 | Third re-check 10d532d5 #1: the auditor's proof (a vault whose distributor has no code is still given a working one) |
+| `CodelessPredecessorTest` | 2 | 10d532d5 #1: the codeless predecessor's books read as empty, then sites and claims work; one with code must still answer `bookOf` |
+| `LateInitProofTest` | 2 | 10d532d5 #2: the auditor's proof (nobody sets up a `CrafterLevels` or `MinePayments` proxy deployed without its setup) and the shared guard's error |
 | `MiningSitesInvariantTest` | 5 invariants + 1 | Never pays more than signed or worth; daily caps; forged vouchers never pay; upgrades burn and pay the treasury; vault books |
-| `MinePaymentsTest` | 9 | Split (fuzz), kinds, treasury (one without ETH is fine: $MINE only), owner-only, upgrade keeps kinds, initializers |
+| `MinePaymentsTest` | 10 | Split (fuzz), kinds (shop, ticket and revive at launch; a revive all to the treasury), treasury (one without ETH is fine: $MINE only), owner-only, upgrade keeps kinds, initializers |
 | `CrafterLevelsTest` | 18 | Holder-only upgrades, `maxCost` against an unlimited approval, levels stay with the token, costs and burn, extension, refresh, upgrade keeps levels |
-| `MineWorldCraftersTest` | 48 | Mint rules (3 per wallet at launch, the fourth refused), the reveal (secret first, the next block's hash, `seal` by anyone within the window, a seal within it always fixing the seed (fuzz), after it only the owner moving on, at most 3 times, nobody knowing first), renounce leaving the owner in place, the ArbSys path with a mock (the next L2 block, a parent-chain skip, expiry, a failing call), enforcement and relaxing it, royalty, the treasury check, metadata (I'M DIO) and every misbehaving extension, links, interfaces, `tokensOfOwner` gas |
+| `MineWorldCraftersTest` | 49 | Mint rules (3 per wallet at launch, the fourth refused), `revealStatus`'s 30-block margin while `seal` takes the whole window (fuzz), the reveal (secret first, the next block's hash, `seal` by anyone within the window, a seal within it always fixing the seed (fuzz), after it only the owner moving on, at most 3 times, nobody knowing first), renounce leaving the owner in place, the ArbSys path with a mock (the next L2 block, a parent-chain skip, expiry, a failing call), enforcement and relaxing it, royalty, the treasury check, metadata (I'M DIO) and every misbehaving extension, links, interfaces, `tokensOfOwner` gas |
+| `SybilMintTest` | 4 | 10d532d5 #3: the auditor's sweep through 100 throwaway contracts reverts (the attacker holds 0), a contract can't mint, a wallet still mints 3, an EIP-7702 account mints as itself within the limit |
 | `RevealSeedTest` | 2 | Audit 0792975e #1: the auditor's proof, adapted to the current flow, and the grind over 52 reveal blocks |
 | `CrafterArtTest` | 19 | Pictures, traits and `tokenURI` equal to the JS's, shuffle bijection (fuzz), uniqueness, Base64 (fuzz), gas |
 | `MineHookImdFirstTest`, `MineHookImdSecondTest` | 26 + 26 | The hook and routers against a real v4 `PoolManager`, with IMD as currency0 and as currency1 |
@@ -348,13 +366,16 @@ and `_today` (uint192): what was minted on `_day`. Immutable `token`. Constants 
 4. The distributor changes only by `proposeDistributor`, then `acceptDistributor` at least 2 days later, both by the
    owner; `cancelDistributor` or a new proposal voids the old one.
 5. The vault never holds $MINE: `release` mints straight to `to`; `sweep` only moves what was sent by mistake.
-6. Ownership can't be renounced, so a distributor can always be replaced.
+6. Ownership can't be renounced, so a distributor can always be replaced, whatever it is: one without code too (a
+   predicted address nothing was deployed at; third re-check 10d532d5 #1), which the replacement records as its
+   predecessor without calling it, with empty books.
 7. Hence 10,500,000 can't be minted over fewer than 300 UTC days.
 8. **Only a contract owned by the vault's owner, paying from this vault and following the current distributor can
    become the distributor** (audit 0792975e #2, re-check 8c7ba957 #1): an empty address, an uninitialised proxy
    (`owner()` is 0), a contract for another vault or one following another distributor is refused at
    `acceptDistributor`; a pending distributor can't mint. `MiningSites.initialize` runs only in the proxy's own
-   constructor, never later, by anyone (second re-check 52b534f9 #1), so a proxy is set up by whoever deploys it, with
+   constructor, never later, by anyone (second re-check 52b534f9 #1; since third re-check 10d532d5 #2 the guard is
+   `OwnedUUPS.__Owned_init`'s, shared by every proxy of the family), so a proxy is set up by whoever deploys it, with
    the arguments they choose, and nobody can make a proxy someone else deployed theirs. The three reads are answered
    by the candidate's own code: they catch mistakes (a wrong vault, owner or predecessor), not a contract built to lie.
    So the owner proposes only its own wallet's next CREATE address, where nobody else can deploy, and deploys the
@@ -377,8 +398,11 @@ raise a limit or upgrade the vault.
   later `acceptDistributor()`. A proxy deployed without `initialize` in its constructor can never be set up: propose
   another. The owner must not propose a contract someone else deployed: its answers to the vault's reads are its own
   code's (the implementation-slot pin was considered: no contract can read another's storage, and a getter on the
-  candidate is answered by its possibly swapped code, so it would prove nothing). If the vault changes hands, a replacement must name the
-  new owner; if another distributor is accepted in between, the replacement follows the wrong one and is refused.
+  candidate is answered by its possibly swapped code, so it would prove nothing). If the vault changes hands, a
+  replacement must name the new owner; if another distributor is accepted in between, the replacement follows the
+  wrong one and is refused. The current distributor can be anything: one without code (the launch's predicted address,
+  had the proxy missed it) is recorded without a call, and its books read as empty; one with code must answer `bookOf`
+  (`BadPredecessor`), so a contract that isn't a MiningSites would need an implementation that tolerates it.
 - 300 UTC days, not 300 × 24 hours: the first and last days can be partial (35,000 just before midnight and 35,000
   just after).
 
@@ -386,7 +410,8 @@ raise a limit or upgrade the vault.
 (`invariant_NeverMoreThanTheDailyLimit`, `invariant_Books`, over random releases by three distributors, proposals,
 cancels, accepts and time), `DistributorRaceTest` (4: the auditor's `test_replacementDistributorCannotBeHijacked` and
 `test_hijackerMintsFromTheVault`, `test_aProxyLeftUninitialisedCanNeverBeSetUp`, `test_safeReplacementPath`),
-`HijackNamesOwnerTest`, `FakeVaultHijackTest`, `StrangerInitializesWithOwnVaultTest`, `ReplacementTest`,
+`HijackNamesOwnerTest`, `FakeVaultHijackTest`, `StrangerInitializesWithOwnVaultTest`, `CodelessDistributorProofTest`,
+`CodelessPredecessorTest`, `ReplacementTest`,
 `test_VaultCantEmptyInUnder300Days` and `test_MaxDailyCapIsTheVaultOver300Days` in `MiningSitesTest`.
 
 ### 3.3 The proxies' shared base (`lib/OwnedUUPS.sol`, `MinePayer.sol`, `UpgradeCosts.sol`)
@@ -417,8 +442,11 @@ storage for `MiningSites`, `MinePayments` or `CrafterLevels`.
 - `OwnedUUPS`: `owner()`, `pendingOwner()`, `transferOwnership(newOwner)` (owner; 0 cancels a pending transfer),
   `acceptOwnership()` (the pending owner), `renounceOwnership()` (always reverts `CannotRenounce`),
   `upgradeToAndCall(impl, data)` (OpenZeppelin `UUPSUpgradeable`: only through the proxy, only by the owner via
-  `_authorizeUpgrade`, only to an implementation whose `proxiableUUID` is the ERC-1967 slot). Errors and events are
-  `Ownable2Step`'s.
+  `_authorizeUpgrade`, only to an implementation whose `proxiableUUID` is the ERC-1967 slot); internal
+  `__Owned_init(owner)`, the first step of every `initialize` in the family, which reverts
+  `InitializeOutsideConstructor` unless `address(this).code.length == 0`, i.e. inside the proxy's own constructor (a
+  future upgrade's reinitializer wouldn't call it). Errors and events are `Ownable2Step`'s, plus `CannotRenounce` and
+  `InitializeOutsideConstructor`.
 - `MinePayer`: `token()`, `treasury()`, `setTreasury(t)` (owner; never 0 nor the contract itself; then the virtual
   hook `_checkTreasury(t)`, empty here, which `MiningSites` overrides to require that `t` take ETH). Internal
   `_collect(payer, amount, burnBps)`: `burnFrom(payer, amount × burnBps / BPS)` (rounded down) on $MINE, then
@@ -434,7 +462,8 @@ storage for `MiningSites`, `MinePayments` or `CrafterLevels`.
    namespaces overlap, and a later version can add fields at the end of a struct without moving anything.
 2. **Implementations can't be initialized** (every implementation's constructor calls `_disableInitializers()`) or
    upgraded directly (`onlyProxy`); each proxy's `initialize` runs once, inside the proxy's constructor
-   (`MiningSites.initialize` enforces it: outside the proxy's own constructor nobody can call it).
+   (`OwnedUUPS.__Owned_init`, the first step of `MiningSites`', `MinePayments`' and `CrafterLevels`' `initialize`,
+   enforces it: outside the proxy's own constructor nobody can set a proxy up; third re-check 10d532d5 #2).
 3. Ownership moves only by `transferOwnership` then `acceptOwnership` by that address; it can't be renounced.
 4. `_collect` takes exactly `amount` from `payer` and nothing from anyone else (every caller passes `msg.sender`),
    needs an allowance of exactly `amount`, burns the stated share and sends the rest to the treasury; the contract's
@@ -469,11 +498,12 @@ the first) and `imported[player]` (books carried over). Constants: `MAX_WALLET_D
 
 **Functions.**
 - `initialize(token, vault, owner, treasury, signer, sitePrice, walletDailyCap, dailyCap)` (once): reverts
-  `InitializeOutsideConstructor` unless it runs in the proxy's own constructor (`address(this).code.length == 0`),
-  whoever calls it; its arguments, `vault` included, are trusted because whoever deploys the proxy chooses them; costs 4,620, 18,942, 77,662 and 318,415 $MINE to reach levels 2-5, burn 7,500 BPS,
+  `InitializeOutsideConstructor` unless it runs in the proxy's own constructor (`__Owned_init`, its first step:
+  `address(this).code.length == 0`), whoever calls it; its arguments, `vault` included, are trusted because whoever deploys the proxy chooses them; costs 4,620, 18,942, 77,662 and 318,415 $MINE to reach levels 2-5, burn 7,500 BPS,
   rates 5,000, 6,000, 7,000, 8,500 and 10,000; reverts `BadVault` unless the vault mints `token` and names this proxy
   its distributor or its pending distributor; a pending one records the vault's current distributor as its
-  `predecessor` (`PredecessorSet`), which must answer `bookOf` (`BadPredecessor`); `TreasuryRefusesEth` unless the
+  `predecessor` (`PredecessorSet`), which must answer `bookOf` (`BadPredecessor`) unless it has no code at all: then
+  it is recorded without a call and its books read as empty (third re-check 10d532d5 #1); `TreasuryRefusesEth` unless the
   treasury takes a call with no ETH; `sitePrice > 0`; caps checked as in `setCaps`.
 - `openSite()`, `upgradeSite`, `claim` all first require this to be the vault's distributor (`NotActive`: retired, or
   a replacement not yet accepted), then import the caller's books from the predecessor if they weren't yet (`_import`:
@@ -496,7 +526,7 @@ the first) and `imported[player]` (books carried over). Constants: `MAX_WALLET_D
   `earnings` is settled; held back, only `ceil(amount × BPS / rate)` is. Updates `claimed`, `settled` and both day
   totals, emits `Claimed`, then `vault.release(msg.sender, amount)`.
 - Views: `bookOf(player)` (opened-at, level, `settled`, `claimed` as this contract counts them: its predecessor's,
-  read through any chain of replacements, until imported), `predecessor()`, `claimable(player, total)` (what `claim`
+  read through any chain of replacements, until imported; a predecessor without code adds nothing), `predecessor()`, `claimable(player, total)` (what `claim`
   would pay now; 0 without a site, while paused, or while not the vault's distributor), `rateBps` (`_siteRate`:
   `levelRateBps(min(level, rates.length))`), `levelRateBps` (0 for no such level), `rates`, `siteOf`, `hasSite`,
   `siteLevel` (the level as bought), `claimed`, `settled` (these five through `bookOf`), `paidToday`,
@@ -534,7 +564,8 @@ call, and in the proxy's context, so it is the same before and after an upgrade.
    can upgrade; implementations can't be initialized, and a proxy only in its own constructor.**
 10. **A replacement never pays converted earnings again** (re-check 8c7ba957 #3): its `settled` for a player is never
     below the predecessor's (through any chain), from the first moment it can pay; a replaced contract sells and pays
-    nothing (`NotActive`, re-check #4), so the predecessor's books are final when they're imported.
+    nothing (`NotActive`, re-check #4), so the predecessor's books are final when they're imported. A predecessor
+    without code never paid anyone, so its empty books are exact.
 11. **A level paid for is never lost to a replacement** (second re-check 52b534f9 #3): `bookOf` and `_import` carry
     it as bought through any number of hops; above the new top it earns the top rate, and once `addLevel` reaches it,
     its own.
@@ -570,7 +601,7 @@ call, and in the proxy's context, so it is the same before and after an upgrade.
 `test_RaisedCostRevertsForAnExactApproval`, `test_RaisedCostRevertsEvenWithAnUnlimitedApproval`,
 `test_RateCutMinedFirstRevertsTheUpgrade`, `test_InitializeOnlyInTheConstructor`),
 `DistributorRaceTest` (4), `HijackNamesOwnerTest`, `FakeVaultHijackTest`, `StrangerInitializesWithOwnVaultTest`,
-`ReplacementResetsSettledTest`, `ReplacementTest` (7, including `test_ALevelAboveTheNewTopIsKept`,
+`CodelessDistributorProofTest`, `CodelessPredecessorTest`, `ReplacementResetsSettledTest`, `ReplacementTest` (7, including `test_ALevelAboveTheNewTopIsKept`,
 `test_LevelPaidForIsKeptThroughAHopAndAfterAnImport`, `test_ALevelSurvivesThreeHops`), and `MiningSitesInvariantTest` (random opens, upgrades, earnings, claims, forged vouchers,
 cap and rate changes, pauses, stray transfers and time, across six wallets).
 
@@ -578,15 +609,17 @@ cap and rate changes, pauses, stray transfers and time, across six wallets).
 
 Files: `MinePayments.sol`, `lib/OwnedUUPS.sol`, `MinePayer.sol`, `MineToken.sol`.
 
-**Purpose.** What players pay the game in $MINE: the shop and rocket tickets. Prices live in the game's config, not
+**Purpose.** What players pay the game in $MINE: the shop, rocket tickets and revives. Prices live in the game's config, not
 here; the contract takes the payment, burns the kind's share and records it in a `Paid` event that the game checks.
 
 **State** (namespace `mineworldcraft.storage.MinePayments`, slot
 `0xba35f12e5ac9557c7ad18bdb329ca09fcdbd411d9cbd7d9c10a0623b3b0df300`): `Kind[] kinds` (`string name`,
-`uint16 burnBps`). Constants `MAX_KINDS = 32`, `KIND_SHOP = 0`, `KIND_TICKET = 1`.
+`uint16 burnBps`). Constants `MAX_KINDS = 32`, `KIND_SHOP = 0`, `KIND_TICKET = 1`, `KIND_REVIVE = 2`.
 
 **Functions.**
-- `initialize(token, owner, treasury)` (once): kinds 0 "shop" (7,500 BPS burned) and 1 "ticket" (0).
+- `initialize(token, owner, treasury)` (once, only in the proxy's own constructor: `OwnedUUPS`): the kinds at
+  launch, 0 "shop" (7,500 BPS burned), 1 "ticket" (0) and 2 "revive" (0: the game's 420 $MINE revive on the spot after
+  dying on the home planet, all to the treasury, as the owner chose).
 - `pay(kind, amount, ref)` (anyone, `nonReentrant`): reverts `NoSuchKind`, `ZeroAmount`; takes `amount` from the
   caller through `_collect`; emits `Paid(player, kind, amount, burned, ref)`.
 - Views `kindCount()`, `kind(i)`.
@@ -598,7 +631,8 @@ here; the contract takes the payment, burns the kind's share and records it in a
    down) is burned and the rest reaches the treasury; the event carries exactly those numbers.
 2. The contract never holds $MINE and never touches the vault.
 3. Kinds are only added, never removed; burn shares stay within 0-100%.
-4. A UUPS upgrade keeps every kind; only the owner upgrades; the implementation can't be initialized.
+4. A UUPS upgrade keeps every kind; only the owner upgrades; the implementation can't be initialized, nor a proxy
+   after its constructor.
 
 **Admin powers.** Burn shares, new kinds, the treasury, ownership, upgrades.
 
@@ -608,7 +642,11 @@ here; the contract takes the payment, burns the kind's share and records it in a
 - Shop items are delivered by the browser, which checks its own `Paid` event and keeps the inventory in local
   storage; a player can edit their own browser. The server's checks assume the best tool and weapon anyway.
 
-**Tests.** `MinePaymentsTest` (9, including `testFuzz_SplitAddsUp`, `test_UpgradeKeepsKindsAndOnlyTheOwnerUpgrades`).
+- Revives, like tickets, are the game's to check (out of scope): the contract only takes the payment and records the
+  `Paid` event.
+
+**Tests.** `MinePaymentsTest` (10, including `testFuzz_SplitAddsUp`, `test_RevivesGoToTheTreasury`,
+`test_UpgradeKeepsKindsAndOnlyTheOwnerUpgrades`), `LateInitProofTest`.
 
 ### 3.6 CrafterLevels (`contracts/src/CrafterLevels.sol`, `contracts/src/ICrafterAttributes.sol`)
 
@@ -623,7 +661,7 @@ token. The collection shows it as the "Level" trait through `attributesOf`, once
 `levels[tokenId]` (uint8; 0 reads as 1). Constant `MAX_UPGRADE_COST = 2_000_000e18`.
 
 **Functions.**
-- `initialize(token, crafters, owner, treasury)` (once): costs 2,310, 9,471, 38,831 and 159,207 $MINE to reach
+- `initialize(token, crafters, owner, treasury)` (once, only in the proxy's own constructor: `OwnedUUPS`): costs 2,310, 9,471, 38,831 and 159,207 $MINE to reach
   levels 2-5, burn 7,500 BPS; both addresses must be contracts.
 - `upgrade(tokenId, maxCost)` (the token's current owner, `nonReentrant`): reverts `NotHolder` unless
   `crafters.ownerOf(tokenId) == msg.sender`; one level up for `upgradeCost(level + 1)` from the caller through
@@ -639,7 +677,8 @@ token. The collection shows it as the "Level" trait through `attributesOf`, once
 2. The payment comes only from the caller, as in 3.3; never through the vault.
 3. A level stays with the token when it changes hands, and never goes down.
 4. `attributesOf` always returns one well-formed JSON object.
-5. A UUPS upgrade keeps every level; only the owner upgrades; the implementation can't be initialized.
+5. A UUPS upgrade keeps every level; only the owner upgrades; the implementation can't be initialized, nor a proxy
+   after its constructor (third re-check 10d532d5 #2).
 
 **Admin powers.** Costs, burn share, more levels, treasury, ownership, upgrades.
 
@@ -648,7 +687,7 @@ only (bounded by the server's caps and, for $MINE, by `MiningSites` and the vaul
 collection points here; `setAttributesExtension` then refreshes every Crafter. Its treasury needn't take ETH (it is
 paid only in $MINE), so it has no ETH check, nor has `MinePayments`.
 
-**Tests.** `CrafterLevelsTest` (18, including `test_OnlyTheHolderUpgrades`, `test_LevelStaysWithTheCrafter`,
+**Tests.** `LateInitProofTest`, `CrafterLevelsTest` (18, including `test_OnlyTheHolderUpgrades`, `test_LevelStaysWithTheCrafter`,
 `test_UpgradeKeepsEveryLevel`, `test_UpgradesBeforeTheCollectionIsWired`, `test_UnreadableExtensionAddsNothing`,
 `test_RaisedCostRevertsEvenWithAnUnlimitedApproval`).
 
@@ -665,11 +704,14 @@ seed; 0 until `reveal`), `entropyMoves` (how often the owner moved it on), `tota
 `transferValidator`, `website`, `social`, `collectionImage`, `bannerImage`, `customContractURI`,
 `attributesExtension`. Immutables `art`, `seedCommit`. Constants `MAX_SUPPLY = 3333`, `MAX_PER_TX = 5`,
 `MAX_WALLET_LIMIT = 50`, `ROYALTY_BPS = 500`, `MAX_LINK = 256`, `EXTENSION_GAS = 300_000`,
-`MAX_EXTRA_ATTRIBUTES = 4_096`, `ARB_SYS = address(100)`, `ENTROPY_WINDOW = 256`, `MAX_ENTROPY_MOVES = 3`. Enum
+`MAX_EXTRA_ATTRIBUTES = 4_096`, `ARB_SYS = address(100)`, `ENTROPY_WINDOW = 256`, `MAX_ENTROPY_MOVES = 3`,
+`SEAL_MARGIN = 30`. Enum
 `RevealStatus` (None, Waiting, Sealable, Expired, Revealed, Stuck).
 
 **Functions.**
-- `mint(quantity)` (anyone while the sale is open): 1-5, within `MAX_SUPPLY` and the minter's `walletLimit`
+- `mint(quantity)` (a wallet while the sale is open): reverts `OnlyWallets` unless `msg.sender == tx.origin` (no
+  contract mints; an EIP-7702 account sending its own transaction mints as itself); 1-5, within `MAX_SUPPLY` and the
+  minter's `walletLimit`
   (counted per minting address, `WalletLimit`; 3 at launch, so a wallet's fourth mint reverts), exactly `price × quantity` (0 while free); ids `totalMinted + 1` onward via `_mint`
   (no receiver callback); then the whole ETH balance goes to the treasury.
 - The chain block: `_chainBlock()` is `ArbSys(0x64).arbBlockNumber()` (the L2 block number on Robinhood Chain), and
@@ -690,7 +732,9 @@ seed; 0 until `reveal`), `entropyMoves` (how often the owner moved it on), `tota
   (`NoMovesLeft`): `entropyMoves += 1`, `entropyBlock = _chainBlock() + 1`, emits `EntropyBlockMoved(entropyBlock,
   moves)`. After the third move's window passes unsealed, the reveal is stuck for good.
 - `revealStatus()`: None (no secret yet), Waiting, Sealable (only while `_chainBlock() − entropyBlock <
-  ENTROPY_WINDOW`, so a seal sent on seeing it still lands in the window), Expired, Revealed, Stuck (expired with no
+  ENTROPY_WINDOW − SEAL_MARGIN`, i.e. with 30 blocks, about 3 seconds, to spare, longer than a transaction takes to be
+  sequenced, so a seal sent on seeing it lands in the window; `seal` itself takes the whole window), Expired (the
+  window is over or in its last 30 blocks), Revealed, Stuck (expired with no
   move left), for bots and the game's panel (a client can't compare block numbers itself: the entropy block is an L2
   block).
 - Traits: `_shuffle(seed, id − 1)` is a 4-round Feistel network on 12 bits (round function
@@ -719,7 +763,8 @@ seed; 0 until `reveal`), `entropyMoves` (how often the owner moved it on), `tota
   (`CannotRenounce`), and `transferOwnership(0)` only cancels a pending transfer.
 
 **Guarantees to check.**
-1. **Supply and payment:** at most 3,333 tokens, ids 1-3,333, only through `mint` while the sale is open, with exactly
+1. **Supply and payment:** at most 3,333 tokens, ids 1-3,333, only through `mint` by a wallet sending its own
+   transaction (never a contract: third re-check 10d532d5 #3) while the sale is open, with exactly
    `price × quantity`; the payment reaches the treasury in the same call; nothing is ever left in the contract.
 2. **Fair reveal** (audit 0792975e #1, re-check 8c7ba957 #2 and #6): nobody, minter or owner, can mint knowing any
    token's look (the secret isn't public and the entropy block doesn't exist while anyone can mint); **when the owner
@@ -763,8 +808,12 @@ Anyone can `seal` within the window.
   (~0.1 s blocks, steady over 864,000 blocks): if nobody seals in that time, `seal` reverts `EntropyExpired` and
   only the owner can move the entropy block on (`moveEntropyOn`), at most 3 times in all, each on chain
   (`EntropyBlockMoved`), where everyone can compute the seed the expired block would have given. So the owner holds
-  one lever: let a window pass and re-roll, up to three times, in public; anyone who seals in time stops it. The
-  honest path seals at once: the panel's "Reveal and lock in" sends `reveal` and then `seal()` itself, retrying until
+  one lever: let a window pass and re-roll, up to three times, in public; anyone who seals in time stops it. As the
+  owner alone knows when it will reveal, and Robinhood Chain has no public mempool, in practice the owner decides
+  whether a window is sealed unless others watch for it: the owner announces the reveal time and anyone can run
+  `tools/sealer.sh`, which watches for `SecretRevealed` and `EntropyBlockMoved` and sends `seal()` in the next L2
+  block, retrying until the seed is set (third re-check 10d532d5 #4). The owner gets a best of four at most, and every
+  move is public. The honest path seals at once: the panel's "Reveal and lock in" sends `reveal` and then `seal()` itself, retrying until
   the seed is set, `dev.sh` does the same, and the deploy notes give a one-line `cast send` sequence. After the third
   move's window passes unsealed the reveal is stuck for good: the Crafters stay sealed but keep trading. A fallback
   was weighed and rejected: anything that sets a seed without a fresh block hash is either known in advance from the
@@ -774,7 +823,11 @@ Anyone can `seal` within the window.
 - If the mint doesn't sell out, the collection ends smaller: there is no mint after the reveal.
 - The wallet limit (3 at launch; 1-50 with `setWalletLimit`, bounds kept: 50 caps what the owner can open up, and 1
   keeps the mint possible) counts per minting address; several wallets get several allowances. The mint is free at
-  launch.
+  launch, and for wallets only (`OnlyWallets`, the owner's choice after third re-check 10d532d5 #3): one transaction
+  can't sweep it through throwaway contracts, each a fresh address under the limit. A determined bot then needs a
+  funded wallet and a transaction for every 3 DIOs (accepted). An account delegated with EIP-7702 still mints as
+  itself, within the same limit per address. Smart-contract wallets (a Safe, ERC-4337 accounts) can't mint; they can
+  buy.
 - **Ownership can never be renounced**, so OpenSea Studio, which lets only the contract's `owner()` edit the
   collection's own fields (links, description, banner, creator earnings), always works; the on-chain `contractURI`
   (`setLinks`, `setCollectionImages`, or the owner's override) is the fallback. Handing ownership to a contract wallet
@@ -794,7 +847,9 @@ Anyone can `seal` within the window.
   still refuse mint money. The owner is trusted not to choose one (the launch treasury is a wallet).
 - `tokensOfOwner` loops over every id; it is meant for off-chain reads.
 
-**Tests.** `MineWorldCraftersTest` (48, including `test_ThreePerWalletAtLaunch`, `test_RevealNeedsTheSecretAndEndsTheSale`,
+**Tests.** `SybilMintTest` (4: the auditor's sweep adapted, `test_AContractCantMint`, `test_AWalletStillMintsThree`,
+`test_ADelegatedAccountMintsAsItselfWithinTheLimit`), `MineWorldCraftersTest` (49, including
+`testFuzz_SealableLeavesAMarginButSealTakesTheWholeWindow`, `test_ThreePerWalletAtLaunch`, `test_RevealNeedsTheSecretAndEndsTheSale`,
 `test_TheSaleIsAPauseUntilTheSecretIsOut`, `test_OwnerCantMintKnowingTheLooks`,
 `test_SeedComesFromTheSecretAndTheNextBlock`, `test_NoPartyKnowsTheLooksBeforeEveryoneCan`,
 `test_AStrangerCantMoveTheEntropyBlockOn`, `test_TheOwnerMovesOnAtMostThreeTimes`,
@@ -923,9 +978,16 @@ currency1, including `test_StartPriceIsBoundedSoOpenPoolAlwaysWorks` at -300,000
 9. **A replacement of `MiningSites` never pays converted earnings again, and a replaced one never sells or pays:**
    books carry over, levels as bought (3.4, guarantees 10 and 11); only a contract whose `owner()` is the vault's
    owner, `vault()` the vault and `predecessor()` the current distributor can take over, and a `MiningSites` proxy is
-   set up only in its own constructor, so the owner proposes only one it deploys itself (3.2, guarantee 8).
+   set up only in its own constructor, so the owner proposes only one it deploys itself (3.2, guarantee 8). Any
+   distributor can be replaced, one without code too (3.2, guarantee 6).
 10. **I'M DIO's looks are fixed by the first seal within a window, from public inputs only;** nobody but the owner can
-    re-roll a window nobody sealed in, and the owner at most three times, in public.
+    re-roll a window nobody sealed in, and the owner at most three times, in public. In practice the owner decides
+    whether a window is sealed unless holders run the sealer at the reveal time it announces: a best of four at most,
+    every move public.
+11. **Every proxy of the family is set up only in its own constructor** (`OwnedUUPS.__Owned_init`): a `MiningSites`,
+    `MinePayments` or `CrafterLevels` proxy deployed without its setup is nobody's, ever.
+12. **I'M DIO mints only to wallets sending their own transaction**, at most `walletLimit` per address: no contract,
+    so no one-transaction sweep of the free mint.
 
 ## 5. Admin powers, and when they end
 
@@ -938,15 +1000,17 @@ currency1, including `test_StartPriceIsBoundedSoOpenPoolAlwaysWorks` at -300,000
 | `MiningSites` | Owner `0x6e85…` | `setSitePrice`, `setSigner`, `setPaused`, `setCaps`, `setRates`, `addLevel`, `setUpgradeCosts`, `setUpgradeBurnBps`, `setTreasury`, `sweep`, ownership | Price > 0; wallet cap ≤ 3,500, global ≤ 35,000; rates 10-100%, non-decreasing, never below a buyer's `minRateBps`; ≤ 20 levels, never fewer; cost 1 wei-1,000,000, never above a buyer's `maxCost`; burn 0-100%; treasury takes ETH; can't renounce | Stays (sales and claims end when it is replaced) |
 | `MiningSites` | Owner `0x6e85…` | `upgradeToAndCall` | Any code; minting still bounded by the vault | Stays |
 | `MiningSites` | Signer (the server's key) | Sign vouchers | The daily caps and the vault; replaced by `setSigner` | Until replaced |
-| `MinePayments` | Owner `0x6e85…` | `addKind`, `setKindBurn`, `setTreasury`, ownership, upgrades | ≤ 32 kinds, never removed; burn 0-100%; can't renounce | Stays |
+| `MinePayments` | Owner `0x6e85…` | `addKind`, `setKindBurn`, `setTreasury`, ownership, upgrades | 3 kinds at launch (shop 75%, ticket 0%, revive 0%); ≤ 32 kinds, never removed; burn 0-100%; can't renounce | Stays |
 | `CrafterLevels` | Owner `0x6e85…` | `setUpgradeCosts`, `setUpgradeBurnBps`, `addLevel`, `setTreasury`, ownership, upgrades | Cost 1 wei-2,000,000; burn 0-100%; ≤ 20 levels, never fewer; can't renounce | Stays |
 | `MineWorldCrafters` | Owner `0x6e85…` | `setSaleOpen`, `reveal`, `moveEntropyOn`, `setPrice`, `setWalletLimit`, `setTreasury`, `setTransferValidator`, `setLinks`, `setCollectionImages`, `setContractURI`, `setAttributesExtension`, `refreshMetadata`, ownership | The sale is a pause until `reveal`, which publishes the committed secret (checked) and nothing else, once; `moveEntropyOn` only after a window nobody sealed in, at most 3 times, each in public; wallet limit 1-50 (3 at launch); royalty 5% fixed; treasury takes ETH; validator a contract (so the owner sets how strict enforcement is); links ≤ 256 bytes, JSON-safe; can't renounce, so OpenSea Studio (which lets only `owner()` edit) stays usable: never hand it to a contract wallet that can't sign in there | Stays (the sale, `reveal` and `moveEntropyOn` end with the reveal) |
-| `MineWorldCrafters` | Anyone | `seal` | Only once the entropy block is over and within 256 blocks of it: sets the seed from public data (later it reverts `EntropyExpired`) | Until the seed is set |
+| `MineWorldCrafters` | A wallet sending its own transaction | `mint` | While the sale is open: 1-5 at a time, at most `walletLimit` (3) per address, exactly `price`; a contract is refused (`OnlyWallets`) | Until the reveal |
+| `MineWorldCrafters` | Anyone | `seal` | Only once the entropy block is over and within 256 blocks of it: sets the seed from public data (later it reverts `EntropyExpired`); `tools/sealer.sh` sends it the moment it can | Until the seed is set |
 | `CrafterArt`, `MineRouter`, `MineEthRouter` | Nobody | None | | |
 
 Deploy settings (`contracts/launch.env`): owner, treasury and fee recipient `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD`
 (one key, as Courier's are); start price a $5,000 fully diluted market cap for 21M $MINE; site price 0.005 ETH; caps
-1,500 per wallet and 35,000 across everyone; I'M DIO free, 3 per wallet, OpenSea's registry as validator; the
+1,500 per wallet and 35,000 across everyone; payment kinds shop (75% burned), ticket and revive (0%); I'M DIO free,
+wallets only, 3 per wallet, OpenSea's registry as validator; the
 voucher signer's address passed at launch (`MINING_SIGNER`), the key itself only in the Worker's secrets.
 
 ## 6. Known and accepted
@@ -961,7 +1025,8 @@ voucher signer's address passed at launch (`MINING_SIGNER`), the key itself only
   so lifetime vouchers for the new address pay only what's new; the per-day counters restart (the vault's daily limit
   holds), and levels above its top are kept as bought and earn its top rate. The plan is still to upgrade in place; a
   replacement follows the procedure in 3.2 (propose the owner's own wallet's next CREATE address, deploy the proxy
-  there initialised, accept two days later); the vault's checks catch mistakes, not a contract built to lie.
+  there initialised, accept two days later); the vault's checks catch mistakes, not a contract built to lie. It can
+  follow any distributor, one without code too (empty books).
 - **A leaked voucher key** can take at most the daily caps (per wallet with a site, and in all; two days' worth back
   to back around midnight UTC) until the owner pauses or replaces it. The server is trusted for what each wallet
   earned.
@@ -980,8 +1045,9 @@ voucher signer's address passed at launch (`MINING_SIGNER`), the key itself only
   (they pay the treasury only $MINE).
 - Days use `block.timestamp`, which the sequencer sets within the chain's bounds.
 - I'M DIO's reveal (the sequencer's L2 block hashes; sealing within 256 L2 blocks, about 26 seconds; the owner's
-  bounded re-roll, up to 3 public `moveEntropyOn`s after windows nobody sealed in, then stuck), the validator and the
-  owner's power to relax enforcement, wallet limits (3 per address at launch) and unsold supply (section 3.7); the hook's single-sided launch,
+  bounded re-roll, up to 3 public `moveEntropyOn`s after windows nobody sealed in, then stuck: in practice a best of
+  four unless holders run the sealer at the announced time), the validator and the owner's power to relax
+  enforcement, wallet limits (3 per address at launch, wallets only) and unsold supply (section 3.7); the hook's single-sided launch,
   hookless pools, IMD's issuer, the fee recipient moving its own fees and the -300,000 start-tick floor (section 3.9).
 
 ## 7. What to look at hardest
@@ -989,8 +1055,9 @@ voucher signer's address passed at launch (`MINING_SIGNER`), the key itself only
 1. **Storage collisions and initializer/upgrade safety** in `OwnedUUPS` and the ERC-7201 layouts: the six namespace
    slots, no sequential storage anywhere in the proxies' inheritance, OpenZeppelin `Initializable`'s own namespace,
    `_disableInitializers()` in every implementation, `initialize` callable once, `upgradeToAndCall` only through the
-   proxy and only by the owner, and that a next version can extend each struct safely. `OwnedUUPS` re-implements
-   `Ownable2Step` (OpenZeppelin's upgradeable package isn't used): check it matches.
+   proxy and only by the owner, `__Owned_init`'s constructor-only guard in all three proxies, and that a next version
+   can extend each struct safely. `OwnedUUPS` re-implements `Ownable2Step` (OpenZeppelin's upgradeable package isn't
+   used): check it matches.
 2. **The EIP-712 domain across proxy upgrades:** the domain is built on each call from constants, `block.chainid` and
    `address(this)` (the proxy). Vouchers signed before an upgrade stay valid after it; check they can't pay twice,
    can't be used on another chain, another proxy or the implementation, and that `eip712Domain()` and the server's
@@ -1014,12 +1081,14 @@ voucher signer's address passed at launch (`MINING_SIGNER`), the key itself only
    voids it; `acceptDistributor` only after `pendingReadyAt` and only for a contract whose `owner()` is the vault's
    owner, `vault()` the vault and `predecessor()` the current distributor (answered by the candidate's own code, so
    they catch mistakes, not lies); `MiningSites.initialize` accepts the vault's pending distributor but runs only in
-   the proxy's own constructor (`address(this).code.length == 0`), never later, whoever calls; a pending proxy sells
+   the proxy's own constructor (`OwnedUUPS.__Owned_init`: `address(this).code.length == 0`), never later, whoever
+   calls, and follows a codeless distributor without calling it; a pending proxy sells
    and pays nothing; proposals don't expire; today's total carries across
    a change; a former distributor can't mint, sell sites or levels.
 8. **The books across a replacement** (`bookOf`, `_import`, `_requireActive`): the read-through views match what an
    import writes, levels pass through as bought and are clamped only where used (`_siteRate`, `_nextLevel`), a chain of replacements reads through every hop, nothing can be imported before the replacement is
-   accepted (so the predecessor's books are final), and a failing predecessor call reverts rather than import zeros.
+   accepted (so the predecessor's books are final), a failing predecessor call reverts rather than import zeros, and
+   only a predecessor without code (checked on each read) reads as empty books.
 9. **The predicted addresses:** the CREATE-predicted `MiningSites` proxy named in the vault's constructor, and the
    hook's mined CREATE2 address and flags (section 2, deploy invariants).
 10. **ERC-4906 events:** every change to `tokenURI`'s output emits `MetadataUpdate` or `BatchMetadataUpdate` (the
@@ -1030,16 +1099,21 @@ voucher signer's address passed at launch (`MINING_SIGNER`), the key itself only
     the bijection.
 12. **`MineHook`'s one change:** the start-tick range is now [-300,000, 400,000]; confirm every start tick and
     allocation the constructor accepts still opens.
-13. **The reveal** (audit 0792975e #1, re-check 8c7ba957 #2 and #6, second re-check 52b534f9 #2 and #4): the secret published before the entropy exists;
+13. **The reveal** (audit 0792975e #1, re-check 8c7ba957 #2 and #6, second re-check 52b534f9 #2 and #4, third
+    re-check 10d532d5 #4 and #5): the secret published before the entropy exists;
     the entropy block's hash from ArbSys (`arbBlockNumber`, `arbBlockHash`) on Robinhood Chain, `block.number` and
     `blockhash` only where 0x64 has no code; the 256-block window decided from block numbers, never from a failing
     call (a caller could starve a call of gas); `seal` reverting after the window; the owner-only, capped move-on
     (`moveEntropyOn`, `NotExpired` until the window is over, `NoMovesLeft` after 3) and the stuck state after it;
-    `revealStatus` saying Sealable only while a seal can still land; and whether the trust left (the sequencer, the
-    owner's three public re-rolls) is stated correctly.
+    `revealStatus` saying Sealable only with `SEAL_MARGIN` (30) blocks to spare while `seal` takes the whole window;
+    and whether the trust left (the sequencer, the owner's three public re-rolls, a best of four unless a sealer runs)
+    is stated correctly.
 14. **The treasury check, `maxCost` and `minRateBps`:** `_checkTreasury` in `MiningSites` (through `MinePayer`'s
     hook, at `initialize` and `setTreasury`) and in `MineWorldCrafters` (constructor and `setTreasury`); `_nextLevel`'s
     `CostAboveMax` in `UpgradeCosts`; `RateBelowMin` in `upgradeSite`.
+15. **The mint gate** (third re-check 10d532d5 #3): `msg.sender == tx.origin` in `mint`. Check what it stops (any
+    contract minting, so a sweep through throwaway contracts) and what it leaves (several funded wallets, each a
+    transaction; an EIP-7702 account minting as itself, within its own limit).
 
 ## 8. Resolved: IMD Swarm audit 0792975e (on commit ba2a8ed)
 
@@ -1107,6 +1181,10 @@ steps. 235 tests, plus 10 against a Robinhood Chain fork (`--match-contract Fork
 
 ## 10. Resolved: IMD Swarm second re-check 52b534f9 (on commit 4de227d)
 
+(The fixes as they stood at `25121ea`, with its line numbers. IMD's third re-check confirmed all four and found what
+section 11 resolves: #1's constructor-only guard now lives in `OwnedUUPS` for every proxy of the family, and #4's
+one-block margin is now `SEAL_MARGIN`, 30 blocks.)
+
 The report: https://explorer.imd.fun/jobs/52b534f9-f11d-4ef7-880f-053694cef8be (archived in github.com/Identity-md/research,
 `jobs/52b534f9-f11d-4ef7-880f-053694cef8be/`). One medium, two low and one info finding; every one is fixed below.
 Line numbers are in the fixed files. The auditor's proof (`FakeVaultHijackTest`, as submitted), its variant
@@ -1135,3 +1213,27 @@ Also changed since `4de227d`:
   asks for the `OWNER` wallet before signing. The README's launch steps and section 5 say the same; `setLinks`,
   `setCollectionImages` and `contractURI` stay as the on-chain fallback for OpenSea Studio's own fields.
 - 243 tests, plus 10 against a Robinhood Chain fork (`--match-contract ForkTest`).
+
+## 11. Resolved: IMD Swarm third re-check 10d532d5 (on commit 25121ea)
+
+The report: https://explorer.imd.fun/jobs/10d532d5-da29-4f5e-87b1-77abdca8467f (archived in github.com/Identity-md/research,
+`jobs/10d532d5-da29-4f5e-87b1-77abdca8467f/`). Three low and two info findings, no medium; every one is resolved
+below. Line numbers are in the fixed files. The auditor's three proofs (`CodelessDistributorProofTest` and
+`LateInitProofTest` as submitted, `SybilMintTest` adapted to the fix) and a scenario for #5, written against
+`25121ea`'s functions, all fail on `25121ea` (four failures, one per finding); the tests below pass.
+
+| # | Finding | Resolution |
+| --- | --- | --- |
+| 1 | Low: a vault whose distributor has no code (a launch whose proxy missed its predicted address) could never be given a working distributor: `initialize` called `bookOf` on the codeless predecessor, and the high-level call reverted before its `try/catch` | `MiningSites.initialize` calls the predecessor's `bookOf` only if it has code (`MiningSites.sol:206`) and records it as `predecessor` either way; `_import` (`:264`) and `bookOf` (`:291`) read a predecessor without code as empty books, with no call. One with code must still answer `bookOf` (`BadPredecessor`, `:153`, `:209`). MineVault's steps say so (`MineVault.sol:47`). The predicted-address check stays a hard launch precondition, and is now said to be one: `Deploy.s.sol:127`-`:133` (the comment, and the `require` kept as it was); `deploy-mainnet.sh` tells the deploying wallet to send nothing else during the launch (`:160`) and broadcasts every stage with `--slow` (`:175`), so a failed proxy transaction stops everything after it, the token's renounce included; README step 5; section 2's deploy invariant 1. 3.2's guarantee 6 now reads "a distributor can always be replaced, whatever it is". Tests: the auditor's `test_AVaultWithACodelessDistributorCanStillBeReplaced` (`CodelessDistributorProofTest`, as submitted), `test_ACodelessPredecessorHasEmptyBooks` (then a site and a claim work), `test_APredecessorWithCodeMustStillKeepBooks`. |
+| 2 | Low: `CrafterLevels.initialize` and `MinePayments.initialize` kept the late path `MiningSites` lost: a proxy of either deployed without its setup was anyone's | The constructor-only guard moved into `OwnedUUPS.__Owned_init` (`lib/OwnedUUPS.sol:52`-`:53`, error `InitializeOutsideConstructor` `:36`), the first step of every `initialize` in the family: `MiningSites.sol:192`, `CrafterLevels.sol:57`, `MinePayments.sol:62`. `MiningSites`' own copy and its error declaration are gone (the error keeps its name and selector; the tests name it `OwnedUUPS.InitializeOutsideConstructor`). NatSpec: `OwnedUUPS`, and each `initialize`. Tests: the auditor's `test_StrangerCannotInitialiseLateLevelsOrPaymentsProxies` (`LateInitProofTest`, as submitted), `test_TheGuardIsSharedByEveryProxyOfTheFamily`, and for `MiningSites` `test_InitializeOnlyInTheConstructor`, `test_aProxyLeftUninitialisedCanNeverBeSetUp`, `FakeVaultHijackTest`, `StrangerInitializesWithOwnVaultTest`. |
+| 3 | Low: the free mint's 3-per-wallet limit was per `msg.sender` only, so one transaction could sweep it through throwaway contracts (300 DIOs in one, 12 for all 3,333) | The owner chose "real wallets only": `mint` reverts `OnlyWallets` unless `msg.sender == tx.origin` (`MineWorldCrafters.sol:241`, error `:180`); the 3-per-wallet limit stays. The NatSpec (`:234`-`:239`), 3.7, the README and DESIGN state what it does and doesn't do: it stops one-transaction contract sweeps; a determined bot then needs a funded wallet and a transaction for every 3 DIOs (accepted); an account delegated with EIP-7702 still mints as itself, within the same limit per address; smart-contract wallets can't mint (they can buy). The panel's mint button explains the error (`web/chain.js:29`, shown through `explain`). Tests (`SybilMintTest`): the auditor's `test_OneActorHoldsAtMostThreeAfterOneTx`, adapted (the attacker sends the sweep itself, `tx.origin` included; the sweep reverts, the attacker holds 0, nothing is minted), `test_AContractCantMint`, `test_AWalletStillMintsThree`, `test_ADelegatedAccountMintsAsItselfWithinTheLimit` (on Prague, a delegated account's code mints 3 as the account, not 6). Every existing mint test now sends as a wallet (`vm.prank(x, x)`). |
+| 4 | Info: in practice the owner alone decides whether each 26-second window is sealed (it alone knows when it reveals, and the only sealer shipped was its own panel), so it holds a choice among up to four seeds | No contract change. New `tools/sealer.sh`, which anyone can run with `RPC_URL` and a Foundry keystore (`--account`; `ETH_PASSWORD` may name a password file) or a browser wallet (`--browser`), and which refuses keys and passwords on the command line. It simulates `seal()` every 0.2 s, reports `SecretRevealed` and `EntropyBlockMoved` as the entropy block changes, sends `seal()` as soon as a simulation passes (the next L2 block after the entropy block), retries until the seed is set, waits through an expired window for the owner's move, and stops at `Stuck`. The README's launch step 9 (the owner announces the reveal time; the command), `DeployCrafters`' printed steps and `deploy-mainnet.sh`'s notes say so. The trust assumption is stated in the contract's `@dev` (`MineWorldCrafters.sol:63`-`:67`), 3.7, sections 1, 4 (guarantee 10) and 6: the owner gets a best of four at most, and every move is public. |
+| 5 | Info: `revealStatus`'s one-block Sealable margin was about 100 ms, shorter than sequencing, and the panel rethrew a seal that reverted on chain instead of moving on | `SEAL_MARGIN = 30` blocks, about 3 s (`MineWorldCrafters.sol:96`): `revealStatus` says Sealable only while `current − entropyBlock < ENTROPY_WINDOW − SEAL_MARGIN` (`:349`); `seal` still takes the whole window. `web/chain.js`: `send` tags a receipt that reverted (`:175`), and `revealAndSeal` (`:426`) treats a seal that reverted on chain as a reason to read the status again (`:456`): the owner then moves on, or, in the window's last 30 blocks where the move is refused with `NotExpired`, tries a seal (`:444`); anyone else is told only the owner can. The panel's notes for a closing window (`web/panel.js:326`, `:331`). Tests: `testFuzz_SealableLeavesAMarginButSealTakesTheWholeWindow`, `test_AnExpiredEntropyBlockMovesOn` (Sealable at +225; at +226 and +256 Expired, where a seal still works and the move is refused; the move at +257), `test_Arbitrum_ExpiryMovesTheEntropyBlockOn`. |
+
+Also changed since `25121ea`:
+- **A revive kind:** players can pay 420 $MINE to revive on the spot after dying on the home planet, through
+  `MinePayments` as kind 2 "revive", 0% burned (all to the treasury, as the owner chose, like tickets).
+  `MinePayments.initialize` adds it with the other two (`MinePayments.sol:66`, `KIND_REVIVE` `:26`); `launch.env`, the
+  README, DESIGN and 3.5 say so. The game side is out of scope. Tests: `test_DeployedAsSpecified` (three kinds),
+  `test_RevivesGoToTheTreasury` (`pay(2, 420e18)` sends it all to the treasury, nothing burned).
+- 254 tests, plus 10 against a Robinhood Chain fork (`--match-contract ForkTest`).

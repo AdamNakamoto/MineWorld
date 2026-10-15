@@ -26,6 +26,7 @@ const ERROR_TEXT = {
   SoldOut: "Sold out: all 3,333 DIOs have been minted.",
   BadQuantity: "Mint between 1 and 5 at a time.",
   WalletLimit: "That would go over the most DIOs one wallet can mint (the per-wallet limit shows above the Mint buttons).",
+  OnlyWallets: "I'M DIO mints only to an ordinary wallet sending its own transaction, not through a contract or a smart-contract wallet. Mint from a regular wallet (you can move the DIOs anywhere afterwards).",
   NotRevealed: "Still sealed: the DIOs are revealed after the mint.",
   SaleStillOpen: "The I'M DIO mint is still open.",
   NoSecret: "Not yet: the owner hasn't published the reveal's secret.",
@@ -170,7 +171,8 @@ export async function connectChain() {
     const hash = await wallet.writeContract({ ...request, chain });
     onHash?.(hash);
     const receipt = await pub.waitForTransactionReceipt({ hash });
-    if (receipt.status !== "success") throw new Error(`${fn} failed`);
+    // (Tagged, so a caller can tell "sent, but reverted on chain" from a refusal before sending.)
+    if (receipt.status !== "success") throw Object.assign(new Error(`${fn} failed`), { reverted: true, receipt });
     return receipt;
   }
 
@@ -191,7 +193,8 @@ export async function connectChain() {
         read(K, "price"), read(K, "saleOpen"), read(K, "totalMinted"), read(K, "seed"), read(K, "MAX_SUPPLY"),
         has(K, "walletLimit") ? read(K, "walletLimit") : null,
         // MineWorldCrafters.RevealStatus: 0 the secret isn't out, 1 waiting for the next block, 2 sealable (anyone can
-        // lock it in, with a block to spare), 3 expired (only the owner can pick a new block), 4 revealed, 5 stuck.
+        // lock it in, with SEAL_MARGIN blocks, about 3 s, to spare), 3 expired (or in those last blocks: then only the
+        // owner can pick a new block), 4 revealed, 5 stuck.
         has(K, "revealStatus") ? read(K, "revealStatus").then(Number) : null,
         read(K, "owner"),
         has(K, "entropyMoves") ? Promise.all([read(K, "entropyMoves"), read(K, "MAX_ENTROPY_MOVES")]).then(([m, x]) => Number(x) - Number(m)) : null,
@@ -416,7 +419,10 @@ export async function connectChain() {
     /// The I'M DIO reveal, done the honest way, at once: with `secret` (the owner), publish it (reveal), then, as soon
     /// as the next block is over, seal() (anyone can), retrying until the seed is set. If a window passed with nobody
     /// sealing, the owner's wallet moves the entropy block on (moveEntropyOn, at most 3 times in all) and seals the new
-    /// one; anyone else is told only the owner can. `step(text)` hears each stage. Resolves with the seed.
+    /// one; anyone else is told only the owner can. A seal that lands too late (sent near the window's end, it
+    /// reverts on chain) isn't an error: the status is read again and the owner goes on to the move. Expired
+    /// (revealStatus 3) starts SEAL_MARGIN blocks before the window's end, where a seal still works: the owner's move
+    /// is refused there (NotExpired), so it tries a seal. `step(text)` hears each stage. Resolves with the seed.
     async revealAndSeal(secret, { step } = {}) {
       const K = C.crafters;
       const status = async () => Number(await read(K, "revealStatus"));
@@ -431,18 +437,23 @@ export async function connectChain() {
         if (st === 5) throw new Error("The reveal can't happen any more: its block was moved on three times and the last window passed unsealed.");
         if (st === 0) throw new Error("The owner hasn't published the reveal's secret yet.");
         if (st === 1) { step?.("Waiting for the reveal's block to pass…"); await sleep(400); continue; }
-        if (st === 3) {
-          if (!same(await read(K, "owner"), account)) throw new Error(ERROR_TEXT.EntropyExpired);
+        const owner = same(await read(K, "owner"), account);
+        if (st === 3 && owner) {
           step?.("Nobody locked the reveal in within its window: picking a new block (confirm in your wallet)…");
-          try { await send(K, "moveEntropyOn"); } catch (e) { if (revertName(e) !== "NotExpired") throw e; await sleep(400); }
-          continue;
+          try { await send(K, "moveEntropyOn"); continue; } catch (e) {
+            if (revertName(e) !== "NotExpired" && !e?.reverted) throw e;
+            // Not over yet (its last SEAL_MARGIN blocks, where a seal still lands): try a seal instead.
+          }
         }
         step?.("Locking in the reveal: confirm in your wallet…");
         try {
           await send(K, "seal");
         } catch (e) {
           const n = revertName(e);
-          if (n !== "RevealTooSoon" && n !== "EntropyExpired" && n !== "AlreadyRevealed") throw e;
+          // Too late for anyone but the owner, who moves it on at the next turn.
+          if (n === "EntropyExpired" && !owner) throw new Error(ERROR_TEXT.EntropyExpired);
+          // Sent but reverted on chain (sequenced past the window, say), too soon, too late or done already: look again.
+          if (!e?.reverted && n !== "RevealTooSoon" && n !== "EntropyExpired" && n !== "AlreadyRevealed") throw e;
           await sleep(400);
         }
       }

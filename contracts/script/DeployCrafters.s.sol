@@ -82,6 +82,8 @@ contract DeployCrafters is Script {
         console2.log("  - OpenSea Studio lets only owner() edit the collection (links, description, banner, earnings).");
         console2.log("    Its ownership can never be renounced; never hand it to a contract wallet OpenSea Studio");
         console2.log("    can't sign in with (check a multisig there first).");
+        console2.log("  - Announce the reveal time in advance, so holders can run tools/sealer.sh (it seals the moment");
+        console2.log("    it can, whoever reveals; RPC_URL=... ./tools/sealer.sh --account <keystore name>).");
         console2.log("  - The reveal, after the mint: setSaleOpen(false), then reveal(secret) and at once seal():");
         console2.log("    from the game's panel (log in as OWNER: it sends seal() itself), or from a terminal:");
         console2.log(string.concat(

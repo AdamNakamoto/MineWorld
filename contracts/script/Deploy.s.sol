@@ -124,6 +124,12 @@ abstract contract MineDeployer is Script {
                 )
             )
         );
+        // A hard launch precondition: the proxy is at the address the vault was given (this stops the script in its
+        // simulation). On chain it can't go wrong silently either: the proxy's initialize requires the vault to name
+        // it, so a proxy anywhere else reverts, and deploy-mainnet.sh broadcasts with --slow, so nothing after it (the
+        // token's renounce included) is sent. The vault would then name an address without code, which a replacement
+        // can still take over (MiningSites reads a codeless predecessor's books as empty). So the deploying wallet
+        // sends nothing else while the launch broadcasts.
         require(g.sites == predicted, "MiningSites isn't at the address the vault was given");
         // As Courier World's launch does for $STAMP: the one minter, set once, then nobody owns the token.
         token.setMinter(g.vault);
