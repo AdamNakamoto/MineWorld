@@ -195,7 +195,7 @@ servers only, so players behind strict networks may not connect until a TURN rel
 | $MINE | 21,000,000 in all, the same as Courier World's $STAMP. ERC-20 with permit, no transfer tax |
 | Liquidity | 50% (10,500,000) locked forever, single-sided, in one $MINE/IMD Uniswap v4 pool at launch |
 | Mining vault | 50% (10,500,000), minted by `MineVault` only as players convert what they earn in the game: at most 35,000 a day, whatever the rules contract asks, so it lasts at least 300 days (longer still: earnings a site's rate doesn't convert are never minted) |
-| Trading fee | Every swap pays 4% of its IMD side to `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` (taken by the pool's hook; the hook is renounced at launch: after the renounce only the current fee recipient can move the fees; nobody else can) |
+| Trading fee | Every swap pays 4% of its IMD side to `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` (taken by the pool's hook; the hook is renounced at launch: after the renounce only the current fee recipient can move the fees; nobody else can). The fees wait in the pool until someone calls `MineHook.collectProtocolFees(IMD)` (anyone may; it always pays the fee recipient): logged in with the project's wallet, the Mining Site panel shows an **Admin** box with the fees waiting and a **Claim fees** button, plus the treasury's balances and $MINE's numbers (`web/panel.js` `adminBox`, `web/chain.js` `adminStats`) |
 | Mining site | Opened once per wallet with ETH (0.005 at launch), paid to the treasury. Needed to convert earnings to $MINE. A new site is level 1 and converts 50% of what it earns; upgrades raise it to 60%, 70%, 85% and 100% at levels 2 to 5, for 4,620, 18,942, 77,662 and 318,415 $MINE (about $1,000 for all four at a $50,000 market cap) |
 | DEGEN levels | Every DEGEN starts at level 1; its holder raises it to level 5 for 2,310, 9,471, 38,831 and 159,207 $MINE (half a site's). The level stays with the DEGEN when it's sold, shows as its "Level" trait, and adds to its boost (below) |
 | Shop and tickets | Paid in $MINE through `MinePayments` at the game's prices (`web/shop.js` `CATALOG`, `web/zones.js` `ticket`): the shop's 75% burned and 25% to the treasury; rocket tickets (2,100 for Deepvein or Cinderfall, 210 for Red Mesa) and revives (420, to revive on the spot after dying on the home planet: kind 2 "revive") all to the treasury |
@@ -390,6 +390,11 @@ Knock-outs, loot chests and revives on the wire (the rest of the protocol is in 
 | game → room | `["revive", txHash]` | Up where you fell (home only); `txHash` null while revives are free |
 | room → game | `["revived", x, y, z, txHash]` / `["reviveno", why, txHash, retry]` | Done, the room has you there / refused: retry 1 the chain couldn't be read, 2 the payment wasn't used (it can pay for a later revive), 0 never |
 | room → game | `["welcome", ..., { practice, ticketsFree, reviveFree }]` | Whether revives are free right now |
+
+`GET /count` answers `{ online, sites }` for the title screen: the players connected, and the mining sites open. The room
+counts MiningSites' `SiteOpened` logs from `SITES_FROM_BLOCK` (its deploy block) through `LOGS_RPC` (the official RPC,
+which serves old logs; publicnode doesn't), keeps the count and the next block under `sites`, and tops it up at most once
+a minute (`sites` is null until the first count is done).
 
 For tests on your own machine, `npx wrangler dev --var DEV_HOOKS:1` turns on two dev hooks, `["dev", "today", mine]`
 and `["dev", "world", mine]` (set a signed-in wallet's earnings today, or everyone's), so the daily caps can be tried

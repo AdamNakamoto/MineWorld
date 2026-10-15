@@ -969,6 +969,8 @@ function tryResume(wallet) {
 
 // ---------------------------------------------------------------- chain + panel
 let chain = null, panel = null;
+let sitesOpen = null; // mining sites open, as the room last said (the title screen's count; the panel's admin box)
+let countAt = 0; // when the room was last asked (loadCount)
 async function signIn() {
   if (!net?.online) throw new Error("The world server is offline right now, so earnings can't be counted. Try again soon.");
   if (!chain?.account) await chain?.login();
@@ -980,6 +982,9 @@ connectChain().catch((e) => { console.warn("chain unavailable", e); return null;
   panel = createPanel({
     chain, net,
     ledger: () => ledger,
+    sitesOpen: () => sitesOpen,
+    /// The admin box asks the room again at most once a minute (as often as the room tops its count up).
+    refreshCount() { if (Date.now() - countAt > 60_000) loadCount(false); },
     signIn,
     toast,
     wear(traits, tokenId) {
@@ -1277,9 +1282,22 @@ $("play").addEventListener("click", () => {
   drawLedger();
   setTimeout(() => ($("help").hidden = true), 25_000); // (the controls are in the menu too)
 });
-if (url) fetch(url.replace(/^ws/, "http").replace(/\/ws$/, "/count")).then((r) => r.json()).then((j) => {
-  if (j?.online >= 0) { $("onlineTitle").hidden = false; $("onlineTitle").textContent = `● ${j.online} mining right now`; }
-}).catch(() => {});
+// The title screen: who's playing, and how many mining sites are open (the room counts them from the chain; sitesOpen
+// stays null while it can't tell yet, and is asked again once, a few seconds later). The panel's admin box asks again
+// while it's open (refreshCount).
+function loadCount(retry = true) {
+  if (!url) return;
+  countAt = Date.now();
+  fetch(url.replace(/^ws/, "http").replace(/\/ws$/, "/count")).then((r) => r.json()).then((j) => {
+    if (j?.online >= 0) { $("onlineTitle").hidden = false; $("onlineTitle").textContent = `● ${j.online} mining right now`; }
+    if (typeof j?.sites === "number") {
+      sitesOpen = j.sites;
+      $("sitesTitle").hidden = false;
+      $("sitesTitle").textContent = `⛏ ${j.sites.toLocaleString("en-US")} mining site${j.sites === 1 ? "" : "s"} open`;
+    } else if (retry) setTimeout(() => loadCount(false), 5000);
+  }).catch(() => {});
+}
+loadCount();
 
 // ---------------------------------------------------------------- mining, placing, fighting
 let breaking = null; // { x, y, z, b, t, need }

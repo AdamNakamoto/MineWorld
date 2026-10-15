@@ -102,6 +102,9 @@ wait_ok() { # <tx hash>...: wait for each, and stop if one failed
 }
 
 echo "Deploying..."
+# The room counts the mining sites opened from here on (SiteOpened logs, from this block: near 0 on a bare chain, the
+# fork's block on --fork).
+SITES_FROM_BLOCK=$(cast block-number --rpc-url "$RPC")
 if [ "$FORK" = 1 ]; then
   deploy script/Deploy.s.sol --sig "run()"
 else
@@ -177,8 +180,8 @@ fi
 # `npx wrangler dev` in multiplayer/ reads these: it signs vouchers for this chain's MiningSites, reads I'M DEGEN and
 # their levels, and checks rocket tickets paid through MinePayments.
 mkdir -p multiplayer
-(umask 077 && printf 'MINING_KEY=%s\nMINING_ADDRESS=%s\nCHAIN_ID=%s\nCHAIN_RPC=%s\nCRAFTERS_ADDRESS=%s\nLEVELS_ADDRESS=%s\nPAYMENTS_ADDRESS=%s\n' \
-  "$MINING_KEY" "$SITES" "$CHAIN_ID" "$RPC" "$CRAFTERS" "$LEVELS" "$PAYMENTS" > multiplayer/.dev.vars)
+(umask 077 && printf 'MINING_KEY=%s\nMINING_ADDRESS=%s\nCHAIN_ID=%s\nCHAIN_RPC=%s\nLOGS_RPC=%s\nSITES_FROM_BLOCK=%s\nCRAFTERS_ADDRESS=%s\nLEVELS_ADDRESS=%s\nPAYMENTS_ADDRESS=%s\n' \
+  "$MINING_KEY" "$SITES" "$CHAIN_ID" "$RPC" "$RPC" "$SITES_FROM_BLOCK" "$CRAFTERS" "$LEVELS" "$PAYMENTS" > multiplayer/.dev.vars)
 
 # web/chain.json: what the game reads to find this chain and its contracts.
 mkdir -p web

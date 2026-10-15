@@ -18,7 +18,8 @@ const mine = (wei) => Number(formatEther(wei)).toLocaleString("en-US", { maximum
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /// `game`: { chain, net, ledger() → { signedIn, wallet, today, total, cap, boost }, signIn(), toast(text, kind),
-/// wear(traits, id), leveled(tokenId, level) (a DEGEN was just leveled up) }. The ledger's amounts are in units
+/// wear(traits, id), leveled(tokenId, level) (a DEGEN was just leveled up), sitesOpen() (mining sites open, as the
+/// world server counts them, or null), refreshCount() (ask the world server again, at most once a minute) }. The ledger's amounts are in units
 /// (rewards.js UNIT).
 export function createPanel(game) {
   const el = document.getElementById("panel");
@@ -63,6 +64,7 @@ export function createPanel(game) {
       // What converting now would pay, at the site's rate and within today's caps (MiningSites.claimable).
       const L = game.ledger();
       if (snap?.site && L.signedIn && L.total) snap.payNow = await chain.claimable(unitsToWei(L.total));
+      if (snap?.admin) game.refreshCount?.();
     } catch (e) {
       console.warn("snapshot failed", e);
     }
@@ -163,6 +165,11 @@ export function createPanel(game) {
         game.wear(id === null ? null : m?.traits ?? null, id);
         return render();
       }
+      case "claimFees": return run("Claiming the trading fees", async (step) => {
+        step("Claiming the trading fees: confirm in your wallet…");
+        const got = await chain.admin.collectFees();
+        return got ? `Claimed ${mine(got.amount)} IMD in trading fees to ${short(got.to)}.` : "Nothing was waiting to claim.";
+      }, "admin");
       case "fund": return run("Adding play ETH", () => chain.devFund());
     }
   }
@@ -205,6 +212,8 @@ export function createPanel(game) {
       ${s?.devAccounts ? `<p class="note">Local chain: play as one of Anvil's accounts.
         ${s.accounts.slice(2, 6).map((a) => `<button class="link-btn" data-act="devacct" data-a="${a}">${short(a)}</button>`).join(" · ")}</p>` : ""}
 
+      ${adminBox(s)}
+
       <section class="box">
         <h3>Your earnings</h3>
         <div class="kv"><span>Earned today</span><b class="gold">${fmtMine(L.today)} / ${fmtMine(L.cap)} $MINE</b></div>
@@ -242,6 +251,38 @@ export function createPanel(game) {
       ${economyBox()}
       ${ratesBox()}`;
     tradeEl.hidden = !chain.trade;
+  }
+
+  /// The project wallet's box (chain.js adminStats): the trading fees waiting in the pool and the button that sends them
+  /// to the fee wallet, the treasury's balances, and how $MINE and the game are doing.
+  function adminBox(s) {
+    const a = s?.admin;
+    if (!a) return "";
+    const m = a.market, sites = game.sitesOpen?.() ?? null;
+    const usd = (n) => `$${n.toLocaleString("en-US", { maximumFractionDigits: n < 1 ? 6 : 2 })}`;
+    const inUsd = (wei, per) => (per ? ` (≈ ${usd(Number(formatEther(wei)) * per)})` : "");
+    const link = (addr) => (s.explorer ? `<a href="${s.explorer}/address/${addr}" target="_blank" rel="noopener">${short(addr)}</a>` : short(addr));
+    const whole = (wei) => Math.round(Number(formatEther(wei))).toLocaleString("en-US");
+    return `<section class="box admin">
+      <h3>Admin <span class="status open">YOUR WALLET</span></h3>
+      <div class="kv"><span>Trading fees waiting</span><b class="gold">${mine(a.pendingFees)} IMD${inUsd(a.pendingFees, m?.imdUsd)}</b></div>
+      <button class="btn gold wide" data-act="claimFees" ${a.pendingFees === 0n || busy ? "disabled" : ""}>Claim fees to ${short(a.feeRecipient)}</button>
+      ${statusAt("admin")}
+      <p class="note">4% of every $MINE trade, paid in IMD, waits in the pool until it's claimed; claiming sends all of it to the fee wallet
+      ${link(a.feeRecipient)} (gas only). Everything else reaches the treasury by itself: mining site sales (ETH), 25% of site upgrades,
+      DEGEN levels and the shop, every ticket and revive${a.royaltyBps !== null ? `, and the ${a.royaltyBps / 100}% DEGEN royalty` : ""}.</p>
+      <h3>Treasury · ${link(a.treasury)}</h3>
+      <div class="kv"><span>ETH</span><b>${eth(a.treasuryEth)}</b></div>
+      <div class="kv"><span>IMD</span><b>${mine(a.treasuryImd)}${inUsd(a.treasuryImd, m?.imdUsd)}</b></div>
+      <div class="kv"><span>$MINE</span><b>${mine(a.treasuryMine)}${inUsd(a.treasuryMine, m?.tokenUsd)}</b></div>
+      <h3>$MINE token</h3>
+      ${m ? `<div class="kv"><span>Price</span><b>${usd(m.tokenUsd)}</b></div>
+      <div class="kv"><span>Market cap (all in circulation)</span><b>${usd(Number(formatEther(a.supply)) * m.tokenUsd)}</b></div>` : ""}
+      <div class="kv"><span>Mined by players so far</span><b>${whole(a.mined)}</b></div>
+      <div class="kv"><span>Burned</span><b>${whole(a.burned)}</b></div>
+      <div class="kv"><span>In circulation</span><b>${whole(a.supply)} / 21,000,000</b></div>
+      ${sites !== null ? `<div class="kv"><span>Mining sites open</span><b>${sites.toLocaleString("en-US")}</b></div>` : ""}
+    </section>`;
   }
 
   /// The site's level and what upgrading it costs and does (MiningSites: upgradeSite, paid in $MINE).

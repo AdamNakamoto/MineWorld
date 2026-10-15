@@ -211,6 +211,8 @@ export async function connectChain() {
       read(C.sites, "claimed", [account]), read(C.sites, "walletPaidToday", [account]), T ? read(T.imd, "balanceOf", [account]) : null,
     ]);
     Object.assign(s, { eth, mine, site: Number(siteAt), claimed, walletPaid, imd });
+    // The project's wallet gets the admin box (null if its numbers couldn't be read this time).
+    if (await isAdmin(account).catch(() => false)) s.admin = await adminStats().catch((e) => { console.warn("admin stats", e); return null; });
     // A site converts its earnings at its level's rate (MiningSites: 50% at level 1 up to 100% at 5); `settled` is the
     // earnings converted so far (what a voucher's total is counted against). Read only where the contract has them.
     const S = C.sites;
@@ -290,6 +292,50 @@ export async function connectChain() {
   };
   /// A fresh reference for a payment (MinePayments' `ref`): 32 random bytes.
   const newRef = () => bytesToHex(crypto.getRandomValues(new Uint8Array(32)));
+
+  // ---------------------------------------------------------------- admin
+  // The project's wallet (the pool's fee recipient, the treasury or the contracts' owner: 0x6e85…70eD at launch) gets
+  // an admin box in the panel: the trading fees waiting in the pool, a button that sends them to the fee wallet, and
+  // the treasury's balances. Collecting is open to anyone and always pays the fee wallet (MineHook.collectProtocolFees),
+  // so the box only saves a trip to the explorer; everything else the project earns reaches the treasury by itself.
+  let payees = null, payeesAt = 0;
+  async function project() {
+    if (!payees || Date.now() - payeesAt > 30_000) {
+      const [feeRecipient, treasury, owner] = await Promise.all([read(T.hook, "feeRecipient"), read(C.sites, "treasury"), read(C.sites, "owner")]);
+      payees = { feeRecipient, treasury, owner };
+      payeesAt = Date.now();
+    }
+    return payees;
+  }
+  async function isAdmin(a) {
+    if (!a || !T) return false;
+    const p = await project();
+    return [p.feeRecipient, p.treasury, p.owner].some((x) => same(x, a));
+  }
+  async function adminStats() {
+    const { feeRecipient, treasury } = await project();
+    const [pendingFees, launchSupply, treasuryEth, treasuryImd, treasuryMine, minted, burned, supply, mkt, royalty] = await Promise.all([
+      read(T.hook, "pendingProtocolFees", [T.imd.address]), read(T.hook, "launchSupply"),
+      pub.getBalance({ address: treasury }), read(T.imd, "balanceOf", [treasury]), read(C.mine, "balanceOf", [treasury]),
+      read(C.mine, "totalMinted"), read(C.mine, "totalBurned"), read(C.mine, "totalSupply"),
+      market().catch(() => null),
+      C.crafters ? read(C.crafters, "royaltyInfo", [1n, 10_000n]).catch(() => null) : null,
+    ]);
+    return {
+      feeRecipient, treasury, pendingFees, treasuryEth, treasuryImd, treasuryMine, minted, burned, supply, market: mkt,
+      // $MINE the vault has minted for players so far (all of it less the pool's launch half).
+      mined: minted > launchSupply ? minted - launchSupply : 0n,
+      royaltyBps: royalty ? Number(royalty[1]) : null, royaltyTo: royalty ? royalty[0] : null,
+    };
+  }
+  /// Sends the trading fees waiting in the pool to the fee wallet. Resolves with { amount, to } from its
+  /// ProtocolFeesCollected event (null if the receipt shows none: nothing was waiting).
+  async function collectFees() {
+    const receipt = await send(T.hook, "collectProtocolFees", [T.imd.address]);
+    const ev = event(T.hook, receipt, "ProtocolFeesCollected");
+    payees = null;
+    return ev ? { amount: ev.amount, to: ev.to } : null;
+  }
 
   // ---------------------------------------------------------------- trading (as in Courier World)
   let poolKey = null, imdEthKey = null;
@@ -506,6 +552,8 @@ export async function connectChain() {
       return Number(bps);
     },
     trade: T ? { quote, market, execute: trade } : null,
+    /// The project wallet's tools (see adminStats; the snapshot's `admin` is set only for that wallet).
+    admin: T ? { collectFees } : null,
     /// Local chains only: Anvil gives the logged-in wallet some play ETH.
     async devFund() {
       if (!test || !account) return;

@@ -110,6 +110,17 @@ const DEATHS = 3, DEATH_EVERY_S = 20; // knock-outs that make a chest a connecti
 const MAX_CHESTS = 200; // loot chests kept at most, on all planets together (the oldest go first)
 const DEATH_KEEP_MS = 30 * 60_000; // a wallet's last knock-out is remembered this long for a revive from a new connection
 const RECHECKS = 2, RECHECK_EVERY_S = 15; // re-reads of a player's NFTs they may ask for at once, and one more this often
+// The title screen shows how many mining sites are open (`/count`): MiningSites' SiteOpened events from
+// SITES_FROM_BLOCK (its deploy block) on, read from LOGS_RPC, an RPC that serves old logs (CHAIN_RPC may only serve
+// recent ones). Sites never close, so it's every SiteOpened there has been. The count and the next block to read are
+// stored (SITES_KEY), so a room woken from hibernation reads only the blocks since; it's topped up at most every
+// SITES_EVERY_MS, and once there's a count, /count answers with it at once while the top-up runs. One top-up reads at
+// most SITES_SPANS spans of LOG_SPAN blocks (L2 blocks are 0.1 s: a span is about 11 days), well within the free
+// plan's 50 subrequests; a longer backlog (a fresh count) carries on at the next ask.
+const SITE_OPENED = "0xbfc7485718626287a8f732f39f91ddb6a1cbd2a086ee31341378e889838507d7"; // SiteOpened(address,uint256)
+const SITES_KEY = "sites";
+const SITES_EVERY_MS = 60_000, SITES_RETRY_MS = 10_000, SITES_WAIT_MS = 4000, SITES_SPANS = 20;
+const LOG_SPAN = 10_000_000n; // blocks a log request covers (the official RPC's most)
 
 // The game's homes: its own domain (to be decided: add it here), Vercel previews and local development.
 const ORIGINS = [/^https:\/\/(www\.)?mineworldcraft\.fun$/, /^https:\/\/mineworldcraft-mp\.[a-z0-9-]+\.workers\.dev$/, /^https:\/\/[a-z0-9-]+\.vercel\.app$/, /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/];
@@ -231,7 +242,9 @@ export class World extends DurableObject {
   async fetch(req) {
     const url = new URL(req.url);
     if (url.pathname === "/count") {
-      return Response.json({ online: this.players().length }, { headers: { "access-control-allow-origin": "*" } });
+      const wait = new Promise((r) => setTimeout(() => r(this.sites?.known ? this.sites.count : null), SITES_WAIT_MS));
+      const sites = await Promise.race([this.sitesOpen(), wait]);
+      return Response.json({ online: this.players().length, sites }, { headers: { "access-control-allow-origin": "*" } });
     }
     if (req.headers.get("upgrade") !== "websocket") return new Response("Expected a WebSocket", { status: 426 });
     const origin = req.headers.get("origin");
@@ -696,6 +709,43 @@ export class World extends DurableObject {
   /// The chain, read through CHAIN_RPC.
   chainClient() {
     return (this.pub ??= createPublicClient({ transport: http(this.env.CHAIN_RPC) }));
+  }
+  /// How many mining sites are open (see SITE_OPENED), or null when it can't be told yet (not configured, or the first
+  /// count isn't done). Concurrent asks share one top-up; a failed read keeps what was counted (stored after every
+  /// span) and tries again in SITES_RETRY_MS.
+  async sitesOpen() {
+    const { MINING_ADDRESS: address, LOGS_RPC, SITES_FROM_BLOCK } = this.env;
+    if (!address || !LOGS_RPC || !SITES_FROM_BLOCK) return null;
+    if (!this.sites) {
+      const saved = await this.ctx.storage.get(SITES_KEY);
+      this.sites ??= saved?.address === address
+        ? { count: saved.count, next: BigInt(saved.next), known: saved.known, at: 0, busy: null }
+        : { count: 0, next: BigInt(SITES_FROM_BLOCK), known: false, at: 0, busy: null };
+    }
+    const s = this.sites;
+    if (!s.busy && Date.now() - s.at >= SITES_EVERY_MS) {
+      s.busy = (async () => {
+        const rpc = (this.logsPub ??= createPublicClient({ transport: http(LOGS_RPC, { timeout: 5000, retryCount: 1 }) }));
+        const hex = (n) => `0x${n.toString(16)}`;
+        const head = await rpc.getBlockNumber();
+        for (let i = 0; i < SITES_SPANS && s.next <= head; i++) {
+          const to = s.next + LOG_SPAN - 1n < head ? s.next + LOG_SPAN - 1n : head;
+          const logs = await rpc.request({ method: "eth_getLogs", params: [{ address, topics: [SITE_OPENED], fromBlock: hex(s.next), toBlock: hex(to) }] });
+          s.count += logs.length;
+          s.next = to + 1n;
+        }
+        const done = s.next > head;
+        s.known ||= done;
+        s.at = done ? Date.now() : 0; // (a backlog left: carry on at the next ask)
+        await this.ctx.storage.put(SITES_KEY, { address, count: s.count, next: String(s.next), known: s.known });
+      })().catch((e) => {
+        console.warn("counting mining sites:", e?.shortMessage ?? e?.message ?? e);
+        s.at = Date.now() - SITES_EVERY_MS + SITES_RETRY_MS;
+      }).finally(() => { s.busy = null; });
+    }
+    // Once there's a count it's answered at once (the top-up carries on); the first count is waited for.
+    if (!s.known && s.busy) await s.busy;
+    return s.known ? s.count : null;
   }
   /// Puts the player on `zone`'s pad: the others on the planet they left see them go, those on the new one see them
   /// land, and the player gets who's there (and the boss, or the loot chests). A signed-in wallet's zone is kept, so a
