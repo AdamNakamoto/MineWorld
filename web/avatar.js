@@ -39,31 +39,20 @@ const ANIM = {
 /// An angle brought round into [-pi, pi).
 const turn = (a) => a - 2 * Math.PI * Math.floor(a / (2 * Math.PI) + 0.5);
 
-/// The turn that takes a held icon's blade (its diagonal, up and to the right) to `blade` and its face to `face`,
-/// both given in the body's frame (the miner faces +z; its right is -x).
-function turnTo(blade, face) {
-  const b = new THREE.Vector3(1, 1, 0).normalize(), n = new THREE.Vector3(0, 0, 1), s = new THREE.Vector3().crossVectors(b, n);
-  const d = new THREE.Vector3(...blade).normalize();
-  const f = new THREE.Vector3(...face);
-  f.addScaledVector(d, -f.dot(d)).normalize();
-  const t = new THREE.Vector3().crossVectors(d, f);
-  const m = new THREE.Matrix4().makeBasis(d, f, t).multiply(new THREE.Matrix4().makeBasis(b, n, s).transpose());
-  return new THREE.Quaternion().setFromRotationMatrix(m);
-}
 const armTurn = (angle) => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), angle);
 /// How each kind of held thing (held.js heldKind) is held: the right arm's angle at rest (negative raises it forward),
 /// how much of the walk's arm swing it keeps (Minecraft halves it for anything held), and the thing's turn in the
 /// hand, given in the arm's frame (so it's the body-frame turn undone by the arm's).
 const POSES = {
-  // A weapon held out, ready, like the classic games' heroes: the arm raised forward, the blade out to the side, a
-  // little forward and down, its face to the front. (A raised arm barely swings as you walk.)
-  weapon: { arm: -1.0, walk: 0.25, q: armTurn(1.0).multiply(turnTo([-1, -0.3, 0.35], [0, 0.15, 1])) },
   // A tool with the arm down: its head up, forward and out, its face half to the front.
   tool: { arm: 0, walk: 0.5, q: armTurn(0.3).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -0.75 * Math.PI)) },
   // A block a little forward, as if about to place it.
   block: { arm: -0.35, walk: 0.5, q: new THREE.Quaternion() },
   none: { arm: 0, walk: 1, q: new THREE.Quaternion() },
 };
+// A weapon is held the way a tool is, blade up, forward and out, as in the classic games (the owner preferred it to
+// a sword held out to the side); so is anything else held in the hand.
+POSES.weapon = POSES.tool;
 POSES.item = POSES.tool;
 
 /// The look of a player without a Crafter: brown bob, charcoal hoodie, no hat.
