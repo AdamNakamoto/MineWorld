@@ -29,12 +29,18 @@ directory = "../web"
 # (players see what they'd earn; it's reset at launch and never paid), and trips and the shop are free. The voucher key is a secret: `npx wrangler secret put MINING_KEY` (its address is MiningSites'
 # signer). Locally, ./dev.sh writes all of these to .dev.vars.
 [vars]
-# CHAIN_ID = "4663"
-# CHAIN_RPC = "https://robinhood-rpc.publicnode.com"
-# MINING_ADDRESS = "0x..."
-# CRAFTERS_ADDRESS = "0x..."  (MineWorld Crafters: a player wears one only once the room has checked they own it)
-# LEVELS_ADDRESS = "0x..."    (CrafterLevels: each Crafter's level, for its boost; without it every Crafter is level 1)
-# PAYMENTS_ADDRESS = "0x..."  (MinePayments: rocket tickets are paid there; without it none can be bought)
+# Live on Robinhood Chain since 2026-10-15 (contracts/deployments/robinhood*.json). The voucher key is the secret
+# MINING_KEY; its address 0xaA15A39d2841114B7D0C2E1b4cBB88243ecBADdF is MiningSites' signer.
+CHAIN_ID = "4663"
+CHAIN_RPC = "https://robinhood-rpc.publicnode.com"
+# MiningSites (the proxy): vouchers are signed for it; setting it ends the practice ledger.
+MINING_ADDRESS = "0x2B3Ed234eF4A048984cC833Ac52373CC3E27004b"
+# I'M DEGEN (MineWorldCrafters): a player wears a DEGEN only once the room has checked they own it.
+CRAFTERS_ADDRESS = "0x263b3c4A9f711E0e28201d5897dA4CDea3831D15"
+# CrafterLevels: each DEGEN's level, for its boost.
+LEVELS_ADDRESS = "0xd7781dcBC1C4D80A4309F39D8350f8105C218Dd6"
+# MinePayments: rocket tickets and revives are paid there; setting it ends free trips and revives.
+PAYMENTS_ADDRESS = "0xb2353D76F03DDE9D65752bc2E6AD369d84a678F7"
 # Later NFT collections that boost mining (web/boosts.js SLOTS), once issued, if their address isn't in boosts.js:
 # SKINS_ADDRESS, COMPANIONS_ADDRESS, AURAS_ADDRESS, VEHICLES_ADDRESS.
 # Never set DEV_HOOKS here: it's for `wrangler dev --var DEV_HOOKS:1` on your own machine only.
