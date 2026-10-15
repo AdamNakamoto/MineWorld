@@ -139,6 +139,8 @@ kbd { font-family: var(--px); font-size: 11px; padding: 0 4px; border: 2px solid
 .recipe img { width: 28px; height: 28px; image-rendering: pixelated; }
 .recipe .need { color: var(--muted); font-size: 12px; display: block; }
 .dead { background: rgba(120, 0, 0, 0.45); }
+.dead-buttons { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.dead-buttons .btn.big { font-size: 18px; padding: 10px 16px; width: 100%; }
 .wallet-list { display: flex; flex-direction: column; gap: 8px; }
 .wallet { display: flex; align-items: center; gap: 10px; padding: 10px; background: rgba(0, 0, 0, 0.3); border: 2px solid #2c3a42; color: var(--ink); cursor: pointer; font-family: var(--px); font-size: 15px; }
 .wallet img, .wallet .wicon { width: 28px; height: 28px; }

@@ -61,6 +61,7 @@ export const VILLAGERS = [
     "We built this town at the top of the world. Everything past the gates is wild.",
     "Once you've signed in, pick a name in the menu (Esc) so folk know who you are.",
     "Deepvein pays double but its monsters never sleep. And in Red Mesa, other miners can take everything you carry.",
+    "Get knocked out and everything you carry drops in a chest where you fell. Hurry back to it before someone else does!",
   ] },
   { name: "Hazel", job: "Fisher", home: "Lake House", work: "pond", look: T(21, 6, 1, 1, 2, 2), lines: [
     "The pond's calm today. Mind the deep water out in the wild: you sink slowly, but you do sink.",

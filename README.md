@@ -63,6 +63,18 @@ at night and underground. Food keeps you going: the hunger bar drains as you mov
 leaves, berries from bushes, and a red and a brown mushroom with a plank make stew. A full belly heals you, an empty one
 hurts, and you need food to sprint (`web/vitals.js`).
 
+**Knocked out** (a fall, monsters, the boss, another player, the void), you drop everything you carry, the armor you
+wear too (with its wear), in a loot chest where you fell. It stays 5 minutes (`CHEST_MS` in `web/zones.js`), and the
+first player on that planet to open it takes it all, you included, as in Minecraft. You have one open chest at a time:
+the next knock-out's replaces it. On the home planet the screen offers **Respawn at spawn** (free: the town square) or
+**Revive here** for 420 $MINE (`REVIVE_PRICE`, $1 at a $50K market cap): you get up on the very spot you fell, with full
+health and food as a respawn gives, in time to grab your own chest if nobody has. Reviving is paid like a rocket ticket
+(MinePayments, the "revive" kind: all to the treasury, nothing burned) and checked by the world server; it's free before
+$MINE launches ("Revive here (free until $MINE launches)"), while `REVIVE_FREE` is set, and offline. Guests can't pay,
+so once revives cost $MINE they respawn in town. Knocked out in a zone, you're sent back to the home planet, with no
+revive there: your things stay in the zone, in a chest anyone there can take for 5 minutes, and the trip back needs a
+new ticket (yours was used on the way out). Offline, the game keeps your chest itself.
+
 The Smithy's shop (**H**, or Garrick the armorer at the Smithy's door; `web/shop.js`) sells tools for mining (up to the
 Crystal pickaxe, the fastest), weapons (up to the Crystal sword and the slow, heavy war hammer) and armor: helmet,
 chestplate, leggings and boots in Padded, Iron, Diamond and Crystal. Armor takes a share of monsters' hits (a full
@@ -126,7 +138,7 @@ fighting there. Everything tunable is in `web/zones.js`; what the zones pay is i
 | Home planet | No PvP | The town and its villagers |
 | **Deepvein**, the 2x Mine Zone | No PvP | Rocky crags riddled with caves, stone over harder deep rock (1.5x stone's breaking time), glowcaps on cave floors, rare ores three times as common (iron 2x, coal 1.5x). Everything earned pays **2x** (blocks and monsters), within the usual 300 a wallet (more with a cap boost) and 35,000 a day for everyone. Monsters come day and night, up to 5 at once, about every 10 s, with 1.5x health and damage. Its edits are kept a week at a time: every Monday 00:00 UTC it grows back |
 | **Cinderfall**, the Boss Zone | No PvP | Ash plains, basalt, volcanoes with glowing craters, cracks of fire and ember-tipped spires. A stone-brick path runs north from the pad to the arena, where **Ashgrim, the Cinder Colossus** (an original giant of cooled lava with a molten heart, 1,500 HP) fights everyone at once |
-| **Red Mesa**, the PvP Zone | PvP off the pad | Terraced mesas in banded clays over red sand, dry riverbeds and cacti. Players can hit each other; a player beaten here drops everything they carry |
+| **Red Mesa**, the PvP Zone | PvP off the pad | Terraced mesas in banded clays over red sand, dry riverbeds and cacti. Players can hit each other; a player beaten here drops everything they carry and is sent home |
 
 **The boss.** The world server keeps its health and picks its moves; every game animates each move from its start time,
 so all see the same thing and nothing is sent while it moves. It walks towards someone, **slams** both fists (a red ring
@@ -141,10 +153,27 @@ minutes later. Left alone it heals.
 **PvP.** Only in Red Mesa, never on its pad, and nowhere else (the zone's `pvp` flag; elsewhere other players can't even
 be aimed at). The server checks each hit (both in the zone, off the pad, within reach, no faster than a swing, at most 9
 damage, not just after landing) and passes it to the one hit, whose game takes off its armor's share and wear. A player
-beaten there leaves everything they carried (inventory and armor, with wear) in a loot chest where they fell; the server
-keeps it 3 minutes and hands it, once, to the first player close enough to open it. Inventories live in the browser, so
-the chest holds what the beaten player's game reports (cleaned up by the server); a chest is only made right after a
-checked hit from the named player, once per knock-out.
+beaten there drops everything, as every knock-out does, and is sent home; the killer is named (to everyone in Red Mesa)
+only right after a checked hit from them.
+
+**Knock-outs in the zones.** Wherever it happens (Deepvein's monsters, Ashgrim's slam, another player in Red Mesa, a
+fall), a player knocked out in a zone is sent back to the home planet's town square the moment their game reports it: the
+others in the zone see them go ("knocked out and sent home"), the home planet sees them come back, and the server
+remembers their wallet's zone as home. Their loot chest stays in the zone for 5 minutes, for whoever is there. There's no
+revive in a zone, and going back needs a new ticket (free while tickets are).
+
+**Loot chests and revives on the server.** Inventories live in the browser, so a chest holds what the knocked-out
+player's game reports, cleaned up by the server (real items, counts within a stack, wear within durability, at most 40
+stacks). A chest needs a knock-out report from a player who is up (from then on they're down until they respawn or
+revive, so it's one chest per knock-out), and is placed where the game says they fell only if that's no further from
+where the server last heard them than they could have gone (else where the server had them; lifted onto the ground after
+a fall out of the world). A player has at most one open chest (a new one replaces it), three knock-outs in a row make
+chests and then one every 20 seconds (the rest keep what they carried), and the server keeps at most 200 chests. A paid
+revive is checked exactly like a ticket: the transaction succeeded and holds a Paid event from MinePayments by the
+signed-in wallet, of kind 2, for at least 420 $MINE, at most 3 hours old, and the hash never paid for a revive before.
+The server remembers where each player fell and accepts their next stand-up only at spawn or, after a valid revive (or
+a free one), right there, so a revive isn't taken for a teleport. A payment checked after the player was already up again
+isn't used: the game keeps it and it pays for the next revive within 3 hours.
 
 ## Players
 
@@ -334,12 +363,28 @@ npx wrangler deploy
 
 One Durable Object holds the world: who's playing and on which planet, every edit (per chunk, per planet: home's under
 `c2:`, a zone's under `z<zone>:`, Deepvein's under `zdeep<week>:` with older weeks cleared), the monsters, the boss, the
-PvP loot chests, chat, names, voice set-up messages, rocket tickets (`tix:<wallet>`: how many to each zone; every
+loot chests (`chests`: every open one, on every planet), chat, names, voice set-up messages, the revive payments it took
+(`revTx:<hash>`, kept for good), rocket tickets (`tix:<wallet>`: how many to each zone; every
 payment that bought one under `tixTx:<hash>`, kept for good) and the $MINE ledger (16 shards under `led2:`, in ten-thousandths of
 a $MINE; the old `led:` shards in hundredths are converted the first time they're read). The terrain itself is never stored: both sides generate it from the same seed. Built for Cloudflare's
 free plan: hibernating WebSockets, pings answered without waking the room, positions sent only while moving, writes
 batched every 30 seconds (the free plan allows 100,000 requests and 100,000 written rows a day per account, shared by
 every Worker on it, so a separate Cloudflare account keeps Courier World's room unaffected).
+
+Knock-outs, loot chests and revives on the wire (the rest of the protocol is in `docs/DESIGN.md`):
+
+| Direction | Message | |
+|---|---|---|
+| game → room | `["dead", stacks, x, y, z, killer]` | Knocked out at (x, y, z) carrying `stacks` (`[item, count, wear]`, armor too); `killer` a player id in Red Mesa, else null. Once per knock-out |
+| room → game | `["dropped", chestId]` / `["dropno", why]` | The chest was made (0: nothing to drop) / none was (knocked out again too soon: the game keeps what it carried) |
+| room → planet | `["chest", id, x, y, z, until, who]`, `["chestgone", id, by]` | A chest appears; one is opened (`by`: who) or replaced (`by` null) |
+| room → game | `["chests", [[id, x, y, z, until, who], ...]]` | The planet's open chests, on joining and on every arrival |
+| game → room | `["loot", chestId]` | Open a chest: `["looted", id, stacks, who]` or `["lootno", id, why]` |
+| room → game | `["zoned", "home", players, at]` | Knocked out in a zone: sent home (the zone hears `["leave", id, "home", "ko"]`, home `["join", ..., "ko", zone]`) |
+| game → room | `["respawn"]` | Up in town (asked while up, it counts as a jump) |
+| game → room | `["revive", txHash]` | Up where you fell (home only); `txHash` null while revives are free |
+| room → game | `["revived", x, y, z, txHash]` / `["reviveno", why, txHash, retry]` | Done, the room has you there / refused: retry 1 the chain couldn't be read, 2 the payment wasn't used (it can pay for a later revive), 0 never |
+| room → game | `["welcome", ..., { practice, ticketsFree, reviveFree }]` | Whether revives are free right now |
 
 For tests on your own machine, `npx wrangler dev --var DEV_HOOKS:1` turns on two dev hooks, `["dev", "today", mine]`
 and `["dev", "world", mine]` (set a signed-in wallet's earnings today, or everyone's), so the daily caps can be tried

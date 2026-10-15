@@ -30,8 +30,15 @@
 // stored per zone (Deepvein's per week, so it grows back every Monday), earnings are multiplied by the zone's rate
 // (rewards.js ZONE_PAY). Cinderfall's boss lives here: its health, its moves (picked here, animated by every game from
 // the same start time, so nothing is sent while it moves), the checked hits on it and the pool it pays. In Red Mesa,
-// players can hit each other: each hit is checked here and passed to the one hit, and a player beaten there leaves a
-// loot chest that the first to open it takes (kept here a few minutes).
+// players can hit each other: each hit is checked here and passed to the one hit.
+//
+// Knock-outs (web/zones.js CHEST_MS): whatever knocks a player out, their game reports it with what they carried, and
+// the room leaves it in a loot chest where they fell, on that planet, for CHEST_MS: the first player there to open it
+// takes it all (the one who fell too). One chest per knock-out, one open chest per player (a new one replaces the
+// old), and only from a player who is up (they're down until they respawn or revive). Knocked out in a zone, the room
+// sends them home at once (their chest stays in the zone). Knocked out at home, they respawn in town, or revive where
+// they fell: free before launch (and while REVIVE_FREE), otherwise paid in $MINE (REVIVE_PRICE, MinePayments kind 2),
+// checked here as a ticket is (revive).
 //
 // Rocket tickets (unless zones.js TICKETS_FREE): a signed-in player pays a zone's `ticket` in $MINE on-chain
 // (MinePayments.pay, kind 1, from their own wallet) and sends the transaction's hash; the room reads its receipt and,
@@ -55,6 +62,7 @@ import {
 import { SLOTS, isSlot, boostOf, NO_BOOST, dailyCap, withEarn, withSpeed, packBoost } from "../../web/boosts.js";
 import {
   isZone, zoneOf, landing, spawnOf, onPad, protectedIn, calmAt, weekOf, ARENA, BOSS, bossAt, PVP, TICKETS_FREE,
+  CHEST_MS, CHEST_REACH, CHEST_STACKS, REVIVE_PRICE, REVIVE_KIND, REVIVE_FREE,
 } from "../../web/zones.js";
 import { cleanChat, CHAT_EVERY_MS } from "../../web/chat-rules.js";
 import { traitsOf, packTraits, rarityOf, SUPPLY } from "../../web/crafters.js";
@@ -95,8 +103,12 @@ const EDITS = "c2:";
 const VOICE_RANGE = 64; // blocks: voice connections are only set up between players this close
 const RTC_PER_MIN = 240; // voice set-up messages a connection may send a minute
 const FLIGHTS = 3, FLIGHT_EVERY_S = 5; // rocket flights a connection may make at once, and one more every few seconds
-const TICKET_AGE_S = 3 * 3600; // seconds: the oldest a ticket's payment can be when it's sent here
+const PAY_AGE_S = 3 * 3600; // seconds: the oldest a ticket's or a revive's payment can be when it's sent here
 const TICKET_KIND = 1n; // MinePayments' kind for rocket tickets ("ticket": all to the treasury)
+const REVIVE_KIND_N = BigInt(REVIVE_KIND); // and for revives ("revive": all to the treasury too)
+const DEATHS = 3, DEATH_EVERY_S = 20; // knock-outs that make a chest a connection may have at once, and one more this often
+const MAX_CHESTS = 200; // loot chests kept at most, on all planets together (the oldest go first)
+const DEATH_KEEP_MS = 30 * 60_000; // a wallet's last knock-out is remembered this long for a revive from a new connection
 const RECHECKS = 2, RECHECK_EVERY_S = 15; // re-reads of a player's NFTs they may ask for at once, and one more this often
 
 // The game's homes: its own domain (to be decided: add it here), Vercel previews and local development.
@@ -133,13 +145,13 @@ function bucket(a, key, max, per, cost, now) {
   return true;
 }
 
-/// What a beaten player's game says they carried, cleaned up: at most PVP.maxStacks stacks of [item, count, wear],
+/// What a knocked-out player's game says they carried, cleaned up: at most CHEST_STACKS stacks of [item, count, wear],
 /// real items only, counts within a stack's size and wear within the item's durability. (Inventories live in the
 /// browser, so the items are the game's own report; this only keeps them well-formed.)
 function cleanItems(items) {
   const out = [];
   for (const s of Array.isArray(items) ? items : []) {
-    if (out.length >= PVP.maxStacks || !Array.isArray(s)) break;
+    if (out.length >= CHEST_STACKS || !Array.isArray(s)) break;
     const [id, n, d] = s;
     if (!isInt(id, 1, 256) || itemName(id) === "?" || id === WATER || id === BEDROCK || !isInt(n, 1, stackSize(id) + 1)) continue;
     out.push(damageable(id) ? [id, 1, isInt(d, 0, maxDurability(id)) ? d : 0] : [id, n]);
@@ -265,7 +277,9 @@ export class World extends DurableObject {
         case "respawn": return this.respawn(ws, a);
         case "bosshit": return await this.bossHit(ws, a, m[1]);
         case "pvp": return this.pvpHit(ws, a, m[1], m[2]);
-        case "pvpdead": return await this.pvpDead(ws, a, m[1], m[2]);
+        case "dead": return await this.died(ws, a, m[1], m[2], m[3], m[4], m[5]);
+        case "pvpdead": return await this.died(ws, a, m[2], null, null, null, m[1]); // (a game from before: ["pvpdead", killer, stacks])
+        case "revive": return await this.revive(ws, a, m[1]);
         case "loot": return await this.loot(ws, a, m[1]);
         case "chat": return this.chat(ws, a, m[1]);
         case "auth": return this.auth(ws, a, m[1]);
@@ -316,7 +330,7 @@ export class World extends DurableObject {
     const here = this.onZone(a.zone).filter(([w]) => w !== ws);
     const total = this.players().length;
     this.send(ws, ["welcome", a.id, Date.now(), here.map(([, o]) => this.shown(o)), total, a.zone,
-      { practice: this.practice, ticketsFree: this.ticketsFree() }]);
+      { practice: this.practice, ticketsFree: this.ticketsFree(), reviveFree: this.reviveFree() }]);
     const voices = this.players().filter(([w, o]) => w !== ws && o.voice).map(([, o]) => o.id);
     if (voices.length) this.send(ws, ["voices", voices]);
     this.zoneCast(a.zone, ["join", ...this.shown(a)], ws);
@@ -553,10 +567,11 @@ export class World extends DurableObject {
 
   // ---------------------------------------------------------------- the rocket's zones (web/zones.js)
 
-  /// Puts player `a` on `zone`, standing on its landing pad (no message: the callers tell whoever needs to know).
-  arrive(a, zone, now) {
+  /// Puts player `a` on `zone`, standing at `spot` (its landing pad, unless said otherwise; no message: the callers
+  /// tell whoever needs to know).
+  arrive(a, zone, now, spot = landing(zone)) {
     a.zone = zone;
-    Object.assign(a, xyz(landing(zone)));
+    Object.assign(a, xyz(spot));
     a.pAt = now;
     a.suspect = Math.max(a.suspect ?? 0, now + SETTLE_MS); // (a flight is a teleport: nothing is earned for a moment)
     a.mobs = [];
@@ -608,7 +623,7 @@ export class World extends DurableObject {
   }
   /// ["ticket", txHash, zone]: a ticket to `zone`, bought with that transaction. It counts only if the transaction
   /// succeeded, holds a Paid event from MinePayments (PAYMENTS_ADDRESS) by this player's signed-in wallet for kind 1
-  /// (tickets) and at least the zone's `ticket` price, is at most TICKET_AGE_S old, and hasn't bought a ticket before
+  /// (tickets) and at least the zone's `ticket` price, is at most PAY_AGE_S old, and hasn't bought a ticket before
   /// (`tixTx:<hash>`, kept for good). The wallet then has one more ticket there. Answers ["ticketok", zone, count,
   /// hash] and ["tickets", all], or ["ticketno", zone, why, hash, retry] (retry 1: the chain couldn't be read, so the
   /// same hash may do later; 0: it never will).
@@ -628,32 +643,18 @@ export class World extends DurableObject {
     }
     this.save(ws, a);
     const key = `tixTx:${hash.toLowerCase()}`;
-    this.ticketChecks ??= new Set(); // (hashes being checked right now: the same one sent twice is checked once)
-    if (this.ticketChecks.has(key) || (await this.ctx.storage.get(key))) return no("That payment has already bought a ticket.");
-    this.ticketChecks.add(key);
+    this.payChecks ??= new Set(); // (hashes being checked right now: the same one sent twice is checked once)
+    if (this.payChecks.has(key) || (await this.ctx.storage.get(key))) return no("That payment has already bought a ticket.");
+    this.payChecks.add(key);
     const wallet = a.wallet, Z = zoneOf(zone);
     try {
-      const pub = this.chainClient();
-      let receipt = null;
-      for (let i = 0; i < 5 && !receipt; i++) {
-        receipt = await pub.getTransactionReceipt({ hash }).catch(() => null);
-        if (!receipt && i < 4) await new Promise((r) => setTimeout(r, 1500));
-      }
-      if (!receipt) return no("Couldn't find that payment on the chain yet. Try again in a moment.", true);
-      if (receipt.status !== "success") return no("That transaction failed, so it paid nothing.");
-      const paid = parseEventLogs({ abi: PAYMENTS_ABI, logs: receipt.logs, eventName: "Paid" })
-        .filter((l) => l.address.toLowerCase() === env.PAYMENTS_ADDRESS.toLowerCase());
-      if (!paid.length) return no("That transaction isn't a payment to the game.");
-      const theirs = paid.filter((l) => getAddress(l.args.player) === wallet);
-      if (!theirs.length) return no("That payment came from another wallet: buy tickets from the wallet you signed in with.");
-      const tickets = theirs.filter((l) => l.args.kind === TICKET_KIND);
-      if (!tickets.length) return no("That payment wasn't for a rocket ticket.");
-      const price = BigInt(Z.ticket) * 10n ** 18n;
-      if (!tickets.some((l) => l.args.amount >= price)) {
-        return no(`A ticket to ${Z.name} costs ${Z.ticket.toLocaleString("en-US")} $MINE: that payment was less.`);
-      }
-      const block = await pub.getBlock({ blockNumber: receipt.blockNumber });
-      if (now / 1000 - Number(block.timestamp) > TICKET_AGE_S) return no("That payment is too old to buy a ticket (over 3 hours).");
+      const r = await this.paidBy(hash, wallet, TICKET_KIND, BigInt(Z.ticket) * 10n ** 18n, {
+        other: "That payment came from another wallet: buy tickets from the wallet you signed in with.",
+        kind: "That payment wasn't for a rocket ticket.",
+        less: `A ticket to ${Z.name} costs ${Z.ticket.toLocaleString("en-US")} $MINE: that payment was less.`,
+        old: "That payment is too old to buy a ticket (over 3 hours).",
+      });
+      if (!r.ok) return no(r.why, r.retry);
       const t = await this.ticketsOf(wallet);
       t[zone] = (t[zone] ?? 0) + 1;
       await this.ctx.storage.put({ [key]: wallet, [`tix:${wallet}`]: t });
@@ -663,8 +664,34 @@ export class World extends DurableObject {
       console.log("ticket check failed", e?.shortMessage ?? e?.message ?? e);
       no("Couldn't check that payment right now. Try again in a moment.", true);
     } finally {
-      this.ticketChecks.delete(key);
+      this.payChecks.delete(key);
     }
+  }
+  /// Whether transaction `hash` paid the game: it succeeded and holds a Paid event from MinePayments (PAYMENTS_ADDRESS)
+  /// by `wallet`, of `kind`, for at least `price` (wei), in a block at most PAY_AGE_S old. Resolves { ok: true }, or
+  /// { why, retry } (retry: the receipt isn't there yet, so the same hash may do later); `say` puts what's wrong in the
+  /// payer's terms: { other (another wallet's), kind (the wrong kind), less (too little), old }. Throws if the chain
+  /// can't be read. (buyTicket and revive; each keeps its own record of the hashes already used.)
+  async paidBy(hash, wallet, kind, price, say) {
+    const env = this.env, pub = this.chainClient();
+    let receipt = null;
+    for (let i = 0; i < 5 && !receipt; i++) {
+      receipt = await pub.getTransactionReceipt({ hash }).catch(() => null);
+      if (!receipt && i < 4) await new Promise((r) => setTimeout(r, 1500));
+    }
+    if (!receipt) return { why: "Couldn't find that payment on the chain yet. Try again in a moment.", retry: true };
+    if (receipt.status !== "success") return { why: "That transaction failed, so it paid nothing." };
+    const paid = parseEventLogs({ abi: PAYMENTS_ABI, logs: receipt.logs, eventName: "Paid" })
+      .filter((l) => l.address.toLowerCase() === env.PAYMENTS_ADDRESS.toLowerCase());
+    if (!paid.length) return { why: "That transaction isn't a payment to the game." };
+    const theirs = paid.filter((l) => getAddress(l.args.player) === wallet);
+    if (!theirs.length) return { why: say.other };
+    const ofKind = theirs.filter((l) => l.args.kind === kind);
+    if (!ofKind.length) return { why: say.kind };
+    if (!ofKind.some((l) => l.args.amount >= price)) return { why: say.less };
+    const block = await pub.getBlock({ blockNumber: receipt.blockNumber });
+    if (Date.now() / 1000 - Number(block.timestamp) > PAY_AGE_S) return { why: say.old };
+    return { ok: true };
   }
   /// The chain, read through CHAIN_RPC.
   chainClient() {
@@ -673,13 +700,16 @@ export class World extends DurableObject {
   /// Puts the player on `zone`'s pad: the others on the planet they left see them go, those on the new one see them
   /// land, and the player gets who's there (and the boss, or the loot chests). A signed-in wallet's zone is kept, so a
   /// reload or a dropped connection lands it back there.
-  async move(ws, a, zone, now = Date.now()) {
+  /// `ko`: they were knocked out in a zone and are sent home (died): they come down in town, still knocked out, and the
+  /// others see why they left and came (["leave", id, "home", "ko"], ["join", ..., "ko", from]).
+  async move(ws, a, zone, now = Date.now(), ko = false) {
     const from = a.zone;
-    if (from !== zone) this.zoneCast(from, ["leave", a.id, zone], ws);
-    this.arrive(a, zone, now);
+    if (from !== zone) this.zoneCast(from, ["leave", a.id, zone, ...(ko ? ["ko"] : [])], ws);
+    this.arrive(a, zone, now, ko ? spawnOf(zone) : landing(zone));
+    if (ko) a.dead = true;
     this.save(ws, a);
     this.zoned(ws, a);
-    this.zoneCast(zone, ["join", ...this.shown(a), from !== zone ? "landed" : null], ws);
+    this.zoneCast(zone, ["join", ...this.shown(a), ...(from === zone ? [null] : ko ? ["ko", from] : ["landed"])], ws);
     if (a.wallet) {
       this.send(ws, this.boostMsg(a)); // (the daily cap there is the zone's: zones.js capMul)
       await this.keepZone(a.wallet, zone);
@@ -696,26 +726,30 @@ export class World extends DurableObject {
     const here = this.onZone(a.zone).filter(([w]) => w !== ws).map(([, o]) => this.shown(o));
     this.send(ws, ["zoned", a.zone, here, xyz(a)]);
   }
-  /// What a player arriving on a zone needs besides the players: the boss in Cinderfall, the loot chests in a PvP zone.
+  /// What a player arriving on a planet (or joining) needs besides the players: the boss in Cinderfall, and the loot
+  /// chests there (every planet's, even none: the game drops what it showed before).
   async zoneNews(ws, a) {
     if (a.zone === "boss") {
       await this.bossState();
       this.bossTidy(Date.now());
       this.send(ws, this.bossMsg(this.boss)); // (tidying may have brought a fresh one back)
     }
-    if (zoneOf(a.zone).pvp) {
-      const now = Date.now();
-      const list = [...(await this.chestList()).values()].filter((c) => c.zone === a.zone && c.until > now);
-      this.send(ws, ["chests", list.map((c) => [c.id, c.x, c.y, c.z, c.until, c.who])]);
-    }
+    const now = Date.now();
+    const list = [...(await this.chestList()).values()].filter((c) => c.zone === a.zone && c.until > now);
+    this.send(ws, ["chests", list.map((c) => [c.id, c.x, c.y, c.z, c.until, c.who])]);
   }
-  /// Back on your feet after being knocked out: at the town square at home, or on the zone's pad.
+  /// ["respawn"]: back on your feet after being knocked out, in town (knocked out in a zone, the room has already sent
+  /// you home: died). Asked while up, it's a jump to spawn like any other (nothing is earned for a moment).
   respawn(ws, a) {
+    const now = Date.now();
+    if (!a.dead) a.suspect = Math.max(a.suspect ?? 0, now + SETTLE_MS);
     Object.assign(a, xyz(spawnOf(a.zone)));
-    a.pAt = Date.now();
+    a.pAt = now;
     a.mobs = [];
     a.dead = false;
+    a.died = null;
     a.lastHit = null;
+    if (a.wallet) this.deaths?.delete(a.wallet);
     this.save(ws, a);
   }
 
@@ -909,8 +943,11 @@ export class World extends DurableObject {
     const dx = wrapDelta(o.x - a.x), dz = wrapDelta(o.z - a.z), len = Math.hypot(dx, dz) || 1;
     this.send(tws, ["pvphit", a.id, clampHit(damage), Math.round((dx / len) * 100) / 100, Math.round((dz / len) * 100) / 100]);
   }
-  /// The chests left by beaten players: id -> { id, zone, x, y, z, until, who, items }, kept in storage too (the room
-  /// may sleep between a knock-out and the looting).
+
+  // ---------------------------------------------------------------- knock-outs: loot chests and revives
+
+  /// The loot chests left by knocked-out players: id -> { id, zone, x, y, z, until, who, owner, items } (`owner`: the
+  /// wallet, or "g:<id>" for a guest), kept in storage too (the room may sleep between a knock-out and the looting).
   async chestList() {
     if (!this.chests) {
       const list = (await this.ctx.storage.get("chests")) ?? [];
@@ -923,37 +960,135 @@ export class World extends DurableObject {
   async saveChests() {
     await this.ctx.storage.put("chests", [...this.chests.values()]);
   }
-  /// A player's game says they were knocked out by player `killer` in a PvP zone, carrying `items`. It counts only
-  /// right after a checked hit from that player, and once per knock-out (they're down until they respawn on the
-  /// pad): then everything they carried waits in a chest where they fell, for the first to open it.
-  async pvpDead(ws, a, killer, items) {
-    if (!a.ready) return;
-    const now = Date.now();
-    if (!zoneOf(a.zone).pvp || a.dead || !a.lastHit || a.lastHit.by !== killer || now - a.lastHit.at > PVP.killMs) {
-      return this.send(ws, ["dropno", "That wasn't a knock-out by another player."]);
-    }
-    const stacks = cleanItems(items);
-    a.dead = true;
-    a.lastHit = null;
-    this.save(ws, a);
-    const chests = await this.chestList();
-    const c = { id: crypto.getRandomValues(new Uint32Array(1))[0] >>> 1, zone: a.zone, x: Math.round(a.x * 10) / 10, y: Math.round(a.y * 10) / 10, z: Math.round(a.z * 10) / 10, until: now + PVP.chestMs, who: a.name, items: stacks };
-    if (stacks.length) {
-      chests.set(c.id, c);
-      await this.saveChests();
-      this.zoneCast(a.zone, ["chest", c.id, c.x, c.y, c.z, c.until, c.who]);
-    }
-    this.send(ws, ["dropped", stacks.length ? c.id : 0]);
-    const k = this.players().find(([, o]) => o.id === killer)?.[1];
-    this.zoneCast(a.zone, ["sys", `${k?.name ?? "Someone"} beat ${a.name}${stacks.length ? ": their loot chest waits where they fell" : ""}.`]);
+  /// The height a player stands at on top of column (x, z): where a chest goes when they fell out of the world.
+  async surface(zone, x, z) {
+    const bx = wrap(Math.floor(x)), bz = wrap(Math.floor(z));
+    for (let y = HEIGHT - 1; y > 0; y--) if (await this.solidAt(zone, bx, y, bz)) return y + 1;
+    return 1;
   }
-  /// Opening a loot chest: the first player close enough takes everything in it, once.
+  /// ["dead", stacks, x, y, z, killer]: the player's game says they were knocked out at (x, y, z) (by a fall, monsters,
+  /// the boss, the void, or `killer`, another player's id), carrying `stacks` ([item, count, wear], armor included).
+  /// Only from a player who is up: from then on they're down until they respawn or revive, so it's once per knock-out.
+  /// Where they fell is the game's word if it's no further from where the room last heard them than they could have
+  /// gone since (else the room's own), lifted onto the ground if they fell out of the world; it's kept (a.died, and for
+  /// a wallet this.deaths) for a revive. Their things (cleaned up) wait there in a loot chest for CHEST_MS, replacing
+  /// any chest of theirs still open; a few knock-outs in a row (DEATHS, then one every DEATH_EVERY_S) make no chest and
+  /// the game keeps what it carried. Answers ["dropped", chestId (0: nothing to drop)] or ["dropno", why]. The killer
+  /// is named only in a PvP zone, right after a checked hit from them. Knocked out in a zone, they're sent home (move).
+  async died(ws, a, items, px, py, pz, killer) {
+    if (!a.ready) return;
+    if (a.dead) return this.send(ws, ["dropno", "You're already knocked out."]);
+    const now = Date.now(), zone = a.zone;
+    let x = a.x, y = a.y, z = a.z;
+    if ([px, py, pz].every(num) && px >= 0 && pz >= 0 && px < WORLD && pz < WORLD && py > -500 && py < HEIGHT + 20) {
+      const dt = Math.min(2, Math.max(0.05, (now - (a.pAt ?? now)) / 1000)), dy = py - a.y;
+      if (wrapDist(px, pz, a.x, a.z) <= 8 + 40 * dt && dy <= 4 + 20 * dt && -dy <= 8 + 80 * dt) [x, y, z] = [px, py, pz];
+    }
+    if (y < 1) y = await this.surface(zone, x, z);
+    const r1 = (v) => Math.round(v * 10) / 10;
+    [x, y, z] = [wrap(r1(x)), r1(Math.min(y, HEIGHT)), wrap(r1(z))];
+    const byPlayer = zoneOf(zone).pvp && a.lastHit?.by === killer && now - a.lastHit.at <= PVP.killMs;
+    Object.assign(a, { x, y, z, pAt: now, dead: true, lastHit: null, mobs: [] });
+    a.died = { zone, x, y, z, at: now };
+    if (a.wallet) (this.deaths ??= new Map()).set(a.wallet, a.died);
+    const counted = bucket(a, "deaths", DEATHS, 1 / DEATH_EVERY_S, 1, now);
+    this.save(ws, a);
+    const stacks = counted ? cleanItems(items) : [];
+    let c = null;
+    if (stacks.length) {
+      const chests = await this.chestList(), owner = a.wallet ?? `g:${a.id}`;
+      const gone = (old) => { chests.delete(old.id); this.zoneCast(old.zone, ["chestgone", old.id, null]); };
+      for (const old of [...chests.values()]) if (old.owner === owner) gone(old); // (one open chest each)
+      c = { id: crypto.getRandomValues(new Uint32Array(1))[0] >>> 1 || 1, zone, x, y, z, until: now + CHEST_MS, who: a.name, owner, items: stacks };
+      chests.set(c.id, c);
+      while (chests.size > MAX_CHESTS) gone([...chests.values()].reduce((p, q) => (q.until < p.until ? q : p)));
+      this.zoneCast(zone, ["chest", c.id, c.x, c.y, c.z, c.until, c.who]);
+      await this.saveChests();
+    }
+    this.send(ws, counted ? ["dropped", c?.id ?? 0] : ["dropno", "Knocked out again so soon: this time you keep what you carry."]);
+    const left = c ? `: ${byPlayer ? "their loot chest waits" : "their things wait in a chest"} where they fell` : "";
+    if (byPlayer) {
+      const k = this.players().find(([, o]) => o.id === killer)?.[1];
+      this.zoneCast(zone, ["sys", `${k?.name ?? "Someone"} beat ${a.name}${left}.`]);
+    } else if (c) this.near(zone, x, z, ["sys", `${a.name} was knocked out${left}.`], ws);
+    if (zone !== "home") await this.move(ws, a, "home", now, true);
+  }
+  /// Revives are free before launch (no MinePayments to pay with) and while zones.js REVIVE_FREE says so.
+  reviveFree() {
+    return REVIVE_FREE || !this.env.PAYMENTS_ADDRESS;
+  }
+  /// The knock-out a revive would undo: this connection's own, or, for a game that came back on a new connection while
+  /// knocked out (its connection dropped as it paid, say), its wallet's last one, for DEATH_KEEP_MS.
+  deathOf(a) {
+    if (a.dead) return a.died ?? null;
+    const d = a.wallet ? this.deaths?.get(a.wallet) : null;
+    return d && Date.now() - d.at < DEATH_KEEP_MS ? d : null;
+  }
+  /// ["revive", txHash]: knocked out on the home planet, the player gets up again where they fell (zones.js
+  /// REVIVE_PRICE). Free before launch and while REVIVE_FREE (no hash needed); otherwise it takes a payment that
+  /// checks out as a ticket's does (paidBy: this signed-in wallet's, kind 2, at least REVIVE_PRICE, at most 3 hours
+  /// old) and has never paid for a revive before (`revTx:<hash>`, kept for good; written only once it has revived
+  /// someone). Answers ["revived", x, y, z, txHash] (the room has them there, up, so their next position is no jump),
+  /// or ["reviveno", why, txHash, retry]: retry 1, the chain couldn't be read (the same hash may do later); 2, the
+  /// payment wasn't used (they're up, or not at home): it can still pay for a revive within 3 hours; 0, never.
+  async revive(ws, a, hash) {
+    if (!a.ready) return;
+    const env = this.env, now = Date.now();
+    const h = typeof hash === "string" ? hash : null;
+    const no = (why, retry = 0) => this.send(ws, ["reviveno", why, h, retry]);
+    if (!bucket(a, "revs", 4, 1 / 5, 1, now)) {
+      this.save(ws, a);
+      return no("One revive at a time: try again in a few seconds.", 1);
+    }
+    this.save(ws, a);
+    const died = this.deathOf(a);
+    if (!died) return no("You're not knocked out.", 2);
+    if (died.zone !== "home" || a.zone !== "home") return no("No revives in the zones: knocked out there, you respawn at home.", 2);
+    if (this.reviveFree()) return this.revived(ws, a, died, null);
+    if (!a.wallet) return no("Sign in to earn (M) to pay for a revive.");
+    if (!h || !/^0x[0-9a-fA-F]{64}$/.test(h)) return no("That isn't a transaction.");
+    if (!env.CHAIN_RPC) return no("Revives can't be paid for yet.");
+    const key = `revTx:${h.toLowerCase()}`;
+    this.payChecks ??= new Set(); // (hashes being checked right now: the same one sent twice is checked once)
+    if (this.payChecks.has(key) || (await this.ctx.storage.get(key))) return no("That payment has already paid for a revive.");
+    this.payChecks.add(key);
+    const wallet = a.wallet;
+    try {
+      const r = await this.paidBy(h, wallet, REVIVE_KIND_N, BigInt(REVIVE_PRICE) * 10n ** 18n, {
+        other: "That payment came from another wallet: pay from the wallet you signed in with.",
+        kind: "That payment wasn't for a revive.",
+        less: `A revive costs ${REVIVE_PRICE.toLocaleString("en-US")} $MINE: that payment was less.`,
+        old: "That payment is too old to pay for a revive (over 3 hours).",
+      });
+      if (!r.ok) return no(r.why, r.retry ? 1 : 0);
+      // (Still knocked out there, and signed in as that wallet? They may have respawned while the chain was read.)
+      const still = this.deathOf(a);
+      if (a.wallet !== wallet || still?.at !== died.at || a.zone !== "home") return no("You were up again before the payment was checked: it's kept for your next revive (within 3 hours).", 2);
+      await this.ctx.storage.put(key, wallet);
+      this.revived(ws, a, died, h);
+    } catch (e) {
+      console.log("revive check failed", e?.shortMessage ?? e?.message ?? e);
+      no("Couldn't check that payment right now. Try again in a moment.", 1);
+    } finally {
+      this.payChecks.delete(key);
+    }
+  }
+  /// Up again where they fell: the room has them there (so their next position is no jump, and no teleport).
+  revived(ws, a, died, hash) {
+    Object.assign(a, { x: died.x, y: died.y, z: died.z, pAt: Date.now(), dead: false, died: null, lastHit: null, mobs: [] });
+    if (a.wallet) this.deaths?.delete(a.wallet);
+    this.save(ws, a);
+    this.send(ws, ["revived", died.x, died.y, died.z, hash]);
+  }
+  /// Opening a loot chest: the first player on its planet close enough (and up) takes everything in it, once; the one
+  /// who fell as well as anyone.
   async loot(ws, a, id) {
     if (!a.ready) return;
     const chests = await this.chestList();
     const c = chests.get(id);
     if (!c || c.zone !== a.zone) return this.send(ws, ["lootno", id, "That chest is gone."]);
-    if (a.dead || wrapDist(a.x, a.z, c.x, c.z) > PVP.chestReach || Math.abs(a.y - c.y) > 5) return this.send(ws, ["lootno", id, "Get closer to the chest."]);
+    if (a.dead) return this.send(ws, ["lootno", id, "You're knocked out."]);
+    if (wrapDist(a.x, a.z, c.x, c.z) > CHEST_REACH || Math.abs(a.y - c.y) > 5) return this.send(ws, ["lootno", id, "Get closer to the chest."]);
     chests.delete(id); // (before anything waits: a second try finds nothing)
     this.send(ws, ["looted", id, c.items, c.who]);
     this.zoneCast(c.zone, ["chestgone", id, a.name], ws);

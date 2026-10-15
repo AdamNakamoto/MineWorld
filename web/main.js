@@ -1,15 +1,18 @@
 // MineWorldCraft: the game loop. Walking, mining, placing, fighting, the HUD, and wiring the world, the room
 // (net.js), the chain (chain.js) and the Mining Site panel together. The rocket (rocket.js) flies between the home
-// planet and the zones (zones.js): Deepvein (2x $MINE), Cinderfall (the boss, boss.js) and Red Mesa (PvP, with loot
-// chests, chests.js).
+// planet and the zones (zones.js): Deepvein (2x $MINE), Cinderfall (the boss, boss.js) and Red Mesa (PvP). Knocked
+// out anywhere, you drop everything in a loot chest (chests.js); at home you can revive where you fell.
 
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { BLOCKS, AIR, WATER, TOOLS, HAND_DAMAGE, breakTime, itemName } from "./blocks.js";
 import { wrapDelta, SPAWN, REACH, ATTACK_MS, DAY_MS, TOWN, isNight, MOB_KINDS, UNDERGROUND_Y, CHUNK, wrap } from "./rules.js";
-import { ZONES, zoneOf, landing, spawnOf, protectedIn, calmAt, pvpAt, BOSS, PVP, ROCKET_REACH, PAD_R } from "./zones.js";
+import {
+  ZONES, zoneOf, landing, spawnOf, protectedIn, calmAt, pvpAt, BOSS, PVP, ROCKET_REACH, PAD_R, CHEST_MS, CHEST_REACH,
+  REVIVE_PRICE, REVIVE_KIND,
+} from "./zones.js";
 import { createRocket, openCard, cardOpen, closeCard, drawCard, setTicketsFree, ticketsAreFree } from "./rocket.js";
 import { createBoss } from "./boss.js";
-import { createChests } from "./chests.js";
+import { createChests, lootLabel } from "./chests.js";
 import { OFFICE } from "./worldgen.js";
 import { makeAtlas, iconFor, faceTiles, tileOf, ATLAS_TILES } from "./textures.js";
 import { createWorld, keyOf, MAX_RADIUS } from "./world.js";
@@ -588,34 +591,166 @@ function hurt(n) {
     $("dead").hidden = false;
   }
 }
-/// Knocked out. In a PvP zone, right after another player's hit, everything you carry drops in a loot chest (the
-/// room checks it was that player's knock-out, and makes the chest; the bag is emptied once it says so).
+// ---------------------------------------------------------------- knocked out
+// Whatever knocks you out (a fall, monsters, the boss, another player, the void), everything you carry, armor too,
+// drops in a loot chest where you fell, for anyone on that planet (you too) to open for CHEST_MS: the world server
+// makes it from what the game reports, and offline the game keeps it itself. Knocked out at home: respawn in town
+// (free) or revive where you fell, in time to open your own chest if nobody has (REVIVE_PRICE $MINE, paid like a
+// rocket ticket: MinePayments kind 2, checked by the room; free before launch, while the room says so, and offline;
+// guests can't pay). Knocked out in a zone, the room sends you home at once ("zoned"); your things stay there.
 let lastPvp = null; // { by, at }: the last hit from another player
+/// The knock-out you're down from: { zone, x, y, z, by (the player who did it, in a PvP zone), byName, stacks (what
+/// dropped), kept (the room made no chest, so you kept it) }, or null.
+let died = null;
+let reviveFree = false; // the room says revives are free (before launch, or zones.js REVIVE_FREE)
+let reviving = false;
 function knockedOut() {
-  const pvp = zoneOf(zone).pvp && lastPvp && performance.now() - lastPvp.at < PVP.killMs - 500 && net?.online;
-  $("respawn").textContent = zone === "home" ? "Back to town" : `Back to ${ZONES[zone].name}'s pad`;
-  if (pvp) {
-    const who = net.others.get(lastPvp.by)?.name ?? "Another player";
-    $("deadText").textContent = `${who} beat you. Everything you carried drops in a loot chest where you fell: the first to open it takes it all (it waits ${PVP.chestMs / 60_000} minutes).`;
-    net.pvpDead(lastPvp.by, inv.stacks());
-  } else $("deadText").textContent = "You keep everything you carry.";
+  const by = zoneOf(zone).pvp && lastPvp && performance.now() - lastPvp.at < PVP.killMs - 500 && net?.online ? lastPvp.by : null;
   lastPvp = null;
+  const stacks = inv.stacks();
+  died = { zone, x: player.pos.x, y: player.pos.y, z: player.pos.z, by, byName: by === null ? null : net.others.get(by)?.name ?? "Another player", stacks, kept: false };
+  inv.clearAll();
+  if (net) net.dead(stacks, died.x, died.y, died.z, by);
+  else if (stacks.length) dropLocal(stacks);
+  setReviveStatus(null);
+  drawDead();
 }
-$("respawn").addEventListener("click", () => {
-  const sp = spawnOf(zone);
-  player.pos.set(sp.x, sp.y, sp.z);
+/// The knocked-out screen: what happened to your things, "Respawn at spawn", and at home "Revive here".
+function drawDead() {
+  if (!died) return;
+  const Z = ZONES[died.zone], mins = CHEST_MS / 60_000, home = died.zone === "home";
+  const things = !died.stacks.length ? "You carried nothing, so nothing dropped." : died.kept ? "You keep what you carry this time." : null;
+  const who = died.byName ? `${died.byName} beat you` : "You were knocked out";
+  // (Offline the chest is yours alone.)
+  $("deadText").textContent = home
+    ? things ?? `Everything you carried, armor too, is in a chest where you fell${net ? `: anyone can open it for ${mins} minutes, so get there first` : `, for ${mins} minutes`}.`
+    : `${who} in ${Z.name}: back to the home planet. ${things ?? `Your things stay there for ${mins} minutes, in a chest ${net ? "anyone there can open" : "where you fell"}.`}`;
+  // Revive: home only. Offline it's free; online free before launch (or while the room says so), else paid, by a
+  // signed-in wallet only.
+  const paid = !!net && !reviveFree;
+  const can = home && zone === "home" && (!paid || ledger.signedIn);
+  const spare = paid && ledger.signedIn && spareRevive(ledger.wallet);
+  $("revive").hidden = !can;
+  $("revive").disabled = reviving;
+  $("revive").textContent = !net ? "Revive here (free offline)"
+    : !paid ? (prelaunch ? "Revive here (free until $MINE launches)" : "Revive here (free)")
+    : spare ? "Revive here (already paid)" : `Revive here: ${REVIVE_PRICE.toLocaleString("en-US")} $MINE`;
+  $("reviveNote").hidden = !(home && zone === "home" && paid && !ledger.signedIn);
+  $("reviveNote").textContent = `Signed-in players can revive where they fell for ${REVIVE_PRICE.toLocaleString("en-US")} $MINE.`;
+  $("respawn").textContent = "Respawn at spawn";
+  $("respawn").title = "Free: the town square on the home planet, with full health and food";
+  $("revive").title = "Back on your feet where you fell, with full health and food";
+}
+function setReviveStatus(text, kind = "") {
+  $("reviveStatus").hidden = !text;
+  $("reviveStatus").className = `card-status ${kind}`;
+  $("reviveStatus").textContent = text ?? "";
+}
+/// Back on your feet at `at` (facing `yaw`), with full health and food.
+function standUp(at, yaw) {
+  player.pos.set(at.x, at.y, at.z);
   player.vel.set(0, 0, 0);
-  player.yaw = 0;
+  player.yaw = yaw;
   player.pitch = 0;
   player.health = 20;
   player.alive = true;
   player.fallFrom = null;
+  died = null;
+  reviving = false;
+  setReviveStatus(null);
   $("dead").hidden = true;
   mobs.clear();
-  net?.respawn();
   hunger.reset();
   drawHearts();
-});
+}
+/// "Respawn at spawn": the town square on the home planet (from a zone too: the room has already sent you home, or,
+/// offline, the game flies you there now).
+function respawn() {
+  if (player.alive) return;
+  const sp = spawnOf("home");
+  if (zone !== "home") switchZone("home", sp);
+  standUp(sp, 0);
+  net?.respawn();
+}
+$("respawn").addEventListener("click", respawn);
+/// "Revive here": up again where you fell (home only). Offline it's free; online the room stands you there, free or
+/// once it has checked your payment.
+async function revive() {
+  if (player.alive || !died || reviving || died.zone !== "home" || zone !== "home") return;
+  if (!net) return standUp(died, player.yaw);
+  reviving = true;
+  drawDead();
+  try {
+    const r = reviveFree ? await net.revive(null) : await paidRevive((text) => setReviveStatus(text));
+    if (r[0] !== "revived") throw new Error(r[1]);
+    if (!player.alive) standUp({ x: r[1], y: r[2], z: r[3] }, player.yaw);
+    toast("Back on your feet where you fell.", "good");
+  } catch (e) {
+    setReviveStatus(explain(e), "bad");
+  } finally {
+    reviving = false;
+    drawDead();
+  }
+}
+$("revive").addEventListener("click", () => revive());
+// A revive paid for but not used (the connection dropped as it was checked, or you respawned first) is kept here, and
+// pays for the next one within 3 hours (the room takes a payment that old, once).
+const revKey = (w) => `mwc:revpay:${w.toLowerCase()}`;
+function spareRevive(w) {
+  try { const v = JSON.parse(localStorage.getItem(revKey(w))); return v?.hash && Date.now() - v.at < 2.9 * 3600_000 ? v.hash : null; } catch { return null; }
+}
+function setSpare(w, hash) {
+  try { hash ? localStorage.setItem(revKey(w), JSON.stringify({ hash, at: Date.now() })) : localStorage.removeItem(revKey(w)); } catch {}
+}
+/// Pays for a revive (MinePayments kind 2, approving exactly REVIVE_PRICE first; or a spare one) and hands the room
+/// the transaction: resolves with its answer. Tried again a couple of times while the room can't read the chain yet.
+async function paidRevive(step) {
+  if (!chain?.hasPayments) throw new Error("Revives can't be paid for on this chain yet.");
+  if (!net?.online) throw new Error("The world server is offline right now, and it checks revives. Try again soon.");
+  if (!ledger.signedIn) throw new Error("Sign in to earn first (Mining Site panel, M) to pay for a revive.");
+  if (chain.account?.toLowerCase() !== ledger.wallet?.toLowerCase()) throw new Error("Log in with the wallet you signed in with.");
+  const wallet = ledger.wallet;
+  let hash = spareRevive(wallet);
+  if (hash) step("Using the revive you paid for earlier…");
+  else {
+    try {
+      ({ hash } = await chain.pay(REVIVE_KIND, BigInt(REVIVE_PRICE) * 10n ** 18n, { step, what: " to revive", onHash: (h) => setSpare(wallet, h) }));
+    } catch (e) {
+      setSpare(wallet, null); // (it never paid)
+      throw e;
+    }
+    step("Paid. The world server is checking the payment…");
+  }
+  for (let tries = 0; ; tries++) {
+    const r = await net.revive(hash);
+    if (r[0] === "revived") { setSpare(wallet, null); return r; }
+    if (!r[3]) setSpare(wallet, null); // (it never will: 2 keeps it for later)
+    if (r[3] !== 1 || tries >= 2) return r;
+    await new Promise((ok) => setTimeout(ok, 3000));
+  }
+}
+// Offline (no world server), the game keeps your loot chest itself: one at a time, CHEST_MS, on the planet you fell.
+const localChests = new Map(); // id (negative) -> { id, zone, x, y, z, until, items }
+let localSeq = 0;
+function dropLocal(stacks) {
+  for (const id of localChests.keys()) chests.remove(id);
+  localChests.clear();
+  const y = died.y >= 1 ? died.y : world.topAt(Math.floor(died.x), Math.floor(died.z)) + 1; // (out of the world: on top)
+  const c = { id: -(++localSeq), zone, x: died.x, y, z: died.z, until: Date.now() + CHEST_MS, items: stacks };
+  localChests.set(c.id, c);
+  chests.add(c.id, c.x, c.y, c.z, c.until, null);
+}
+function lootLocal(id) {
+  const c = localChests.get(id);
+  if (!c || Date.now() > c.until) { localChests.delete(id); chests.remove(id); return toast("That chest is gone.", "bad"); }
+  if (Math.hypot(wrapDelta(c.x - player.pos.x), wrapDelta(c.z - player.pos.z)) > CHEST_REACH || Math.abs(c.y - player.pos.y) > 5) return toast("Get closer to the chest.", "bad");
+  localChests.delete(id);
+  chests.remove(id);
+  let left = 0;
+  for (const [item, n, d] of c.items) left += inv.give(item, n, d);
+  sfx.chest();
+  toast(`You got your things back.${left ? " Your bag was full: some of it was left behind." : ""}`, "gold");
+}
 
 // ---------------------------------------------------------------- the room
 let net = null, serverOffset = 0;
@@ -654,18 +789,25 @@ if (url) {
       // Before launch the room keeps a practice ledger (reset at launch), and trips and the shop are free.
       prelaunch = !!flags.practice;
       setTicketsFree(flags.ticketsFree, prelaunch);
+      reviveFree = !!flags.reviveFree;
+      drawDead();
       drawLedger();
       $("onlineN").textContent = `● ${count} online`;
       if (ledger.wallet) tryResume(ledger.wallet);
       voice?.reconnected();
       if (inv.armorPoints() || heldNow) sendGear(true);
     },
-    joined(id, name, landed) { sysLine(landed ? `${name} landed here by rocket` : `${name} joined the game`); },
-    left(id, name, to) { sysLine(to ? `${name} flew to ${ZONES[to]?.name ?? "another planet"}` : `${name} left the game`); voice?.left(id); },
+    joined(id, name, how, from) {
+      sysLine(how === "landed" ? `${name} landed here by rocket`
+        : how === "ko" ? `${name} was knocked out in ${ZONES[from]?.name ?? "a zone"} and is back home` : `${name} joined the game`);
+    },
+    left(id, name, to, ko) {
+      sysLine(ko ? `${name} was knocked out and sent home` : to ? `${name} flew to ${ZONES[to]?.name ?? "another planet"}` : `${name} left the game`);
+      voice?.left(id);
+    },
     gone(id) { voice?.left(id); },
-    /// The room has you on planet k (after a flight; or it refused one and you're still where it says).
     /// The room has you on planet k: the answer to a flight; or a flight it refused; or, after a reload or a sign-in,
-    /// the zone your wallet was on (the room remembers it: a ticket has no time limit).
+    /// the zone your wallet was on (the room remembers it: a ticket has no time limit); or, knocked out in a zone, home.
     zoned(k, at) {
       if (k === zone) {
         // Not after our own flight: whatever was asked meanwhile may have been answered for another planet.
@@ -673,9 +815,10 @@ if (url) {
         return;
       }
       if (trip) trip.to = k; // (a flight the room refused: the rocket lands where the room has you)
-      else toast(`You're on ${ZONES[k].name}${k === "home" ? "" : ", where you left off"}.`, "good");
+      else if (player.alive) toast(`You're on ${ZONES[k].name}${k === "home" ? "" : ", where you left off"}.`, "good");
       switchZone(k, at ? { ...at, yaw: player.yaw } : landing(k));
       drawZoneTag();
+      drawDead();
     },
     regrow(k) {
       if (k !== zone) return;
@@ -705,11 +848,19 @@ if (url) {
       if (why === "safe") showTarget("No fighting on the landing pad", 900);
       else if (why === "nopvp") showTarget(zoneOf(zone).rule, 1200);
     },
-    dropped(id) {
-      inv.clearAll();
-      if (id) toast("Everything you carried is in the loot chest where you fell.", "bad");
+    /// The room made your loot chest where you fell (0: you carried nothing).
+    dropped() {},
+    /// The room made no chest (knocked out again so soon): you keep what you carried.
+    dropNo() {
+      if (!died || died.kept) return;
+      died.kept = true;
+      let left = 0;
+      for (const [item, n, d] of died.stacks) left += inv.give(item, n, d);
+      if (left) toast("Your bag was full: some of your things were lost.", "bad");
+      drawDead();
     },
-    dropNo() { $("deadText").textContent = "You keep everything you carry."; },
+    /// A revive the room answered after the game gave up waiting.
+    revive(m) { if (m[0] === "revived" && !player.alive && died?.zone === "home" && zone === "home") standUp({ x: m[1], y: m[2], z: m[3] }, player.yaw); },
     chest(id, x, y, z, until, who) { chests.add(id, x, y, z, until, who); },
     chests(list) { chests.set(list); },
     chestGone(id, by) { chests.remove(id); if (by) sysLine(`${by} opened a loot chest.`); },
@@ -765,6 +916,7 @@ if (url) {
       drawLedger();
       if (panel?.worn !== null && panel?.worn !== undefined) net.wear(panel.worn);
       resendTickets(wallet);
+      drawDead();
     },
     signedout(reason) {
       ledger.signedIn = false;
@@ -773,6 +925,7 @@ if (url) {
       dropBoost();
       try { localStorage.removeItem(`mwc:tok:${ledger.wallet?.toLowerCase()}`); } catch {}
       drawLedger();
+      drawDead();
       toast(reason);
     },
   });
@@ -1253,8 +1406,12 @@ function useThing(th, dt, now) {
     if (click) { talkLatch = true; openRocket(); }
   } else if (th.kind === "chest") {
     const left = Math.max(0, th.chest.until - (Date.now() + serverOffset));
-    showTarget(`${th.chest.who}'s loot · click to open · ${Math.floor(left / 60_000)}:${String(Math.floor((left % 60_000) / 1000)).padStart(2, "0")}`, 300);
-    if (click) { talkLatch = true; net ? net.loot(th.chest.id) : toast("Loot chests need the world server."); }
+    showTarget(`${lootLabel(th.chest.who)} · click to open · ${Math.floor(left / 60_000)}:${String(Math.floor((left % 60_000) / 1000)).padStart(2, "0")}`, 300);
+    if (click) {
+      talkLatch = true;
+      if (th.chest.id < 0) lootLocal(th.chest.id); // (offline: your own, kept by the game)
+      else if (net) net.loot(th.chest.id);
+    }
   } else if (th.kind === "boss") {
     showTarget(`${BOSS.name} · ${Math.max(0, boss.state?.hp ?? 0).toLocaleString()} / ${BOSS.hp.toLocaleString()}`, 300);
     if (mining && player.alive && ready()) {
@@ -1476,7 +1633,8 @@ function switchZone(k, spot = landing(k)) {
   synced.clear();
   mobs.clear();
   confirmed.clear();
-  chests.clear();
+  chests.clear(); // (the room sends the new planet's)
+  for (const c of localChests.values()) if (c.zone === k && c.until > Date.now()) chests.add(c.id, c.x, c.y, c.z, c.until, null);
   boss.setZone(k);
   rocket.setZone(k);
   sky.setColours(ZONES[k].sky);
@@ -1798,6 +1956,9 @@ if (local) {
     setMining, signIn, dressMe, nextView,
     // The rocket's zones, for testing: where you are, fly (with the take-off) or switch at once, the boss, the chests.
     get zone() { return zone; }, get trip() { return trip; }, fly, switchZone, openRocket, rocket, boss, chests, takeHit,
+    // Knock-outs, for testing: hurt(99) knocks you out; the screen's two buttons; what dropped; offline chests.
+    hurt, respawn, revive, get died() { return died; }, get reviveFree() { return reviveFree; }, localChests,
+    loot: (id) => (id < 0 ? lootLocal(id) : net?.loot(id)),
     get lookingAt() { return lookingAt; },
     // Moving, for testing: the keys held, a movement tick (run them by hand to measure speeds), its state, your miner.
     keys, stickState, playerTick, move, hand, hunger, FEEL, settings, drawnPos, get me() { return me; }, get view() { return view; },

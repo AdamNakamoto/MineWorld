@@ -16,6 +16,9 @@
 // $MINE amounts from the room (earn, signedin, boost, bossreward) are in ledger units, ten-thousandths of a $MINE
 // (rewards.js UNIT). Your NFT boost (boosts.js) comes as ["boost", ...] whenever it changes. Your rocket tickets
 // (zones.js) come as ["tickets", { zone: count }] after signing in and whenever they change.
+//
+// Knocked out (zones.js CHEST_MS), the game reports it once with what you carried (dead()); the room leaves it in a
+// loot chest where you fell and, in a zone, sends you home ("zoned"). At home, revive() asks to get up there again.
 
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { createAvatar } from "./avatar.js";
@@ -84,6 +87,7 @@ export function createNet(url, scene, h) {
   let pingTimer = null;
   const waiting = new Map(); // reply kind -> resolve
   const ticketWaits = new Map(); // payment hash (lower case) -> resolve: the room's answer about that ticket
+  const reviveWaits = new Map(); // payment hash (lower case, or "free") -> resolve: the room's answer about a revive
 
   function send(msg) {
     if (open) ws.send(JSON.stringify(msg));
@@ -200,17 +204,18 @@ export function createNet(url, scene, h) {
         break;
       }
       case "join": {
-        // A join for someone already here is a new name or look, not a new arrival (m[9]: "landed" by rocket).
+        // A join for someone already here is a new name or look, not a new arrival (m[9]: "landed" by rocket, or "ko":
+        // knocked out on planet m[10] and sent home).
         const known = others.has(m[1]);
         add(m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
-        if (!known) h.joined?.(m[1], m[2], m[9] === "landed");
+        if (!known) h.joined?.(m[1], m[2], m[9] ?? null, m[10] ?? null);
         break;
       }
       case "leave": {
-        // (m[2]: the planet they flew to, if they didn't just leave the game.)
+        // (m[2]: the planet they flew to, if they didn't just leave the game; m[3] "ko": knocked out, sent home.)
         const o = others.get(m[1]);
         drop(m[1]);
-        if (o) h.left?.(m[1], o.name, m[2] ?? null);
+        if (o) h.left?.(m[1], o.name, m[2] ?? null, m[3] === "ko");
         break;
       }
       case "voices": h.voices?.(m[1]); break;
@@ -264,6 +269,16 @@ export function createNet(url, scene, h) {
       case "looted": h.looted?.(m[1], m[2], m[3]); break;
       case "lootno": h.lootNo?.(m[1], m[2]); break;
       case "tickets": h.tickets?.(m[1] && typeof m[1] === "object" ? m[1] : {}); break;
+      case "revived": case "reviveno": {
+        // ["revived", x, y, z, hash] / ["reviveno", why, hash, retry]
+        const key = String((k === "revived" ? m[4] : m[2]) ?? "free").toLowerCase();
+        const w = reviveWaits.get(key);
+        reviveWaits.delete(key);
+        if (k === "revived") lastSent = unsent(); // (stood where you fell: say so at once)
+        if (w) w(m);
+        else h.revive?.(m); // (an answer that came after giving up waiting)
+        break;
+      }
       case "ticketok": case "ticketno": {
         // ["ticketok", zone, count, hash] / ["ticketno", zone, why, hash, retry]
         const key = String(m[3] ?? "").toLowerCase();
@@ -391,8 +406,24 @@ export function createNet(url, scene, h) {
     },
     bossHit: (dmg) => send(["bosshit", dmg]),
     pvpHit: (target, dmg) => send(["pvp", target, dmg]),
-    /// Knocked out by player `by` in a PvP zone, carrying `items` ([item, count, wear] stacks).
-    pvpDead: (by, items) => send(["pvpdead", by, items]),
+    /// Knocked out at (x, y, z), carrying `items` ([item, count, wear] stacks, armor too), maybe by player `by` (a PvP
+    /// zone): the room answers ["dropped", chestId] (or ["dropno", why]) and, in a zone, sends you home.
+    dead: (items, x, y, z, by = null) => send(["dead", items, Math.round(x * 100) / 100, Math.round(y * 100) / 100, Math.round(z * 100) / 100, by]),
+    /// Get up where you fell (home only): paid by transaction `hash` (MinePayments kind 2), or null while revives are
+    /// free. Resolves with the room's ["revived", x, y, z, hash] or ["reviveno", why, hash, retry] (retry 1: worth
+    /// sending again; 2: the payment wasn't used and can pay for a later revive).
+    revive(hash = null, ms = 45_000) {
+      const key = (hash ?? "free").toLowerCase();
+      return new Promise((ok) => {
+        reviveWaits.set(key, ok);
+        send(["revive", hash]);
+        setTimeout(() => {
+          if (reviveWaits.get(key) !== ok) return;
+          reviveWaits.delete(key);
+          ok(["reviveno", "The world server didn't answer. Try again.", hash, 1]);
+        }, ms);
+      });
+    },
     loot: (chestId) => send(["loot", chestId]),
     chunks: (keys) => { for (let i = 0; i < keys.length; i += 48) send(["chunks", keys.slice(i, i + 48)]); },
     breakBlock: (x, y, z) => send(["break", x, y, z]),

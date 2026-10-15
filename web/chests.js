@@ -1,10 +1,14 @@
-// Loot chests in a PvP zone (zones.js PVP): a player beaten there leaves everything they carried in a chest where they
-// fell. The world server keeps it for a few minutes and hands it, once, to the first player who opens it (click it).
-// This draws them, stood on the curved planet, and lets them go when their time is up.
+// Loot chests (zones.js CHEST_MS): a player knocked out anywhere leaves everything they carried in a chest where they
+// fell. The world server keeps it for a few minutes and hands it, once, to the first player on that planet who opens it
+// (click it), the one who fell too. Offline, the game keeps your own chest itself (main.js). This draws them, stood on
+// the curved planet, and lets them go when their time is up.
 
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { place } from "./planet.js";
 import { wrapDelta } from "./rules.js";
+
+/// What a chest says over it: whose loot it is (`who` null: your own, offline).
+export const lootLabel = (who) => (who === null ? "Your loot" : `${who}'s loot`);
 
 function chestModel(who) {
   const g = new THREE.Group();
@@ -32,7 +36,7 @@ function chestModel(who) {
   x.font = "600 22px 'Pixelify Sans', ui-monospace, monospace";
   x.textAlign = "center";
   x.textBaseline = "middle";
-  x.fillText(`${who}'s loot`, 128, 25, 236);
+  x.fillText(lootLabel(who), 128, 25, 236);
   const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false }));
   tag.scale.set(1.7, 0.32, 1);
   tag.position.y = 1.25;
@@ -65,7 +69,7 @@ export function createChests(scene) {
 
   return {
     add, remove, clear,
-    /// The server's list on arrival: [[id, x, y, z, until, who], ...].
+    /// The server's list on arrival: [[id, x, y, z, until, who], ...] (every chest shown before goes).
     set(list) { clear(); for (const c of list) add(...c); },
     get count() { return live.size; },
     /// `now`: the server's clock. Chests past their time go; the rest glow and turn a little.

@@ -166,8 +166,13 @@
   <div id="dead" class="overlay dead" hidden>
     <div class="sheet small-sheet">
       <h2>Knocked out!</h2>
-      <p class="muted" id="deadText">You keep everything you carry.</p>
-      <button id="respawn" class="btn big">Back to town</button>
+      <p class="muted" id="deadText"></p>
+      <div class="dead-buttons">
+        <button id="respawn" class="btn big">Respawn at spawn</button>
+        <button id="revive" class="btn big gold" hidden>Revive here</button>
+      </div>
+      <p class="note small muted" id="reviveNote" hidden></p>
+      <p class="card-status" id="reviveStatus" role="status" hidden></p>
     </div>
   </div>
 

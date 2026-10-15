@@ -141,16 +141,42 @@ only if the transaction succeeded; it holds a `Paid` log from `PAYMENTS_ADDRESS`
 kind 1 and amount at least that zone's price; its block is at most 3 hours old; and the hash never bought a ticket
 before (`tixTx:<hash>`, kept for good; the same hash sent twice at once is checked once). `useTicket` takes one on the
 way out; the way home is free; guests can't fly out. The game keeps a paid hash the room hasn't confirmed and sends it
-again after the next sign-in. Protocol additions (client → room):
+again after the next sign-in.
+
+Knock-outs (`web/zones.js` `CHEST_MS`, `REVIVE_*`): any knock-out, anywhere (falls, monsters, the boss, PvP, the void),
+drops the whole inventory, armor included with its wear, as a loot chest where the player fell. The game reports it once
+(`["dead", stacks, x, y, z, killer]`) and empties its bag; the room makes the chest only for a player who is up (then
+`a.dead` until a respawn or revive: one chest per knock-out), cleans the stacks (`cleanItems`, at most `CHEST_STACKS` 40),
+takes the reported spot only if it's within reach of the last heard position (else its own; a fall out of the world is
+lifted onto the ground), keeps at most one open chest per player (wallet, or guest connection; a new one replaces the
+old), allows three in a row and then one every 20 s (the rest make none and the game keeps what it carried: `dropno`) and
+200 in all, and stores them under `chests`. A chest lasts `CHEST_MS` (5 minutes) and goes, once, to the first player on
+that planet within `CHEST_REACH` who opens it, its owner included. Knocked out in a zone, the room sends the player home
+at once (`move(..., ko)`: to the town square, still down, the wallet's zone forgotten); the chest stays in the zone; no
+revive there; the ticket out was used, so going back needs a new one. At home the game offers "Respawn at spawn" (free)
+and "Revive here": `REVIVE_PRICE` 420 $MINE ($1 at a $50K market cap) paid with `MinePayments.pay(2, price, ref)` (kind
+2 "revive", nothing burned), then `["revive", txHash]`; the room checks the receipt as `buyTicket` does (shared
+`paidBy`: success, a Paid log from `PAYMENTS_ADDRESS` by the signed-in wallet, kind 2, amount at least the price, at most
+3 hours old) and that the hash never revived anyone (`revTx:<hash>`, written only when it does), then stands the player
+at the stored death spot (`a.died`, and per wallet in memory for 30 minutes, for a game that reconnected while down), so
+the next position is no jump. Free (no hash) before launch (no `PAYMENTS_ADDRESS`), while `REVIVE_FREE`, and offline
+(the game keeps its own chest); guests can't pay. A valid payment the room didn't use (the player was up first) answers
+retry 2, and the game keeps it for the next revive.
+
+Protocol additions (client → room):
 `["hello", {zone}]`, `["zone", key]` (fly), `["ticket", txHash, zone]`, `["bosshit", damage]`, `["pvp", target, damage]`,
-`["pvpdead", killer, stacks]`, `["loot", chestId]`; (room → client): `["zoned", key, players, at]`, `["tickets", { zone:
+`["dead", stacks, x, y, z, killer]` (any knock-out; a game from before may still send `["pvpdead", killer, stacks]`),
+`["respawn"]`, `["revive", txHash | null]`, `["loot", chestId]`; (room → client): `["zoned", key, players, at]`, `["tickets", { zone:
 count }]` (after signing in, buying and using one), `["ticketok", zone, count, txHash]`, `["ticketno", zone, why, txHash,
 retry]` (retry 1: the chain couldn't be read, the same hash may do later), `["count", n]`, `["sys", text]`,
 `["regrow", key]`, `["boss", hp, max, act, t0, ms, fromX, fromZ, toX, toZ, target, aim, downUntil]`, `["bosshp", hp, by,
 counted]`, `["bossreward", units, share%, items, signedIn]`, `["pvphit", from, damage, dirX, dirZ]`, `["pvpno", target,
-why]`, `["dropped", chestId]`, `["dropno", why]`, `["chest", id, x, y, z, until, who]`, `["chests", list]`,
-`["chestgone", id, by]`, `["looted", id, stacks, who]`, `["lootno", id, why]`; `edits` carries the zone, `join` a "landed"
-flag and `leave` the planet flown to. The boss's moves are one message each (no per-frame traffic); its timers run only
+why]`, `["dropped", chestId]` (0: nothing dropped), `["dropno", why]`, `["chest", id, x, y, z, until, who]`, `["chests",
+list]` (every planet's, on joining and arriving), `["chestgone", id, by]` (`by` null: replaced), `["looted", id, stacks,
+who]`, `["lootno", id, why]`, `["revived", x, y, z, txHash]`, `["reviveno", why, txHash, retry]` (retry 1: the chain
+couldn't be read; 2: the payment wasn't used and can pay for a later revive; 0: never); `welcome`'s flags carry
+`reviveFree`; `edits` carries the zone, `join` a "landed" flag (or "ko" and the zone left, after a knock-out there) and
+`leave` the planet flown to (and "ko"). The boss's moves are one message each (no per-frame traffic); its timers run only
 while someone is in the fight.
 
 ## Ledger units and boosts on the wire

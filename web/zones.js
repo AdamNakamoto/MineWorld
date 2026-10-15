@@ -9,7 +9,9 @@
 // - Cinderfall, the boss zone: a volcanic world with an arena north of the pad, where Ashgrim, the Cinder Colossus,
 //   fights everyone in it at once. The world server runs the boss; the games animate it from what the server says.
 // - Red Mesa, the PvP zone: mesas and canyons where players can hit each other (nowhere else), except on the pad.
-//   A player beaten there drops everything they carry in a loot chest for the first to open it.
+//
+// Knocked out anywhere, a player drops everything they carry in a loot chest where they fell (CHEST_MS below). At
+// home they can revive on the spot (REVIVE_PRICE) or respawn in town; in a zone they're sent back home.
 //
 // Every zone's landing pad is in the middle of its planet; nobody mines, builds or fights within PAD_R of it.
 
@@ -28,6 +30,26 @@ import { ZONE_PAY, BOSS_POOL } from "./rewards.js";
 /// wallet (multiplayer/src/index.js buyTicket); its useTicket takes one on the way out. Guests can't fly out.
 /// TICKETS_FREE = true makes every trip free again (no buying: the server's useTicket always says yes).
 export const TICKETS_FREE = false;
+
+/// Knock-outs, everywhere (a fall, monsters, the boss, another player, the void): everything the player carries, the
+/// armor they wear too (with its wear), drops in a loot chest where they fell. The world server makes it from the
+/// game's report of a knock-out (one per knock-out, at most one open chest per player: a new one replaces the old),
+/// keeps it CHEST_MS and hands it, once, to the first player on that planet who opens it (the one who fell too).
+/// CHEST_REACH: how close you must be to open one; CHEST_STACKS: what one holds at most (36 slots and 4 armor pieces).
+export const CHEST_MS = 5 * 60_000;
+export const CHEST_REACH = 6;
+export const CHEST_STACKS = 40;
+
+/// Reviving: knocked out on the home planet, a player can get up again on the very spot they fell (with full health
+/// and food, as a respawn gives), in time to open their own chest if nobody has yet, instead of respawning in town
+/// (free). REVIVE_PRICE $MINE: $1 at a $50K market cap ($50,000 / 21,000,000 $MINE = $0.00238 a $MINE, so $1 is 420).
+/// Paid like a ticket: MinePayments.pay(REVIVE_KIND, price, ref) from the signed-in wallet (the "revive" kind: nothing
+/// burned, all to the treasury), then the world server checks the receipt and stands the player back where they fell
+/// (multiplayer/src/index.js revive). Never in a zone: knocked out there, you're sent home. Free before launch (no
+/// MinePayments), offline, and while REVIVE_FREE is true; guests can't pay, so otherwise they respawn in town.
+export const REVIVE_PRICE = 420;
+export const REVIVE_KIND = 2;
+export const REVIVE_FREE = false;
 
 export const PAD_R = 20; // nobody mines, builds or fights this close to a zone's landing pad
 export const PAD_S = 7.5; // the pad's own blocks (plates, rim, lamp posts) reach this far from its middle
@@ -73,7 +95,7 @@ export const ZONES = {
     key: "pvp", name: "Red Mesa", label: "PvP Zone", seed: 3000, ticket: 210, capMul: 1, pvp: true,
     rule: "PvP: other players can hit you here (not on the pad)",
     line: "Mesas and canyons where players fight each other. Mining and monsters work as at home.",
-    warn: "Other players can beat you here and take everything you carry: your whole inventory and the armor you wear.",
+    warn: "Other players can beat you here and take everything you carry: your whole inventory and the armor you wear. Knocked out, you're sent home and your things stay here.",
     pad: { x: 256, z: 256, y: 58 },
     mobs: { max: 3, everyMs: 20_000, always: false, hp: 1, damage: 1 },
     sky: { day: 0xeec39a, dusk: 0xf0884a, night: 0x160c1c },
@@ -89,7 +111,8 @@ export function landing(k) {
   const p = zoneOf(k).pad;
   return { x: p.x + 0.5, y: p.y + 1, z: p.z + 3.5, yaw: Math.PI };
 }
-/// Where a player starts and comes back after being knocked out: home's town square, or the zone's pad.
+/// Where a player starts (home's town square), and where `/spawn` takes you: there, or a zone's pad. (Knocked out
+/// anywhere, you respawn in town.)
 export function spawnOf(k) {
   return k === "home" || !isZone(k) ? { ...SPAWN, yaw: 0 } : landing(k);
 }
@@ -141,9 +164,9 @@ const onPath = (x, z) => Math.abs(wrapDelta(x - ARENA.x)) <= PATH.half + 1 && z 
 
 /// reach: how far (between the two players' positions as the server last heard them) a hit can come from;
 /// everyMs: the shortest time between two hits from one player (a sword swings every 500 ms);
-/// killMs: a knock-out counts as a PvP one (and drops a chest) only this soon after a checked hit from that player;
-/// chestMs: how long a loot chest stays; chestReach: how close you must be to open one; maxStacks: what a chest holds.
-export const PVP = { reach: 6.5, everyMs: 380, killMs: 6000, chestMs: 3 * 60_000, chestReach: 6, maxStacks: 40 };
+/// killMs: a knock-out counts as that player's (and names them) only this soon after a checked hit from them. (The
+/// loot chest is CHEST_MS, as for every knock-out.)
+export const PVP = { reach: 6.5, everyMs: 380, killMs: 6000 };
 /// Whether players can hurt each other at (x, z) in zone k: only in a PvP zone, and never on its pad.
 export const pvpAt = (k, x, z) => zoneOf(k).pvp && !onPad(k, x, z);
 
