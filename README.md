@@ -4,7 +4,7 @@ A tiny round planet of blocks in the browser: mine, fight monsters, build, meet 
 Robinhood Chain.
 
 Everything is original: the code, the block textures (drawn pixel by pixel in `web/textures.js`), the creatures, the
-I'M DIO characters and the town. No Minecraft code, textures, sounds or names are used, and the game says it isn't
+I'M DEGEN characters and the town. No Minecraft code, textures, sounds or names are used, and the game says it isn't
 affiliated with Mojang or Microsoft. Built on what worked in Courier World
 ([github.com/AdamNakamoto/courierworld](https://github.com/AdamNakamoto/courierworld)): plain HTML/JS with three.js,
 a Cloudflare Worker for the shared world, Foundry contracts reusing Courier's audited hook, NFT and voucher code.
@@ -27,9 +27,9 @@ a Cloudflare Worker for the shared world, Foundry contracts reusing Courier's au
 ./dev.sh
 ```
 
-Starts Anvil on port 8610, deploys $MINE, its vault, MiningSites, MinePayments, I'M DIO and CrafterLevels, gives the
+Starts Anvil on port 8610, deploys $MINE, its vault, MiningSites, MinePayments, I'M DEGEN and CrafterLevels, gives the
 dev players (Anvil accounts 2-9) 1,000,000 play $MINE (from a stand-in for the pool's half: there's no pool, so no
-trade box, on a plain local chain) and two revealed DIOs each, writes `web/chain.json` and `multiplayer/.dev.vars`,
+trade box, on a plain local chain) and two revealed DEGENs each, writes `web/chain.json` and `multiplayer/.dev.vars`,
 and serves the site at
 http://localhost:5810. Then, once it prints "Game", start the local world server (it reads `.dev.vars` when it starts,
 so start it after `dev.sh`, and restart it whenever `dev.sh` restarts):
@@ -41,7 +41,7 @@ cd multiplayer && npm install && npx wrangler dev --port 8790
 On localhost the game joins the local server automatically (`web/config.js`); `?mp=` with nothing plays offline, and
 `?t=0.25` fixes the time of day at noon (localhost only: the sky and the villagers' hours). `./dev.sh --fork` runs the full launch on a fork of Robinhood Chain
 (the real PoolManager, IMD and IMD/ETH pool), so the panel's trade box works with play money. `--wallet` logs in with
-your own browser wallet on a practice chain (chain ID 466400); `--sale` leaves the I'M DIO mint open and sealed. A fork
+your own browser wallet on a practice chain (chain ID 466400); `--sale` leaves the I'M DEGEN mint open and sealed. A fork
 reads Robinhood Chain's official RPC; where a network's DNS blocks that name (Anvil then reports a certificate error),
 run `python3 tools/rpc-relay.py` and fork through it: `FORK_URL=http://127.0.0.1:8611 ./dev.sh --fork`.
 
@@ -177,7 +177,7 @@ isn't used: the game keeps it and it pays for the next revive within 3 hours.
 
 ## Players
 
-Other players walk the planet with you, with name tags and the DIO they wear. After signing in (Mining Site panel),
+Other players walk the planet with you, with name tags and the DEGEN they wear. After signing in (Mining Site panel),
 pick a name in the menu: 3 to 15 letters, numbers or `_`, first come first served, changed at most once a day; reserved
 and offensive names are refused (`web/name-rules.js`, from Courier World; add one to `BANNED` to take it down). Chat
 lines (no links or wallet addresses) and who joined or left show in the chat box; clicking a name mutes that player.
@@ -196,11 +196,11 @@ servers only, so players behind strict networks may not connect until a TURN rel
 | Mining vault | 50% (10,500,000), minted by `MineVault` only as players convert what they earn in the game: at most 35,000 a day, whatever the rules contract asks, so it lasts at least 300 days (longer still: earnings a site's rate doesn't convert are never minted) |
 | Trading fee | Every swap pays 4% of its IMD side to `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` (taken by the pool's hook; the hook is renounced at launch: after the renounce only the current fee recipient can move the fees; nobody else can) |
 | Mining site | Opened once per wallet with ETH (0.005 at launch), paid to the treasury. Needed to convert earnings to $MINE. A new site is level 1 and converts 50% of what it earns; upgrades raise it to 60%, 70%, 85% and 100% at levels 2 to 5, for 4,620, 18,942, 77,662 and 318,415 $MINE (about $1,000 for all four at a $50,000 market cap) |
-| DIO levels | Every DIO starts at level 1; its holder raises it to level 5 for 2,310, 9,471, 38,831 and 159,207 $MINE (half a site's). The level stays with the DIO when it's sold, shows as its "Level" trait, and adds to its boost (below) |
+| DEGEN levels | Every DEGEN starts at level 1; its holder raises it to level 5 for 2,310, 9,471, 38,831 and 159,207 $MINE (half a site's). The level stays with the DEGEN when it's sold, shows as its "Level" trait, and adds to its boost (below) |
 | Shop and tickets | Paid in $MINE through `MinePayments` at the game's prices (`web/shop.js` `CATALOG`, `web/zones.js` `ticket`): the shop's 75% burned and 25% to the treasury; rocket tickets (2,100 for Deepvein or Cinderfall, 210 for Red Mesa) and revives (420, to revive on the spot after dying on the home planet: kind 2 "revive") all to the treasury |
-| Burns | Site upgrades and DIO levels burn 75% of what they cost and send 25% to the treasury, as the shop does. The token counts every mint against its 21M cap, so a burn is for good: the supply only ever shrinks from what was minted |
-| NFT: I'M DIO | "I'M DIO" (symbol DIO; the contract is `MineWorldCrafters`): 3,333 pixel-art characters, drawn and stored entirely on chain, no two alike. The one a player wears is how their miner looks, and boosts their mining by its rarity and level (below). Free blind mint for wallets only (no contracts, so one transaction can't sweep it through throwaway contracts), at most 3 a wallet (the owner can change that, 1 to 50, or set a price, paid straight to the treasury), then revealed: the owner publishes the secret committed at deploy, and the seed waits for the next block's hash, which anyone then locks in (`seal`) within about 26 seconds (the panel sends both at once), so nobody can pick looks or see them before everyone else. If nobody locks it in, only the owner can move it on to a new block, in public, at most 3 times; anyone can run `tools/sealer.sh` to lock it in the moment it can be. 5% royalty, enforced through the transfer validator the owner picks (it can relax that, in public) |
-| Owner and treasury | `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` owns the vault, the three upgradeable contracts and I'M DIO, and is the treasury (site sales, the unburned share of upgrades and payments, tickets, any mint price, the royalty) and the fee recipient. Ownership moves in two steps and can't be renounced; it can be handed to a multisig or a timelock (I'M DIO's only to a wallet that can sign in to OpenSea Studio: launch step 10). A treasury must take ETH where ETH is sent to it (MiningSites and I'M DIO refuse one that doesn't) |
+| Burns | Site upgrades and DEGEN levels burn 75% of what they cost and send 25% to the treasury, as the shop does. The token counts every mint against its 21M cap, so a burn is for good: the supply only ever shrinks from what was minted |
+| NFT: I'M DEGEN | "I'M DEGEN" (symbol DEGEN; the contract is `MineWorldCrafters`): 3,333 pixel-art characters, drawn and stored entirely on chain, no two alike. The one a player wears is how their miner looks, and boosts their mining by its rarity and level (below). Free blind mint for wallets only (no contracts, so one transaction can't sweep it through throwaway contracts), at most 3 a wallet (the owner can change that, 1 to 50, or set a price, paid straight to the treasury), then revealed: the owner publishes the secret committed at deploy, and the seed waits for the next block's hash, which anyone then locks in (`seal`) within about 26 seconds (the panel sends both at once), so nobody can pick looks or see them before everyone else. If nobody locks it in, only the owner can move it on to a new block, in public, at most 3 times; anyone can run `tools/sealer.sh` to lock it in the moment it can be. 5% royalty, enforced through the transfer validator the owner picks (it can relax that, in public) |
+| Owner and treasury | `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` owns the vault, the three upgradeable contracts and I'M DEGEN, and is the treasury (site sales, the unburned share of upgrades and payments, tickets, any mint price, the royalty) and the fee recipient. Ownership moves in two steps and can't be renounced; it can be handed to a multisig or a timelock (I'M DEGEN's only to a wallet that can sign in to OpenSea Studio: launch step 10). A treasury must take ETH where ETH is sent to it (MiningSites and I'M DEGEN refuse one that doesn't) |
 | No yield farming | Nothing pays for holding or waiting. $MINE comes only from playing; NFT boosts only add to what a player does |
 
 **What can change and what can't.** Fixed forever: the token (21M cap, no owner, no proxy, no pause, no blocklist, no
@@ -208,7 +208,7 @@ transfer tax), the mining vault (35,000 a day and 10,500,000 in all, not upgrade
 replaced in the open, two days after it's proposed, and only by a contract the vault's owner owns that carries the
 players' books over), the pool's locked
 liquidity and its 4% fee (the hook is renounced: after the renounce only the current fee recipient can move the fees;
-nobody else can), and I'M DIO's art, rarities and 5% royalty rate. The royalty's enforcement is only as strict as
+nobody else can), and I'M DEGEN's art, rarities and 5% royalty rate. The royalty's enforcement is only as strict as
 the transfer validator: the owner can relax it, plainly (point the collection at a validator that allows everything,
 or loosen the collection's policy on OpenSea's registry), and either change shows on chain.
 Upgradeable by the owner (UUPS proxies, every site,
@@ -229,11 +229,11 @@ edit `web/rewards.js` and deploy the server and the site.
 the server; nothing pays for holding). One item per slot, and the slots add up: **speed** (blocks break that much faster;
 the server allows for it in its break-rate check), **earn** (more $MINE for every block, monster and boss share),
 **cap** (a higher daily cap) and **move** (faster walking, for the vehicles to come). Totals are capped at +150% speed,
-+150% earn, +300% cap and +100% move. Today the **DIO** slot (I'M DIO) is live: its rarity gives Common +5% speed, +5% earn,
++150% earn, +300% cap and +100% move. Today the **DEGEN** slot (I'M DEGEN) is live: its rarity gives Common +5% speed, +5% earn,
 +10% cap; Rare +10/+10/+25; Legendary +20/+20/+50; its level (bought on-chain from CrafterLevels) adds L2 +5/+5/+10,
 L3 +15/+15/+30, L4 +30/+30/+60, L5 +50/+50/+100. Skins, companions, auras and vehicles have their slots and placeholder
 tables waiting (contract `null`, "Coming soon" in the panel); the top of `web/boosts.js` says how to plug a collection
-in. The server reads what a player owns when they sign in, wear or equip (`ownerOf`, the DIO's rarity from its
+in. The server reads what a player owns when they sign in, wear or equip (`ownerOf`, the DEGEN's rarity from its
 seed, `levelOf`; a level it can't read counts as 1 and is read again a minute later), checks again every 10 minutes
 while they earn, and tells the game; the Mining Site panel (M) and a line under the HUD's earnings show it.
 
@@ -252,8 +252,8 @@ and what you'll receive. A leaked server key can take at most the daily caps unt
 **Upgrading.** The Mining Site panel (M) shows your site's level and rate, the next level's rate and cost, and an
 **Upgrade to level N** button: it approves exactly that cost for MiningSites, then calls `upgradeSite(cost, rate)` with
 the cost and the new level's rate it showed (75% burned, 25% to the treasury), and the claim box shows the new rate at
-once. Under I'M DIO, **Levels** lists each DIO you hold with its rarity, level, boost, and the next level's cost and
-boost; **Level up** approves exactly the cost for CrafterLevels, then calls `upgrade(tokenId, cost)`. If it's the DIO
+once. Under I'M DEGEN, **Levels** lists each DEGEN you hold with its rarity, level, boost, and the next level's cost and
+boost; **Level up** approves exactly the cost for CrafterLevels, then calls `upgrade(tokenId, cost)`. If it's the DEGEN
 you wear, the game asks the world
 server to read it again at once (`["recheck"]`), so the new boost counts within seconds. Every $MINE payment in the game
 approves exactly what it costs, never more, and every upgrade names the cost it was shown as the most it will pay
@@ -269,21 +269,21 @@ approved more. Short of $MINE? Buy some in the panel's trade box.
 | `MineVault.sol` | The mining vault, $MINE's minter: mints straight to players when its distributor (MiningSites) asks, never more than 35,000 in a UTC day nor 10,500,000 in all. Not upgradeable. The owner can replace the distributor only in the open (`proposeDistributor`, then `acceptDistributor` two days later), and only with a contract whose `owner()` is the vault's owner, `vault()` the vault and `predecessor()` the current distributor: propose the new proxy's predicted address, deploy it with `initialize` in its constructor, then accept (the steps are in its NatSpec) |
 | `MineHook.sol`, `MineRouter.sol`, `MineEthRouter.sol` | Courier's audited `StampHook` and routers for $MINE: one pool, locked launch liquidity, 4% fee on the IMD side, buy/sell with IMD or ETH. The one difference from StampHook: the lowest start tick is -300,000 (was -400,000, as CourierPad); everything else, the 21M launch limit and the market-cap maths included, is StampHook's |
 | `MiningSites.sol` | UUPS proxy, the rules for converting: mining sites (ETH, once per wallet) with levels 1 to 5 converting 50/60/70/85/100% (`upgradeSite(maxCost, minRateBps)`, paid in $MINE: `upgradeCost(level)`, 75% burned, never more than `maxCost`, never for a rate below `minRateBps`), and the claims the vault pays: EIP-712 vouchers from the world server, a daily cap per wallet (1,500, at most 3,500) and across everyone (35,000), pause. The owner tunes prices, rates, costs and caps, adds levels (up to 20) and can upgrade it. `initialize` runs only in the proxy's own constructor, never later. A replacement can take over from any distributor, one without code too (a predicted address nothing was deployed at: no books), and carries each player's site (its level as bought, even above the replacement's top, which then earns the top rate), `settled` and `claimed` over from its predecessor (read through, then imported on the player's first act), and the replaced one retires (`NotActive`) |
-| `CrafterLevels.sol` | UUPS proxy: each DIO's level (`levelOf`, 1 to `maxLevel`), raised by its holder with `upgrade(tokenId, maxCost)` for `upgradeCost(level)` $MINE (75% burned, never more than `maxCost`). I'M DIO shows it as the "Level" trait once pointed at it (`setAttributesExtension`) |
+| `CrafterLevels.sol` | UUPS proxy: each DEGEN's level (`levelOf`, 1 to `maxLevel`), raised by its holder with `upgrade(tokenId, maxCost)` for `upgradeCost(level)` $MINE (75% burned, never more than `maxCost`). I'M DEGEN shows it as the "Level" trait once pointed at it (`setAttributesExtension`) |
 | `MinePayments.sol` | UUPS proxy: `pay(kind, amount, ref)` takes $MINE from the player (with their exact approval), burns the kind's share, sends the rest to the treasury and emits `Paid(player, kind, amount, burned, ref)`, which the game checks. Kinds at launch: 0 "shop" (75% burned), 1 "ticket" and 2 "revive" (the 420 $MINE revive on the spot after dying on the home planet), both burning nothing (all to the treasury); the owner can change burn shares and add kinds. Prices live in the game, not here |
 | `MinePayer.sol`, `UpgradeCosts.sol`, `lib/OwnedUUPS.sol` | What the three proxies share: taking a payment (burned share burned from the payer's wallet, the rest to the treasury; nothing ever held), level costs, and two-step ownership that can't be renounced, with the owner alone upgrading; each proxy is set up only in its own constructor (`__Owned_init` refuses anywhere else), so a proxy deployed without its setup is nobody's. State in ERC-7201 namespaced storage |
-| `MineWorldCrafters.sol` | I'M DIO (symbol DIO; first named MineWorld Crafters, and the code keeps that name; Courier Skins adapted): 3,333 characters, minted by wallets only (`msg.sender == tx.origin`, else `OnlyWallets`; an EIP-7702 account mints as itself, a smart-contract wallet can't mint), commit-reveal (the owner publishes the secret with `reveal`; the seed waits for the next block's hash, from Arbitrum's ArbSys on Robinhood Chain, and anyone sets it with `seal` within 256 L2 blocks; after a window nobody sealed in, only the owner can move it on, at most 3 times, with `moveEntropyOn`; `revealStatus` says Sealable only with 30 blocks, about 3 seconds, to spare), traits from a keyed shuffle (each token a different hair, outfit, eyes and gaze) and weighted picks, fully on-chain metadata and pictures (the attributes extension gets a fixed 300,000 gas and only a well-formed string of at most 4 KB is used, so it can't break them), enforced 5% royalty (ERC721-C, OpenSea's registry; the owner picks the validator and so can relax enforcement). The owner can update the website and social links (`setLinks`) and the collection's picture and banner (`setCollectionImages`) shown on OpenSea at any time. Ownership can never be renounced, so OpenSea Studio stays usable |
-| `CrafterArt.sol` | I'M DIO's pictures as 24 x 24 SVGs, generated from `web/crafters-art.js` and `web/crafters.js` by `tools/gen-crafter-art.mjs`; never edit it by hand |
+| `MineWorldCrafters.sol` | I'M DEGEN (symbol DEGEN; first named MineWorld Crafters, and the code keeps that name; Courier Skins adapted): 3,333 characters, minted by wallets only (`msg.sender == tx.origin`, else `OnlyWallets`; an EIP-7702 account mints as itself, a smart-contract wallet can't mint), commit-reveal (the owner publishes the secret with `reveal`; the seed waits for the next block's hash, from Arbitrum's ArbSys on Robinhood Chain, and anyone sets it with `seal` within 256 L2 blocks; after a window nobody sealed in, only the owner can move it on, at most 3 times, with `moveEntropyOn`; `revealStatus` says Sealable only with 30 blocks, about 3 seconds, to spare), traits from a keyed shuffle (each token a different hair, outfit, eyes and gaze) and weighted picks, fully on-chain metadata and pictures (the attributes extension gets a fixed 300,000 gas and only a well-formed string of at most 4 KB is used, so it can't break them), enforced 5% royalty (ERC721-C, OpenSea's registry; the owner picks the validator and so can relax enforcement). The owner can update the website and social links (`setLinks`) and the collection's picture and banner (`setCollectionImages`) shown on OpenSea at any time. Ownership can never be renounced, so OpenSea Studio stays usable |
+| `CrafterArt.sol` | I'M DEGEN's pictures as 24 x 24 SVGs, generated from `web/crafters-art.js` and `web/crafters.js` by `tools/gen-crafter-art.mjs`; never edit it by hand |
 
 ```bash
 cd contracts
 forge test                                  # unit + invariant tests
 forge test --fork-url robinhood             # plus the fork tests against Robinhood Chain
 ./script/deploy-mainnet.sh launch           # dry run of the launch on a fork
-./script/deploy-mainnet.sh crafters         # dry run of I'M DIO
+./script/deploy-mainnet.sh crafters         # dry run of I'M DEGEN
 ```
 
-The JS in `web/crafters-art.js` and `web/crafters.js` defines every DIO. After changing either, regenerate the
+The JS in `web/crafters-art.js` and `web/crafters.js` defines every DEGEN. After changing either, regenerate the
 contract and its test vectors (no npm needed), then run the tests, which check the contract draws exactly what the JS
 draws and fail while the generated files are stale:
 
@@ -303,7 +303,7 @@ Settings are in `contracts/launch.env` (public values only). The real launch, st
    `npx wrangler secret put MINING_KEY` in `multiplayer/`.
 3. **Dry runs** against a fork, nothing sent: `./script/deploy-mainnet.sh crafters`, then
    `MINING_SIGNER=<that address> ./script/deploy-mainnet.sh launch`.
-4. **I'M DIO:** `./script/deploy-mainnet.sh crafters --broadcast --browser --browser-disable-open`. Open
+4. **I'M DEGEN:** `./script/deploy-mainnet.sh crafters --broadcast --browser --browser-disable-open`. Open
    http://127.0.0.1:9545 in your browser, wallet on Robinhood Chain, and approve each transaction. **Sign with the
    `OWNER` wallet itself**, so it is the collection's creator and its owner (OpenSea Studio lets only `owner()` edit
    the collection). From any other wallet the script prints a loud warning and, if it set anything up first, an
@@ -311,7 +311,7 @@ Settings are in `contracts/launch.env` (public values only). The real launch, st
    is `OWNER` and `pendingOwner()` is 0. Free mint, at most 3 a wallet (`CRAFTERS_WALLET_LIMIT` in `launch.env`;
    `setWalletLimit`, 1 to 50, changes it later). The reveal secret goes to
    `~/mineworldcraft-crafters-reveal-secret.txt` (never printed): keep a copy in a password manager.
-5. **$MINE and the game contracts:** `MINING_SIGNER=<address> CRAFTERS=<I'M DIO address> ./script/deploy-mainnet.sh
+5. **$MINE and the game contracts:** `MINING_SIGNER=<address> CRAFTERS=<I'M DEGEN address> ./script/deploy-mainnet.sh
    launch --broadcast --browser --browser-disable-open`: the hook, $MINE (its owner renounced), MineVault, MiningSites,
    MinePayments and CrafterLevels; the pool opened with 10.5M $MINE locked; the hook renounced. If the signing wallet
    isn't `OWNER`, `OWNER` then makes the calls the script prints (`acceptOwnership`, `setAttributesExtension`). **Send
@@ -332,16 +332,16 @@ Settings are in `contracts/launch.env` (public values only). The real launch, st
    and locks the reveal in the moment it can be, whoever reveals:
    `RPC_URL=https://robinhood.drpc.org ./tools/sealer.sh --account <keystore name>` (or `--browser`; never a key on
    the command line). Then, at that time, reveal with the secret from step 4, sealing at once. The easy way: log in to
-   the game as `OWNER`, open I'M DIO in the panel, paste the secret and press **Reveal and lock in**; it sends
+   the game as `OWNER`, open I'M DEGEN in the panel, paste the secret and press **Reveal and lock in**; it sends
    `reveal(secret)`, waits for the next L2 block and sends `seal()`, retrying until the seed is set. From a terminal
    with a Foundry keystore, one line does the same:
-   `cast send <I'M DIO> "reveal(uint256)" "$(cat ~/mineworldcraft-crafters-reveal-secret.txt)" --account <owner> --rpc-url robinhood && until cast send <I'M DIO> "seal()" --account <owner> --rpc-url robinhood; do sleep 1; done`.
+   `cast send <I'M DEGEN> "reveal(uint256)" "$(cat ~/mineworldcraft-crafters-reveal-secret.txt)" --account <owner> --rpc-url robinhood && until cast send <I'M DEGEN> "seal()" --account <owner> --rpc-url robinhood; do sleep 1; done`.
    `reveal` makes the secret public (the sale can never reopen) and the seed wait for the next L2 block's hash;
-   `seal()` sets it, and every DIO's look then shows, for everyone at once. Anyone can send `seal()`, for 256 L2
+   `seal()` sets it, and every DEGEN's look then shows, for everyone at once. Anyone can send `seal()`, for 256 L2
    blocks only (the chain keeps a block's hash that long, about 26 seconds on Robinhood Chain); later it reverts
    `EntropyExpired`. Then only `OWNER` can move the reveal on to a new block (`moveEntropyOn`, in public, at most 3
    times in all; the panel offers it), and `seal()` must be sent again; after the third, the reveal stays stuck for
-   good (the DIOs keep working, unrevealed) rather than fall back to anything someone could steer. Nobody, the owner
+   good (the DEGENs keep working, unrevealed) rather than fall back to anything someone could steer. Nobody, the owner
    included, can see a look before everyone can; what's left to trust is Robinhood Chain's sequencer, which produces
    the L2 blocks, and the owner's three public re-rolls if nobody seals in time: at most a best of four seeds, each
    move on chain, and none while a sealer is running and seals in time.
@@ -350,7 +350,7 @@ Settings are in `contracts/launch.env` (public values only). The real launch, st
     signed in as `OWNER` (it lets only the contract's `owner()` edit), set the collection's own fields there (links,
     description, banner, creator earnings: turn them on at 5%); the contract's on-chain `contractURI` (its name,
     description, links from `setLinks`, picture and banner from `setCollectionImages`) is what OpenSea shows until
-    then, and the fallback. I'M DIO's ownership can never be renounced (the contract refuses), so this editing stays
+    then, and the fallback. I'M DEGEN's ownership can never be renounced (the contract refuses), so this editing stays
     possible. **Never transfer its ownership to a contract wallet that can't sign in to OpenSea Studio**: check first
     that OpenSea Studio accepts a multisig before handing it to one.
 

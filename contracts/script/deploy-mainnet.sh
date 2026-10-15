@@ -3,9 +3,9 @@
 #
 #   ./script/deploy-mainnet.sh launch                    # dry run against a fork: hook, $MINE, the game, the pool
 #   MINING_SIGNER=0x... ./script/deploy-mainnet.sh launch --broadcast --browser --browser-disable-open
-#   ./script/deploy-mainnet.sh crafters                  # dry run of I'M DIO (MineWorldCrafters) against a fork
+#   ./script/deploy-mainnet.sh crafters                  # dry run of I'M DEGEN (MineWorldCrafters) against a fork
 #   ./script/deploy-mainnet.sh crafters --broadcast --browser --browser-disable-open
-#   ./script/deploy-mainnet.sh levels                    # dry run of CrafterLevels, once $MINE and I'M DIO exist
+#   ./script/deploy-mainnet.sh levels                    # dry run of CrafterLevels, once $MINE and I'M DEGEN exist
 #   ./script/deploy-mainnet.sh levels --broadcast --browser --browser-disable-open
 #   ./script/deploy-mainnet.sh verify                    # verify every deployed source on Sourcify (as Courier World)
 #
@@ -14,17 +14,17 @@
 #   vault (MineVault, $MINE's one minter: at most 35,000 a day, 10.5M in all), MinePayments (implementation and proxy);
 #   the token's minter set to the vault and its ownership renounced; the pool opened (the 10.5M locked for good), then
 #   the hook renounced (after that only the fee recipient moves its fees). OWNER owns the vault and the proxies.
-#   MINING_SIGNER is the game server's voucher key's address (never the key). With CRAFTERS set (I'M DIO came first),
+#   MINING_SIGNER is the game server's voucher key's address (never the key). With CRAFTERS set (I'M DEGEN came first),
 #   CrafterLevels too. A hard precondition: the vault is given the address of the deploying wallet's next contract
 #   (MiningSites' proxy), and the script requires the proxy landed there, so the wallet sends nothing else until the
 #   stage is done. Every stage broadcasts with --slow: a transaction goes out only once the one before succeeded, so a
 #   failed step stops the run (before the token's renounce, say).
-# crafters: the on-chain art (CrafterArt) and I'M DIO (contract MineWorldCrafters) with the sale closed (open it later),
+# crafters: the on-chain art (CrafterArt) and I'M DEGEN (contract MineWorldCrafters) with the sale closed (open it later),
 #   owned by OWNER (handed over in two steps if the deploying wallet sets anything up first: OWNER then accepts).
-# levels: CrafterLevels (implementation and proxy; DIO levels paid in $MINE), for $MINE and I'M DIO in
+# levels: CrafterLevels (implementation and proxy; DEGEN levels paid in $MINE), for $MINE and I'M DEGEN in
 #   deployments/ (or MINE= and CRAFTERS=), owned by OWNER.
 # Every stage prints each contract's owner, and the calls only OWNER can make that are still to do (acceptOwnership,
-# I'M DIO's setAttributesExtension, custom upgrade costs) when the deploying wallet isn't OWNER.
+# I'M DEGEN's setAttributesExtension, custom upgrade costs) when the deploying wallet isn't OWNER.
 #
 # Signing: --browser serves a page at http://127.0.0.1:9545 (--browser-disable-open: nothing opens by itself; paste
 # the address into your browser) where you connect your wallet and approve each transaction, so no private key is typed
@@ -34,23 +34,23 @@
 # RPC_URL picks the RPC (default: foundry.toml's "robinhood"). The launch mines a CREATE2 salt first, which takes a
 # while, so it needs an RPC that keeps a few minutes of state (Courier's launchpad needed the official RPC for this).
 #
-# I'M DIO's reveal secret: pass your own as SECRET=..., or, when broadcasting, one is generated and written to
+# I'M DEGEN's reveal secret: pass your own as SECRET=..., or, when broadcasting, one is generated and written to
 # SECRET_FILE (default ~/mineworldcraft-crafters-reveal-secret.txt, readable only by you; if it exists, the secret in
-# it is reused, so a retry keeps the same commit). It is never printed. Keep it in a password manager too: I'M DIO
+# it is reused, so a retry keeps the same commit). It is never printed. Keep it in a password manager too: I'M DEGEN
 # can only be revealed with it (reveal(secret)). A dry run uses a throwaway secret and saves nothing.
 #
 # The reveal, after the mint: setSaleOpen(false), then OWNER calls reveal(secret), which publishes the secret and makes
-# the seed wait for the next L2 block's hash, and seals at once: the game's panel does both (log in as OWNER, I'M DIO,
+# the seed wait for the next L2 block's hash, and seals at once: the game's panel does both (log in as OWNER, I'M DEGEN,
 # "Reveal and lock in"), or with a Foundry keystore:
-#   cast send <I'M DIO> "reveal(uint256)" "$(cat ~/mineworldcraft-crafters-reveal-secret.txt)" --account <owner> --rpc-url robinhood \
-#     && until cast send <I'M DIO> "seal()" --account <owner> --rpc-url robinhood; do sleep 1; done
+#   cast send <I'M DEGEN> "reveal(uint256)" "$(cat ~/mineworldcraft-crafters-reveal-secret.txt)" --account <owner> --rpc-url robinhood \
+#     && until cast send <I'M DEGEN> "seal()" --account <owner> --rpc-url robinhood; do sleep 1; done
 # Anyone can seal() for 256 L2 blocks (about 26 seconds on Robinhood Chain). After a window nobody sealed in, only OWNER
 # can move the entropy block on (moveEntropyOn, at most 3 times in all, each in public), then seal again. Nobody, the
 # owner included, can see the looks before everyone can. Announce the reveal time in advance, so holders can run
 # tools/sealer.sh (RPC_URL=... ./tools/sealer.sh --account <keystore name>), which seals the moment it can: then the
 # owner doesn't decide alone whether a window gets sealed.
 #
-# I'M DIO's ownership can never be renounced, so OpenSea Studio (which lets only owner() edit the collection) always
+# I'M DEGEN's ownership can never be renounced, so OpenSea Studio (which lets only owner() edit the collection) always
 # works: deploy it from the OWNER wallet itself, so OWNER is its creator and its owner.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -124,7 +124,7 @@ elif [ "$STAGE" = levels ]; then
   MINE="${MINE:-$(jq -r '.mine // empty' deployments/robinhood.json 2>/dev/null || true)}"
   CRAFTERS="${CRAFTERS:-$(jq -r '.crafters // empty' deployments/robinhood-crafters.json 2>/dev/null || true)}"
   is_address "${MINE:-}" || { echo "No \$MINE yet: run the launch first (or set MINE=0x...)." >&2; exit 1; }
-  is_address "${CRAFTERS:-}" || { echo "No I'M DIO yet: deploy it first (or set CRAFTERS=0x...)." >&2; exit 1; }
+  is_address "${CRAFTERS:-}" || { echo "No I'M DEGEN yet: deploy it first (or set CRAFTERS=0x...)." >&2; exit 1; }
   export MINE CRAFTERS TREASURY="${TREASURY:-$FEE_RECIPIENT}"
   SCRIPT=(script/Deploy.s.sol --sig "runLevels()")
   RECORD=deployments/robinhood-levels.json

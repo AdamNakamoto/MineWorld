@@ -147,8 +147,8 @@ contract MineWorldCraftersTest is Test {
     // ---------------------------------------------------------------- mint
 
     function test_TheCollection() public view {
-        assertEq(crafters.name(), "I'M DIO");
-        assertEq(crafters.symbol(), "DIO");
+        assertEq(crafters.name(), "I'M DEGEN");
+        assertEq(crafters.symbol(), "DEGEN");
         assertEq(crafters.MAX_SUPPLY(), 3333);
         assertEq(crafters.MAX_PER_TX(), 5);
         assertEq(crafters.walletLimit(), 3);
@@ -820,14 +820,14 @@ contract MineWorldCraftersTest is Test {
     function test_TokenURIBeforeAndAfterReveal() public {
         _mint(alice, 1);
         string memory sealedJson = Json.decodeURI(crafters.tokenURI(1));
-        assertEq(vm.parseJsonString(sealedJson, ".name"), "I'M DIO #1");
-        assertEq(vm.parseJsonString(sealedJson, ".description"), "A sealed I'M DIO. Its look is revealed after the mint.");
+        assertEq(vm.parseJsonString(sealedJson, ".name"), "I'M DEGEN #1");
+        assertEq(vm.parseJsonString(sealedJson, ".description"), "A sealed I'M DEGEN. Its look is revealed after the mint.");
         assertEq(vm.parseJsonString(sealedJson, ".image"), string.concat("data:image/svg+xml;base64,", vm.toBase64(art.sealedSvg())));
         assertEq(vm.parseJsonString(sealedJson, ".attributes[0].value"), "Sealed");
         _reveal();
         string memory json = Json.decodeURI(crafters.tokenURI(1));
         Traits memory t = crafters.traitsOf(1);
-        assertEq(vm.parseJsonString(json, ".name"), "I'M DIO #1");
+        assertEq(vm.parseJsonString(json, ".name"), "I'M DEGEN #1");
         assertEq(vm.parseJsonString(json, ".image"), string.concat("data:image/svg+xml;base64,", vm.toBase64(art.render(t))));
         assertEq(vm.parseJsonString(json, ".attributes[0].trait_type"), "Background");
         assertEq(vm.parseJsonString(json, ".attributes[0].value"), art.traitName(0, t.background));
@@ -835,7 +835,7 @@ contract MineWorldCraftersTest is Test {
         assertEq(vm.parseJsonString(json, ".attributes[7].value"), art.traitName(7, t.outfit));
         assertEq(vm.parseJsonString(json, ".attributes[8].trait_type"), "Rarity");
         assertFalse(vm.keyExistsJson(json, ".attributes[9]"), "no extra traits without an extension");
-        assertTrue(Json.has(vm.parseJsonString(json, ".description"), "No two DIOs look alike. Each DIO boosts its owner's mining in MineWorldCraft by its rarity and level"));
+        assertTrue(Json.has(vm.parseJsonString(json, ".description"), "No two DEGENs look alike. Each DEGEN boosts its owner's mining in MineWorldCraft by its rarity and level"));
         assertFalse(Json.has(json, "Cosmetic"));
         vm.expectRevert(abi.encodeWithSelector(IERC721Errors.ERC721NonexistentToken.selector, 2));
         crafters.tokenURI(2);
@@ -858,14 +858,14 @@ contract MineWorldCraftersTest is Test {
     /// Before any link or picture is set, the collection page has only its name and description.
     function test_CollectionMetadataWithoutLinks() public view {
         string memory json = Json.decodeURI(crafters.contractURI());
-        assertEq(vm.parseJsonString(json, ".name"), "I'M DIO");
+        assertEq(vm.parseJsonString(json, ".name"), "I'M DEGEN");
         assertTrue(Json.has(vm.parseJsonString(json, ".description"), "3,333 pixel-art characters for MineWorldCraft"));
         assertFalse(Json.has(json, "external_link"));
         assertFalse(Json.has(json, '"image"'));
         assertFalse(Json.has(json, "banner_image"));
         assertFalse(Json.has(json, "Website:"));
         assertFalse(Json.has(json, "Social:"));
-        assertTrue(Json.has(json, 'Each DIO boosts its owner\'s mining in MineWorldCraft by its rarity and level: faster mining, more $MINE per block and a higher daily cap, for active play only."'));
+        assertTrue(Json.has(json, 'Each DEGEN boosts its owner\'s mining in MineWorldCraft by its rarity and level: faster mining, more $MINE per block and a higher daily cap, for active play only."'));
         assertFalse(Json.has(json, "Cosmetic"));
         assertEq(crafters.website(), "");
         assertEq(crafters.social(), "");
@@ -1760,7 +1760,7 @@ contract MineWorldCraftersForkTest is Test {
     }
 }
 
-/// Third re-check 10d532d5 #3, the auditor's SybilMintTest, adapted to the fix (I'M DIO mints for wallets only).
+/// Third re-check 10d532d5 #3, the auditor's SybilMintTest, adapted to the fix (I'M DEGEN mints for wallets only).
 /// A validator that allows every transfer (stands in for OpenSea's registry).
 contract OpenValidator {
     function validateTransfer(address, address, address, uint256) external pure {}

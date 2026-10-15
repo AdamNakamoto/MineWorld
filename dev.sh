@@ -3,21 +3,21 @@
 # for the local room, then the site served from web/. Anvil's dev accounts are unlocked, so the page plays as any of
 # them. Ports differ from Courier World's dev setup (Anvil 8610, site 5810), so both can run at once.
 #
-#   ./dev.sh                 # empty chain: $MINE, MiningSites, I'M DIO (contract MineWorldCrafters) and CrafterLevels.
+#   ./dev.sh                 # empty chain: $MINE, MiningSites, I'M DEGEN (contract MineWorldCrafters) and CrafterLevels.
 #                            # No Uniswap v4 here, so
 #                            # $MINE's pool half is held by the deployer as a stand-in (no trading)
 #   ./dev.sh --fork          # fork of Robinhood Chain: the full launch against the real PoolManager, IMD and IMD/ETH
 #                            # pool (hook, routers, pool opened, hook renounced), so trading works (no real money)
 #   ./dev.sh --wallet        # log in with your own browser wallet (MetaMask...) as on mainnet. The chain gets its own
 #                            # ID, so nothing signed there works elsewhere. Combines with --fork.
-#   ./dev.sh --sale          # leave the I'M DIO sale open and sealed, to try the mint and the reveal: the owner
+#   ./dev.sh --sale          # leave the I'M DEGEN sale open and sealed, to try the mint and the reveal: the owner
 #                            # (account 0) closes the sale, then the panel's "Reveal and lock in" (its secret field
 #                            # holds chain.json's devSecret) publishes it and seals at once (not on --fork, see
-#                            # below). Without it the players get two DIOs each (3 per wallet at most), revealed.
+#                            # below). Without it the players get two DEGENs each (3 per wallet at most), revealed.
 #
-# Accounts: 0 deploys, and owns the vault, the proxies (MiningSites, MinePayments, CrafterLevels) and I'M DIO; 1 is
+# Accounts: 0 deploys, and owns the vault, the proxies (MiningSites, MinePayments, CrafterLevels) and I'M DEGEN; 1 is
 # the treasury and the fee recipient; 2-9 are players, each with some $MINE (1,000,000 from the stand-in on the empty
-# chain, enough to try the upgrades; bought with 0.01 ETH through the pool on a fork) and, without --sale, two DIOs.
+# chain, enough to try the upgrades; bought with 0.01 ETH through the pool on a fork) and, without --sale, two DEGENs.
 # The voucher key MiningSites trusts is a throwaway made here for this chain only; it goes into multiplayer/.dev.vars
 # and is never printed.
 set -euo pipefail
@@ -111,7 +111,7 @@ MINE=$(addr MineToken) SITES=$(addr MiningSites) VAULT=$(addr MineVault) PAYMENT
 HOOK=$(addr MineHook) ROUTER=$(addr Router) ETH_ROUTER=$(addr EthRouter)
 [ -n "$MINE" ] && [ -n "$SITES" ] && [ -n "$VAULT" ] && [ -n "$PAYMENTS" ] || { echo "$OUT"; exit 1; }
 
-# I'M DIO (contract MineWorldCrafters, and its on-chain art), committed to this chain's throwaway secret, with the sale
+# I'M DEGEN (contract MineWorldCrafters, and its on-chain art), committed to this chain's throwaway secret, with the sale
 # open. Free, as at
 # launch (CRAFTERS_PRICE=<wei> ./dev.sh to try a paid mint).
 CRAFTERS_PRICE="${CRAFTERS_PRICE:-0}"
@@ -120,7 +120,7 @@ SEED_COMMIT=$(cast keccak "$(cast abi-encode "f(uint256)" "$SECRET")") OPEN_SALE
 CRAFTERS=$(addr MineWorldCrafters)
 [ -n "$CRAFTERS" ] || { echo "$OUT"; exit 1; }
 
-# CrafterLevels: DIO levels paid in $MINE, wired to I'M DIO at once (the deployer owns both here).
+# CrafterLevels: DEGEN levels paid in $MINE, wired to I'M DEGEN at once (the deployer owns both here).
 MINE=$MINE CRAFTERS=$CRAFTERS deploy script/Deploy.s.sol --sig "runLevels()"
 LEVELS=$(addr CrafterLevels)
 [ -n "$LEVELS" ] || { echo "$OUT"; exit 1; }
@@ -136,7 +136,7 @@ if [ "$FORK" = 1 ]; then
 fi
 
 if [ "$SALE" = 0 ]; then
-  # Two DIOs for each player (as anyone mints them; 3 a wallet at most), then the sale closes, the owner publishes
+  # Two DEGENs for each player (as anyone mints them; 3 a wallet at most), then the sale closes, the owner publishes
   # this chain's secret (reveal) and the seed is sealed at once: a player sends seal() (anyone can, within the window).
   HASHES=()
   for p in "${PLAYER_LIST[@]}"; do
@@ -162,7 +162,7 @@ if [ "$SALE" = 0 ]; then
       [ "$(cast call "$CRAFTERS" "seed()(uint256)" --rpc-url "$RPC")" != 0 ] && break
       cast rpc anvil_mine 1 --rpc-url "$RPC" >/dev/null
     done
-    [ "$(cast call "$CRAFTERS" "seed()(uint256)" --rpc-url "$RPC")" != 0 ] || { echo "The I'M DIO reveal didn't seal" >&2; exit 1; }
+    [ "$(cast call "$CRAFTERS" "seed()(uint256)" --rpc-url "$RPC")" != 0 ] || { echo "The I'M DEGEN reveal didn't seal" >&2; exit 1; }
   fi
 fi
 
@@ -174,7 +174,7 @@ if [ "$WALLET" = 1 ]; then
   [ "$FORK" = 1 ] && NAME="MineWorldCraft practice (Robinhood fork)"
 fi
 
-# `npx wrangler dev` in multiplayer/ reads these: it signs vouchers for this chain's MiningSites, reads I'M DIO and
+# `npx wrangler dev` in multiplayer/ reads these: it signs vouchers for this chain's MiningSites, reads I'M DEGEN and
 # their levels, and checks rocket tickets paid through MinePayments.
 mkdir -p multiplayer
 (umask 077 && printf 'MINING_KEY=%s\nMINING_ADDRESS=%s\nCHAIN_ID=%s\nCHAIN_RPC=%s\nCRAFTERS_ADDRESS=%s\nLEVELS_ADDRESS=%s\nPAYMENTS_ADDRESS=%s\n' \
@@ -213,8 +213,8 @@ if [ "$FORK" = 1 ]; then
   echo "Router      $ROUTER"
   echo "EthRouter   $ETH_ROUTER"
 fi
-echo "I'M DIO     $CRAFTERS ($([ "$SALE" = 1 ] && echo "sale open, sealed" || echo "revealed, 2 per player"))"
-echo "Levels      $LEVELS (CrafterLevels, wired to I'M DIO)"
+echo "I'M DEGEN     $CRAFTERS ($([ "$SALE" = 1 ] && echo "sale open, sealed" || echo "revealed, 2 per player"))"
+echo "Levels      $LEVELS (CrafterLevels, wired to I'M DEGEN)"
 echo "Chain       $RPC ($NAME, chain ID $CHAIN_ID)"
 echo "Wrote       web/chain.json, multiplayer/.dev.vars"
 echo "Game        http://localhost:$WEB_PORT"

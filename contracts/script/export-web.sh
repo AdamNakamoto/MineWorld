@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Write web/deployments/robinhood.json: Robinhood Chain's details, the addresses the site needs and the contract
 # ABIs. Commit it and the host serves it. After the launch it holds $MINE, the vault, MiningSites and MinePayments (their
-# proxies, with the implementations' ABIs), the hook and its routers; I'M DIO (MineWorldCrafters) joins once deployed
+# proxies, with the implementations' ABIs), the hook and its routers; I'M DEGEN (MineWorldCrafters) joins once deployed
 # (either can come first), and CrafterLevels (`levels`, its proxy) once it is.
 #   ./script/export-web.sh
 # RPC_URL picks the RPC used to check there's a contract behind each address (default: foundry.toml's "robinhood").

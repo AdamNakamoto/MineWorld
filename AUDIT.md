@@ -8,10 +8,10 @@ contracts at `ba2a8ed` (job 0792975e; section 8 lists its eight findings and the
 kind). The sections before them describe the contracts as they are now. Nothing is deployed yet: every contract in `contracts/src` is audited before
 anything goes to Robinhood Chain. The deploy settings are in `contracts/launch.env`.
 
-**The NFT collection was renamed "I'M DIO"** (symbol DIO; one character is a DIO). Only what people see changed: the
+**The NFT collection was renamed "I'M DEGEN"** (symbol DEGEN; one character is a DEGEN). Only what people see changed: the
 token's name and symbol, the metadata's names and descriptions, the game's and the scripts' wording. The code keeps the
 first name, MineWorld Crafters, in its identifiers (`MineWorldCrafters`, `CrafterArt`, `CrafterLevels`, `traitsOf`,
-"Crafter" in NatSpec and in this brief), so the audit diff stays small: a Crafter here is one DIO.
+"Crafter" in NatSpec and in this brief), so the audit diff stays small: a Crafter here is one DEGEN.
 
 Several contracts reuse Courier World's code (github.com/AdamNakamoto/courierworld), which IMD Swarm audited in
 ea514609, ca28d248, 19b34b9b and 25e6a0b3 and which is live on Robinhood Chain. Section 2 says exactly what is reused
@@ -61,9 +61,9 @@ Players earn **$MINE** for what they do in the game. $MINE trades in one **Unisw
   base (`lib/OwnedUUPS.sol`, `MinePayer`, `UpgradeCosts`), with all state in ERC-7201 namespaced storage. They are
   owned by `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD`: ownership moves in two steps and can't be renounced; only the
   owner changes their settings (within the bounds below) and upgrades their code. The owner may hand them to a
-  multisig or a timelock later. The same wallet owns the vault and I'M DIO, and is the treasury and the fee
+  multisig or a timelock later. The same wallet owns the vault and I'M DEGEN, and is the treasury and the fee
   recipient.
-- **I'M DIO** (`MineWorldCrafters`, pictures by `CrafterArt`): 3,333 pixel-art NFTs drawn and stored entirely on
+- **I'M DEGEN** (`MineWorldCrafters`, pictures by `CrafterArt`): 3,333 pixel-art NFTs drawn and stored entirely on
   chain. Blind mint for wallets only (`msg.sender == tx.origin`; free at launch, 5 per transaction, 3 per wallet), then
   commit-reveal: `seedCommit` is fixed at
   deploy; after the mint the owner publishes the secret (`reveal(secret)`, sale closed for good), and the seed waits
@@ -82,7 +82,7 @@ Players earn **$MINE** for what they do in the game. $MINE trades in one **Unisw
 
 The launch (`contracts/script/deploy-mainnet.sh`) has two stages, from one wallet:
 
-1. `crafters` (`DeployCrafters.s.sol`): `CrafterArt`, then `MineWorldCrafters` (I'M DIO) with the sale closed, owned
+1. `crafters` (`DeployCrafters.s.sol`): `CrafterArt`, then `MineWorldCrafters` (I'M DEGEN) with the sale closed, owned
    by `OWNER` (best deployed from `OWNER` itself: the script warns loudly otherwise). The mint runs; the owner then
    publishes the secret and seals at once (anyone can seal).
 2. `launch` (`Deploy.s.sol`, `run()`): `MineHook` at a mined CREATE2 address (its constructor deploys both routers);
@@ -91,7 +91,7 @@ The launch (`contracts/script/deploy-mainnet.sh`) has two stages, from one walle
    so the wallet sends nothing else meanwhile, and the stage broadcasts with `--slow`); the proxy, initialized in its
    constructor; the token's `setMinter(vault)`, then its `renounceOwnership()`; `MinePayments` (implementation and
    proxy); `openPool`, then the hook's `renounceOwnership()`. With `CRAFTERS` set, `CrafterLevels` too (or later, as
-   the `levels` stage), and `setAttributesExtension(levels)` on I'M DIO if the deploying wallet owns it
+   the `levels` stage), and `setAttributesExtension(levels)` on I'M DEGEN if the deploying wallet owns it
    (otherwise the script prints the call for `OWNER`).
 
 After the launch, `MineToken` and `MineHook` have no owner. `MineVault`, the three proxies and `MineWorldCrafters` are
@@ -106,7 +106,7 @@ owned by `0x6e85…70eD`.
 | `MiningSites` | Open a site, upgrade it (`upgradeSite(cost shown, rate shown)`), convert earnings with the server's voucher; the panel reads rates, caps, `claimable` |
 | `MineVault` | Only through `MiningSites`; the panel shows `vaultBalance()` |
 | `MinePayments` | The Smithy's shop (kind 0: the browser checks its own `Paid` event and adds the items to an inventory kept in the browser), rocket tickets (kind 1: the server checks the `Paid` event) and revives (kind 2, 420 $MINE: the game's side, out of scope, as tickets are) |
-| `MineWorldCrafters` | Mint (free, wallets only, at most 3 per wallet: the panel offers no more and explains a refused fourth or a contract's `OnlyWallets`); the owner's "Reveal and lock in" sends `reveal(secret)` then `seal()`, retrying until the seed is set; anyone's "Lock in the reveal" sends `seal()` while `revealStatus()` is Sealable, and after a window nobody sealed in the owner's "Pick a new block" sends `moveEntropyOn` then `seal()`; the DIO a player wears is how their miner looks; the server reads `ownerOf` and `seed()` (rarity worked out off chain by `web/crafters.js`) |
+| `MineWorldCrafters` | Mint (free, wallets only, at most 3 per wallet: the panel offers no more and explains a refused fourth or a contract's `OnlyWallets`); the owner's "Reveal and lock in" sends `reveal(secret)` then `seal()`, retrying until the seed is set; anyone's "Lock in the reveal" sends `seal()` while `revealStatus()` is Sealable, and after a window nobody sealed in the owner's "Pick a new block" sends `moveEntropyOn` then `seal()`; the DEGEN a player wears is how their miner looks; the server reads `ownerOf` and `seed()` (rarity worked out off chain by `web/crafters.js`) |
 | `CrafterLevels` | "Level up" in the panel (`upgrade(id, cost shown)`); the server reads `levelOf` |
 | `CrafterArt` | Only through the collection's `tokenURI` (marketplaces) |
 
@@ -137,7 +137,7 @@ Lines: all lines / code lines (neither blank nor comment). 3,629 / 2,470 in all 
 | `contracts/src/UpgradeCosts.sol` | 140 / 84 | New | Shared base: level costs, burn share, adding levels, `maxCost` |
 | `contracts/src/lib/OwnedUUPS.sol` | 88 / 52 | New (OpenZeppelin's `Ownable2Step` logic in ERC-7201 storage) | Shared base: two-step ownership, no renounce, owner-only upgrades, each proxy set up only in its own constructor |
 | `contracts/src/ICrafterAttributes.sol` | 17 / 7 | New | Interfaces between the Crafters and their attributes extension |
-| `contracts/src/MineWorldCrafters.sol` | 693 / 425 | New, built on Courier's `CourierSkins` (see below) | The NFT, I'M DIO: mint (wallets only, 3 per wallet at launch), commit-reveal (secret published first, L2 block entropy, sealed by anyone within the window; after it, at most 3 public move-ons by the owner), traits, on-chain metadata, enforced royalty |
+| `contracts/src/MineWorldCrafters.sol` | 693 / 425 | New, built on Courier's `CourierSkins` (see below) | The NFT, I'M DEGEN: mint (wallets only, 3 per wallet at launch), commit-reveal (secret published first, L2 block entropy, sealed by anyone within the window; after it, at most 3 public move-ons by the owner), traits, on-chain metadata, enforced royalty |
 | `contracts/src/CrafterArt.sol` | 534 / 436 | New, generated (about 170 of its lines are the art and names as constants) | On-chain SVG pictures, trait names, rarity; no state |
 | `contracts/src/lib/FastBase64.sol` | 50 / 40 | New (Solady's technique) | Base64 for `tokenURI` |
 | `contracts/src/MineHook.sol` | 490 / 376 | Courier's `StampHook`, one bound changed | Pool owner and v4 hook: 4% fee, one-time `openPool`, locked liquidity |
@@ -177,7 +177,7 @@ it is the code live for $STAMP at `0xb07382187852485D485a171dd87b100BF4f1a8Cc`):
   wallets only, per-wallet limit, 3 at launch, 5 per transaction), the reveal (`reveal` and `setSaleOpen` no longer match
   `CourierSkins`': the owner publishes the secret, and the seed waits for the next L2 block's hash from ArbSys, set by
   anyone with `seal` within the window, after which only the owner can move it on, at most 3 times with
-  `moveEntropyOn`; audit 0792975e #1, re-check 8c7ba957 #2, second re-check 52b534f9 #2 and #4), the user-visible names (the collection is I'M DIO), the traits
+  `moveEntropyOn`; audit 0792975e #1, re-check 8c7ba957 #2, second re-check 52b534f9 #2 and #4), the user-visible names (the collection is I'M DEGEN), the traits
   (`_shuffle` on 12 bits for 3,333, combination index, weighted picks), the on-chain pictures and metadata, the
   attributes extension (a bounded raw `staticcall`, audit 0792975e #3) and `refreshMetadata`, the collection links and
   pictures, the treasury checks (never this contract; must take ETH, audit 0792975e #4), and that ownership can't be
@@ -231,7 +231,7 @@ contracts are what's audited):
    held by the hook before `openPool`; the vault and `MiningSites` point at each other; both proxies' ERC-1967
    implementation slots hold the implementations just deployed.
 6. **Owners.** The vault and the proxies get `OWNER` in their constructor/initializer. The token and the hook belong
-   to the deploying wallet only until they are renounced in the same run. I'M DIO goes to `OWNER` directly, or in
+   to the deploying wallet only until they are renounced in the same run. I'M DEGEN goes to `OWNER` directly, or in
    two steps (`acceptOwnership`) if the deploying wallet sets it up first (a wallet limit other than 3, links,
    pictures or an open sale). When the broadcasting wallet isn't `OWNER`, `DeployCrafters` prints a loud warning
    (`OWNER` must make the printed `acceptOwnership` right away; deploying from `OWNER` itself is recommended, and
@@ -248,7 +248,7 @@ contracts are what's audited):
    lets only `owner()` edit the collection (its ownership can never
    be renounced; never hand it to a contract wallet that can't sign in there); and how the reveal goes (close, then
    publish the secret and seal at once, from the panel or with a one-line `cast send` sequence; the owner-only
-   `moveEntropyOn` after a window nobody sealed in). It logs the collection as `MineWorldCrafters <address>` (I'M DIO).
+   `moveEntropyOn` after a window nobody sealed in). It logs the collection as `MineWorldCrafters <address>` (I'M DEGEN).
 
 ### Tests
 
@@ -275,7 +275,7 @@ Robinhood Chain fork; all 10 pass on one). At `25121ea` it was 243 passed, 10 sk
 | `MiningSitesInvariantTest` | 5 invariants + 1 | Never pays more than signed or worth; daily caps; forged vouchers never pay; upgrades burn and pay the treasury; vault books |
 | `MinePaymentsTest` | 10 | Split (fuzz), kinds (shop, ticket and revive at launch; a revive all to the treasury), treasury (one without ETH is fine: $MINE only), owner-only, upgrade keeps kinds, initializers |
 | `CrafterLevelsTest` | 18 | Holder-only upgrades, `maxCost` against an unlimited approval, levels stay with the token, costs and burn, extension, refresh, upgrade keeps levels |
-| `MineWorldCraftersTest` | 49 | Mint rules (3 per wallet at launch, the fourth refused), `revealStatus`'s 30-block margin while `seal` takes the whole window (fuzz), the reveal (secret first, the next block's hash, `seal` by anyone within the window, a seal within it always fixing the seed (fuzz), after it only the owner moving on, at most 3 times, nobody knowing first), renounce leaving the owner in place, the ArbSys path with a mock (the next L2 block, a parent-chain skip, expiry, a failing call), enforcement and relaxing it, royalty, the treasury check, metadata (I'M DIO) and every misbehaving extension, links, interfaces, `tokensOfOwner` gas |
+| `MineWorldCraftersTest` | 49 | Mint rules (3 per wallet at launch, the fourth refused), `revealStatus`'s 30-block margin while `seal` takes the whole window (fuzz), the reveal (secret first, the next block's hash, `seal` by anyone within the window, a seal within it always fixing the seed (fuzz), after it only the owner moving on, at most 3 times, nobody knowing first), renounce leaving the owner in place, the ArbSys path with a mock (the next L2 block, a parent-chain skip, expiry, a failing call), enforcement and relaxing it, royalty, the treasury check, metadata (I'M DEGEN) and every misbehaving extension, links, interfaces, `tokensOfOwner` gas |
 | `SybilMintTest` | 4 | 10d532d5 #3: the auditor's sweep through 100 throwaway contracts reverts (the attacker holds 0), a contract can't mint, a wallet still mints 3, an EIP-7702 account mints as itself within the limit |
 | `RevealSeedTest` | 2 | Audit 0792975e #1: the auditor's proof, adapted to the current flow, and the grind over 52 reveal blocks |
 | `CrafterArtTest` | 19 | Pictures, traits and `tokenURI` equal to the JS's, shuffle bijection (fuzz), uniqueness, Base64 (fuzz), gas |
@@ -695,7 +695,7 @@ paid only in $MINE), so it has no ETH check, nor has `MinePayments`.
 
 Files: `MineWorldCrafters.sol`, `ICrafterAttributes.sol`, `CrafterArt.sol`, `lib/FastBase64.sol`.
 
-**Purpose.** The NFT, I'M DIO (`name()` "I'M DIO", `symbol()` "DIO"; tokens "I'M DIO #id"): 3,333 Crafters (DIOs),
+**Purpose.** The NFT, I'M DEGEN (`name()` "I'M DEGEN", `symbol()` "DEGEN"; tokens "I'M DEGEN #id"): 3,333 Crafters (DEGENs),
 blind mint, commit-reveal, traits, fully on-chain metadata and pictures, enforced 5% royalty.
 
 **State.** Not a proxy. OpenZeppelin `ERC721`, `ERC2981`, `Ownable2Step`, then `price`, `walletLimit` (3),
@@ -825,7 +825,7 @@ Anyone can `seal` within the window.
   keeps the mint possible) counts per minting address; several wallets get several allowances. The mint is free at
   launch, and for wallets only (`OnlyWallets`, the owner's choice after third re-check 10d532d5 #3): one transaction
   can't sweep it through throwaway contracts, each a fresh address under the limit. A determined bot then needs a
-  funded wallet and a transaction for every 3 DIOs (accepted). An account delegated with EIP-7702 still mints as
+  funded wallet and a transaction for every 3 DEGENs (accepted). An account delegated with EIP-7702 still mints as
   itself, within the same limit per address. Smart-contract wallets (a Safe, ERC-4337 accounts) can't mint; they can
   buy.
 - **Ownership can never be renounced**, so OpenSea Studio, which lets only the contract's `owner()` edit the
@@ -856,7 +856,7 @@ Anyone can `seal` within the window.
 `testFuzz_ASealWithinTheWindowAlwaysFixesIt`, `test_AnExpiredEntropyBlockMovesOn`, `test_RenounceReverts`,
 `test_Arbitrum_TheEntropyIsTheNextL2Block`,
 `test_Arbitrum_AParentChainSkipChangesNothing`, `test_Arbitrum_ExpiryMovesTheEntropyBlockOn`,
-`test_Arbitrum_AFailingCallNeverMovesTheEntropyBlockOn`, `test_TokenURIBeforeAndAfterReveal` (the I'M DIO names),
+`test_Arbitrum_AFailingCallNeverMovesTheEntropyBlockOn`, `test_TokenURIBeforeAndAfterReveal` (the I'M DEGEN names),
 `test_GasHungryExtensionCantBreakTokenURI`, `test_RevertingOrSilentExtensionAddsNothing`,
 `test_MalformedOrOversizedExtensionAddsNothing`, `test_TreasuryMustTakeEth`, `test_OwnerCanRelaxEnforcementInTheOpen`,
 `test_EnforcementCanMoveButNeverBeSwitchedOff`, `test_SafeTransfersWithDataAreCheckedToo`, `test_MintsSkipTheValidator`,
@@ -980,13 +980,13 @@ currency1, including `test_StartPriceIsBoundedSoOpenPoolAlwaysWorks` at -300,000
    owner, `vault()` the vault and `predecessor()` the current distributor can take over, and a `MiningSites` proxy is
    set up only in its own constructor, so the owner proposes only one it deploys itself (3.2, guarantee 8). Any
    distributor can be replaced, one without code too (3.2, guarantee 6).
-10. **I'M DIO's looks are fixed by the first seal within a window, from public inputs only;** nobody but the owner can
+10. **I'M DEGEN's looks are fixed by the first seal within a window, from public inputs only;** nobody but the owner can
     re-roll a window nobody sealed in, and the owner at most three times, in public. In practice the owner decides
     whether a window is sealed unless holders run the sealer at the reveal time it announces: a best of four at most,
     every move public.
 11. **Every proxy of the family is set up only in its own constructor** (`OwnedUUPS.__Owned_init`): a `MiningSites`,
     `MinePayments` or `CrafterLevels` proxy deployed without its setup is nobody's, ever.
-12. **I'M DIO mints only to wallets sending their own transaction**, at most `walletLimit` per address: no contract,
+12. **I'M DEGEN mints only to wallets sending their own transaction**, at most `walletLimit` per address: no contract,
     so no one-transaction sweep of the free mint.
 
 ## 5. Admin powers, and when they end
@@ -1009,7 +1009,7 @@ currency1, including `test_StartPriceIsBoundedSoOpenPoolAlwaysWorks` at -300,000
 
 Deploy settings (`contracts/launch.env`): owner, treasury and fee recipient `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD`
 (one key, as Courier's are); start price a $5,000 fully diluted market cap for 21M $MINE; site price 0.005 ETH; caps
-1,500 per wallet and 35,000 across everyone; payment kinds shop (75% burned), ticket and revive (0%); I'M DIO free,
+1,500 per wallet and 35,000 across everyone; payment kinds shop (75% burned), ticket and revive (0%); I'M DEGEN free,
 wallets only, 3 per wallet, OpenSea's registry as validator; the
 voucher signer's address passed at launch (`MINING_SIGNER`), the key itself only in the Worker's secrets.
 
@@ -1036,15 +1036,15 @@ voucher signer's address passed at launch (`MINING_SIGNER`), the key itself only
   costs apply from the next transaction.
 - **Rounding goes in the vault's favour** (section 3.4).
 - The owner can't renounce any contract it owns, by design: the distributor, the rules, the links and the validator
-  must stay manageable, and OpenSea Studio, which lets only I'M DIO's `owner()` edit the collection, usable.
+  must stay manageable, and OpenSea Studio, which lets only I'M DEGEN's `owner()` edit the collection, usable.
 - The final supply ends below 21M (unconverted shares and unclaimed earnings are never minted; burns are permanent).
 - The site price (ETH) and costs ($MINE) are set by hand and can lag the market.
 - The treasury must accept ETH where it's sent ETH: `openSite` and paid mints send it directly. `MiningSites` and
-  I'M DIO refuse a treasury that fails a plain call with no ETH; a contract whose fallback takes calls but not ETH
+  I'M DEGEN refuse a treasury that fails a plain call with no ETH; a contract whose fallback takes calls but not ETH
   would still pass, and the owner is trusted not to pick one. `MinePayments` and `CrafterLevels` don't check
   (they pay the treasury only $MINE).
 - Days use `block.timestamp`, which the sequencer sets within the chain's bounds.
-- I'M DIO's reveal (the sequencer's L2 block hashes; sealing within 256 L2 blocks, about 26 seconds; the owner's
+- I'M DEGEN's reveal (the sequencer's L2 block hashes; sealing within 256 L2 blocks, about 26 seconds; the owner's
   bounded re-roll, up to 3 public `moveEntropyOn`s after windows nobody sealed in, then stuck: in practice a best of
   four unless holders run the sealer at the announced time), the validator and the owner's power to relax
   enforcement, wallet limits (3 per address at launch, wallets only) and unsold supply (section 3.7); the hook's single-sided launch,
@@ -1171,7 +1171,7 @@ cover the ArbSys path with a mock at `0x64`.)
 | 5 | Low: `maxCost` bounded an upgrade's price but not what it bought: a `setRates` cut mined first still charged full price | `upgradeSite(uint256 maxCost, uint256 minRateBps)` (`MiningSites.sol:323`) reverts `RateBelowMin(rate, minRateBps)` if the new level's rate is below `minRateBps` (`:331`). The web client passes the rate it showed (`web/panel.js` `upsite`, `web/chain.js` `upgradeSite`). Test: `test_RateCutMinedFirstRevertsTheUpgrade`. |
 | 6 | Low: after a seal only the owner knew the rarities, with no deadline (reveal was owner-only) | Solved by #2's redesign: the owner's one step, `reveal`, publishes the secret before the entropy block exists; from the end of that block everyone has the same two public inputs and anyone can `seal`; the owner has no step left. Test: `test_NoPartyKnowsTheLooksBeforeEveryoneCan` (the entropy doesn't exist at the reveal nor in its block; a stranger works the seed out from public data and seals; a year of owner silence holds nothing up). |
 
-Also changed since `49830f2`: the collection is renamed I'M DIO (symbol DIO) where people see it: `name()`/`symbol()`,
+Also changed since `49830f2`: the collection is renamed I'M DEGEN (symbol DEGEN) where people see it: `name()`/`symbol()`,
 the token and collection metadata (`MineWorldCrafters.sol:195`, `tokenURI`, `contractURI`), the panel, the README and
 the scripts' wording; identifiers keep their names. The web client's panel shows the reveal's status and a **Lock in the
 reveal** button that calls `seal()` right after the owner's `reveal` (and again if the window passed), and passes
@@ -1199,8 +1199,8 @@ all fail on `4de227d` (five failures, one per scenario); the tests below pass.
 | 4 | Info: `revealStatus()` said `Sealable` on the window's last block, where a seal sent on seeing it lands one block too late | `Sealable` only while `current − entropyBlock < ENTROPY_WINDOW` (`MineWorldCrafters.sol:333`); on the last block it reads `Expired` (a seal still works there, the owner's move doesn't yet). The panel acts on it (`web/panel.js:313`, `web/chain.js:420`). Test: `test_AnExpiredEntropyBlockMovesOn` (Sealable at +255, Expired at +256 where a seal still lands, the owner's move refused at +256 and accepted at +257). |
 
 Also changed since `4de227d`:
-- **The I'M DIO mint is free, at most 3 per wallet:** `walletLimit = 3` (`MineWorldCrafters.sol:117`) and
-  `CRAFTERS_WALLET_LIMIT=3` in `launch.env`, `DeployCrafters` and `deploy-mainnet.sh`; `dev.sh`'s two starter DIOs per
+- **The I'M DEGEN mint is free, at most 3 per wallet:** `walletLimit = 3` (`MineWorldCrafters.sol:117`) and
+  `CRAFTERS_WALLET_LIMIT=3` in `launch.env`, `DeployCrafters` and `deploy-mainnet.sh`; `dev.sh`'s two starter DEGENs per
   account fit under it. `setWalletLimit`'s bounds stay 1-50: 50 caps what the owner can open up and 1 keeps the mint
   possible, and nothing argues for tightening them. The panel shows "Free (gas only), at most 3 per wallet" and how many
   the wallet has minted, offers no more than it may still mint, and explains a refused fourth (`WalletLimit`). Test:
@@ -1226,7 +1226,7 @@ below. Line numbers are in the fixed files. The auditor's three proofs (`Codeles
 | --- | --- | --- |
 | 1 | Low: a vault whose distributor has no code (a launch whose proxy missed its predicted address) could never be given a working distributor: `initialize` called `bookOf` on the codeless predecessor, and the high-level call reverted before its `try/catch` | `MiningSites.initialize` calls the predecessor's `bookOf` only if it has code (`MiningSites.sol:206`) and records it as `predecessor` either way; `_import` (`:264`) and `bookOf` (`:291`) read a predecessor without code as empty books, with no call. One with code must still answer `bookOf` (`BadPredecessor`, `:153`, `:209`). MineVault's steps say so (`MineVault.sol:47`). The predicted-address check stays a hard launch precondition, and is now said to be one: `Deploy.s.sol:127`-`:133` (the comment, and the `require` kept as it was); `deploy-mainnet.sh` tells the deploying wallet to send nothing else during the launch (`:160`) and broadcasts every stage with `--slow` (`:175`), so a failed proxy transaction stops everything after it, the token's renounce included; README step 5; section 2's deploy invariant 1. 3.2's guarantee 6 now reads "a distributor can always be replaced, whatever it is". Tests: the auditor's `test_AVaultWithACodelessDistributorCanStillBeReplaced` (`CodelessDistributorProofTest`, as submitted), `test_ACodelessPredecessorHasEmptyBooks` (then a site and a claim work), `test_APredecessorWithCodeMustStillKeepBooks`. |
 | 2 | Low: `CrafterLevels.initialize` and `MinePayments.initialize` kept the late path `MiningSites` lost: a proxy of either deployed without its setup was anyone's | The constructor-only guard moved into `OwnedUUPS.__Owned_init` (`lib/OwnedUUPS.sol:52`-`:53`, error `InitializeOutsideConstructor` `:36`), the first step of every `initialize` in the family: `MiningSites.sol:192`, `CrafterLevels.sol:57`, `MinePayments.sol:62`. `MiningSites`' own copy and its error declaration are gone (the error keeps its name and selector; the tests name it `OwnedUUPS.InitializeOutsideConstructor`). NatSpec: `OwnedUUPS`, and each `initialize`. Tests: the auditor's `test_StrangerCannotInitialiseLateLevelsOrPaymentsProxies` (`LateInitProofTest`, as submitted), `test_TheGuardIsSharedByEveryProxyOfTheFamily`, and for `MiningSites` `test_InitializeOnlyInTheConstructor`, `test_aProxyLeftUninitialisedCanNeverBeSetUp`, `FakeVaultHijackTest`, `StrangerInitializesWithOwnVaultTest`. |
-| 3 | Low: the free mint's 3-per-wallet limit was per `msg.sender` only, so one transaction could sweep it through throwaway contracts (300 DIOs in one, 12 for all 3,333) | The owner chose "real wallets only": `mint` reverts `OnlyWallets` unless `msg.sender == tx.origin` (`MineWorldCrafters.sol:241`, error `:180`); the 3-per-wallet limit stays. The NatSpec (`:234`-`:239`), 3.7, the README and DESIGN state what it does and doesn't do: it stops one-transaction contract sweeps; a determined bot then needs a funded wallet and a transaction for every 3 DIOs (accepted); an account delegated with EIP-7702 still mints as itself, within the same limit per address; smart-contract wallets can't mint (they can buy). The panel's mint button explains the error (`web/chain.js:29`, shown through `explain`). Tests (`SybilMintTest`): the auditor's `test_OneActorHoldsAtMostThreeAfterOneTx`, adapted (the attacker sends the sweep itself, `tx.origin` included; the sweep reverts, the attacker holds 0, nothing is minted), `test_AContractCantMint`, `test_AWalletStillMintsThree`, `test_ADelegatedAccountMintsAsItselfWithinTheLimit` (on Prague, a delegated account's code mints 3 as the account, not 6). Every existing mint test now sends as a wallet (`vm.prank(x, x)`). |
+| 3 | Low: the free mint's 3-per-wallet limit was per `msg.sender` only, so one transaction could sweep it through throwaway contracts (300 DEGENs in one, 12 for all 3,333) | The owner chose "real wallets only": `mint` reverts `OnlyWallets` unless `msg.sender == tx.origin` (`MineWorldCrafters.sol:241`, error `:180`); the 3-per-wallet limit stays. The NatSpec (`:234`-`:239`), 3.7, the README and DESIGN state what it does and doesn't do: it stops one-transaction contract sweeps; a determined bot then needs a funded wallet and a transaction for every 3 DEGENs (accepted); an account delegated with EIP-7702 still mints as itself, within the same limit per address; smart-contract wallets can't mint (they can buy). The panel's mint button explains the error (`web/chain.js:29`, shown through `explain`). Tests (`SybilMintTest`): the auditor's `test_OneActorHoldsAtMostThreeAfterOneTx`, adapted (the attacker sends the sweep itself, `tx.origin` included; the sweep reverts, the attacker holds 0, nothing is minted), `test_AContractCantMint`, `test_AWalletStillMintsThree`, `test_ADelegatedAccountMintsAsItselfWithinTheLimit` (on Prague, a delegated account's code mints 3 as the account, not 6). Every existing mint test now sends as a wallet (`vm.prank(x, x)`). |
 | 4 | Info: in practice the owner alone decides whether each 26-second window is sealed (it alone knows when it reveals, and the only sealer shipped was its own panel), so it holds a choice among up to four seeds | No contract change. New `tools/sealer.sh`, which anyone can run with `RPC_URL` and a Foundry keystore (`--account`; `ETH_PASSWORD` may name a password file) or a browser wallet (`--browser`), and which refuses keys and passwords on the command line. It simulates `seal()` every 0.2 s, reports `SecretRevealed` and `EntropyBlockMoved` as the entropy block changes, sends `seal()` as soon as a simulation passes (the next L2 block after the entropy block), retries until the seed is set, waits through an expired window for the owner's move, and stops at `Stuck`. The README's launch step 9 (the owner announces the reveal time; the command), `DeployCrafters`' printed steps and `deploy-mainnet.sh`'s notes say so. The trust assumption is stated in the contract's `@dev` (`MineWorldCrafters.sol:63`-`:67`), 3.7, sections 1, 4 (guarantee 10) and 6: the owner gets a best of four at most, and every move is public. |
 | 5 | Info: `revealStatus`'s one-block Sealable margin was about 100 ms, shorter than sequencing, and the panel rethrew a seal that reverted on chain instead of moving on | `SEAL_MARGIN = 30` blocks, about 3 s (`MineWorldCrafters.sol:96`): `revealStatus` says Sealable only while `current − entropyBlock < ENTROPY_WINDOW − SEAL_MARGIN` (`:349`); `seal` still takes the whole window. `web/chain.js`: `send` tags a receipt that reverted (`:175`), and `revealAndSeal` (`:426`) treats a seal that reverted on chain as a reason to read the status again (`:456`): the owner then moves on, or, in the window's last 30 blocks where the move is refused with `NotExpired`, tries a seal (`:444`); anyone else is told only the owner can. The panel's notes for a closing window (`web/panel.js:326`, `:331`). Tests: `testFuzz_SealableLeavesAMarginButSealTakesTheWholeWindow`, `test_AnExpiredEntropyBlockMovesOn` (Sealable at +225; at +226 and +256 Expired, where a seal still works and the move is refused; the move at +257), `test_Arbitrum_ExpiryMovesTheEntropyBlockOn`. |
 

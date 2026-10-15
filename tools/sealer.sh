@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# I'M DIO's sealer: lock the reveal in the moment it can be, so the owner isn't the only one who decides whether a
+# I'M DEGEN's sealer: lock the reveal in the moment it can be, so the owner isn't the only one who decides whether a
 # window gets sealed. Anyone can run it (seal() costs gas only, and the seed doesn't depend on who sends it or when
 # within the window). It watches the collection (MineWorldCrafters) for SecretRevealed and EntropyBlockMoved, the two
 # events that set its entropy block, and sends seal() as soon as that block is over, in the next L2 block, retrying
@@ -24,7 +24,7 @@ cd "$(dirname "$0")/.."
 [ -n "${RPC_URL:-}" ] || { echo "Set RPC_URL to the chain's RPC (e.g. https://robinhood.drpc.org)." >&2; exit 2; }
 POLL=${POLL:-0.2}
 CRAFTERS=${CRAFTERS:-$(jq -r '.crafters // empty' contracts/deployments/robinhood-crafters.json 2>/dev/null)}
-[ -n "$CRAFTERS" ] || { echo "Set CRAFTERS to I'M DIO's address." >&2; exit 2; }
+[ -n "$CRAFTERS" ] || { echo "Set CRAFTERS to I'M DEGEN's address." >&2; exit 2; }
 
 SIGNER=()
 while [ $# -gt 0 ]; do
@@ -53,7 +53,7 @@ why() {
 }
 
 [ "$(cast code "$CRAFTERS" --rpc-url "$RPC_URL" 2>/dev/null)" != 0x ] || { echo "No contract at $CRAFTERS." >&2; exit 2; }
-say "Watching I'M DIO at $CRAFTERS ($(cast call "$CRAFTERS" 'name()(string)' --rpc-url "$RPC_URL" 2>/dev/null))."
+say "Watching I'M DEGEN at $CRAFTERS ($(cast call "$CRAFTERS" 'name()(string)' --rpc-url "$RPC_URL" 2>/dev/null))."
 seen="" said=""
 while true; do
   if out=$(cast call "$CRAFTERS" "seal()(uint256)" --rpc-url "$RPC_URL" 2>&1); then

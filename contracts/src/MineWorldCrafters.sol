@@ -33,10 +33,10 @@ interface IArbSys {
     function arbBlockHash(uint256 arbBlockNum) external view returns (bytes32);
 }
 
-/// @title MineWorldCrafters: the I'M DIO collection
-/// @notice I'M DIO (symbol DIO): 3,333 pixel-art characters for MineWorldCraft, drawn and stored entirely on chain
+/// @title MineWorldCrafters: the I'M DEGEN collection
+/// @notice I'M DEGEN (symbol DEGEN): 3,333 pixel-art characters for MineWorldCraft, drawn and stored entirely on chain
 ///         (CrafterArt). The collection was first named MineWorld Crafters; this contract and its code keep that name,
-///         and a "Crafter" in the notes below is one DIO. In the game each one boosts its holder's mining by its
+///         and a "Crafter" in the notes below is one DEGEN. In the game each one boosts its holder's mining by its
 ///         rarity and level (the game's server applies it to what it counts as earned; every payout stays within
 ///         MiningSites' and the vault's limits). Minted blind (free at launch), then revealed: each token's hair,
 ///         outfit, eyes and gaze come from a keyed shuffle of the token ids, so no two Crafters share that combination,
@@ -218,7 +218,7 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
         bytes32 seedCommit_,
         address validator_,
         CrafterArt art_
-    ) ERC721("I'M DIO", "DIO") Ownable(owner_) {
+    ) ERC721("I'M DEGEN", "DEGEN") Ownable(owner_) {
         _checkTreasury(treasury_);
         if (address(art_).code.length == 0) revert NotAContract();
         treasury = treasury_;
@@ -478,9 +478,9 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
         bytes memory json;
         if (seed == 0) {
             json = abi.encodePacked(
-                '{"name":"I\'M DIO #',
+                '{"name":"I\'M DEGEN #',
                 tokenId.toString(),
-                '","description":"A sealed I\'M DIO. Its look is revealed after the mint.","image":"data:image/svg+xml;base64,',
+                '","description":"A sealed I\'M DEGEN. Its look is revealed after the mint.","image":"data:image/svg+xml;base64,',
                 FastBase64.encode(bytes(art.sealedSvg())),
                 '","attributes":[{"trait_type":"Status","value":"Sealed"}',
                 end,
@@ -494,9 +494,9 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
                 mstore(attributes, sub(mload(attributes), 1))
             }
             json = abi.encodePacked(
-                '{"name":"I\'M DIO #',
+                '{"name":"I\'M DEGEN #',
                 tokenId.toString(),
-                '","description":"A pixel-art character for MineWorldCraft, drawn and stored entirely on chain. No two DIOs look alike. Each DIO boosts its owner\'s mining in MineWorldCraft by its rarity and level: faster mining, more $MINE per block and a higher daily cap, for active play only.","image":"data:image/svg+xml;base64,',
+                '","description":"A pixel-art character for MineWorldCraft, drawn and stored entirely on chain. No two DEGENs look alike. Each DEGEN boosts its owner\'s mining in MineWorldCraft by its rarity and level: faster mining, more $MINE per block and a higher daily cap, for active play only.","image":"data:image/svg+xml;base64,',
                 FastBase64.encode(bytes(art.render(t))),
                 '","attributes":',
                 attributes,
@@ -515,7 +515,7 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
         if (bytes(website).length != 0) links = string.concat(" Website: ", website);
         if (bytes(social).length != 0) links = string.concat(links, " Social: ", social);
         string memory json = string.concat(
-            '{"name":"I\'M DIO","description":"3,333 pixel-art characters for MineWorldCraft, a blocky mining world on Robinhood Chain. Every DIO is drawn and stored entirely on chain, and no two look alike. Each DIO boosts its owner\'s mining in MineWorldCraft by its rarity and level: faster mining, more $MINE per block and a higher daily cap, for active play only.',
+            '{"name":"I\'M DEGEN","description":"3,333 pixel-art characters for MineWorldCraft, a blocky mining world on Robinhood Chain. Every DEGEN is drawn and stored entirely on chain, and no two look alike. Each DEGEN boosts its owner\'s mining in MineWorldCraft by its rarity and level: faster mining, more $MINE per block and a higher daily cap, for active play only.',
             links,
             '"'
         );

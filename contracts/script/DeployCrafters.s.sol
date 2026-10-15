@@ -7,13 +7,13 @@ import {CrafterArt} from "../src/CrafterArt.sol";
 import {MineWorldCrafters} from "../src/MineWorldCrafters.sol";
 import {DevTransferValidator} from "./DevTransferValidator.sol";
 
-/// @notice I'M DIO (contract MineWorldCrafters) on Robinhood Chain: the on-chain art (CrafterArt), then 3,333
-///         blind-minted DIOs drawn by it, with the 5% royalty enforced.
+/// @notice I'M DEGEN (contract MineWorldCrafters) on Robinhood Chain: the on-chain art (CrafterArt), then 3,333
+///         blind-minted DEGENs drawn by it, with the 5% royalty enforced.
 ///
 ///   ./script/deploy-mainnet.sh crafters --broadcast --browser --browser-disable-open
 ///
 /// Env: SEED_COMMIT (keccak256(abi.encode(secret)); keep the secret until the reveal), TREASURY (mint money, if any,
-/// and royalties), CRAFTERS_PRICE (wei per DIO, 0: free), CRAFTERS_WALLET_LIMIT (1-50, 3 by default, the contract's own),
+/// and royalties), CRAFTERS_PRICE (wei per DEGEN, 0: free), CRAFTERS_WALLET_LIMIT (1-50, 3 by default, the contract's own),
 /// CRAFTERS_VALIDATOR (OpenSea's creator fee enforcement registry), CRAFTERS_WEBSITE and CRAFTERS_SOCIAL (the
 /// collection's links) and CRAFTERS_IMAGE and CRAFTERS_BANNER (its picture and banner URLs), all four optional: the
 /// owner can set them any time with setLinks and setCollectionImages. OPEN_SALE (false: open it later with
@@ -23,7 +23,7 @@ import {DevTransferValidator} from "./DevTransferValidator.sol";
 /// registry, so it deploys DevTransferValidator instead. TREASURY must take ETH (a wallet, or a contract with a receive
 /// function): the collection refuses one that doesn't.
 ///
-/// I'M DIO's ownership can never be renounced (the contract refuses), so OpenSea Studio, which lets only owner() edit
+/// I'M DEGEN's ownership can never be renounced (the contract refuses), so OpenSea Studio, which lets only owner() edit
 /// the collection, can always be used. Deploy it from the OWNER wallet itself, so OWNER is its creator and its owner;
 /// from another wallet the script prints a loud warning, and any acceptOwnership OWNER must make at once.
 ///
@@ -63,7 +63,7 @@ contract DeployCrafters is Script {
         if (crafters.owner() != owner) crafters.transferOwnership(owner);
         vm.stopBroadcast();
         console2.log("MineWorldCrafters", address(crafters));
-        console2.log("  (the I'M DIO collection, symbol DIO)");
+        console2.log("  (the I'M DEGEN collection, symbol DEGEN)");
         console2.log("CrafterArt", address(art));
         console2.log("  validator", validator);
         console2.log("  owner", crafters.owner());
@@ -96,17 +96,17 @@ contract DeployCrafters is Script {
         if (deployer != owner) {
             console2.log("");
             console2.log("  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-            console2.log("  !! WARNING: the deploying wallet is not OWNER. OpenSea Studio lets only owner() edit I'M DIO.");
+            console2.log("  !! WARNING: the deploying wallet is not OWNER. OpenSea Studio lets only owner() edit I'M DEGEN.");
             console2.log("  !!   deployer (the collection's creator):", deployer);
             console2.log("  !!   OWNER:                               ", owner);
             if (crafters.pendingOwner() != address(0)) {
                 console2.log("  !! OWNER must accept the collection RIGHT AWAY (the call above): until then the deployer owns it.");
             }
-            console2.log("  !! Recommended: deploy I'M DIO from the OWNER wallet itself, so it is creator and owner both.");
+            console2.log("  !! Recommended: deploy I'M DEGEN from the OWNER wallet itself, so it is creator and owner both.");
             console2.log("  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
         }
-        console2.log("I'M DIO owner():       ", crafters.owner());
-        console2.log("I'M DIO pendingOwner():", crafters.pendingOwner());
+        console2.log("I'M DEGEN owner():       ", crafters.owner());
+        console2.log("I'M DEGEN pendingOwner():", crafters.pendingOwner());
 
         // (dev.sh sets DEV_CHAIN: an Anvil fork of Robinhood Chain has its chain ID too, and must not touch the real record.)
         if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) || block.chainid != 4663 || vm.envOr("DEV_CHAIN", false)) return crafters;
