@@ -36,7 +36,7 @@ import { packTraits, unpackTraits } from "./degen-skin.js";
 import { connectChain, explain } from "./chain.js";
 import { createPanel } from "./panel.js";
 import { cleanChat } from "./chat-rules.js";
-import { fmtMine, toUnits, WORLD_DAILY_CAP } from "./rewards.js";
+import { fmtMine, toUnits, WORLD_DAILY_CAP, UNIT } from "./rewards.js";
 import { NO_BOOST, dailyCap, withSpeed, withMove, describe } from "./boosts.js";
 import { sfx } from "./sfx.js";
 import { roomUrl } from "./config.js";
@@ -790,6 +790,7 @@ if (url) {
       prelaunch = !!flags.practice;
       setTicketsFree(flags.ticketsFree, prelaunch);
       reviveFree = !!flags.reviveFree;
+      if (Array.isArray(flags.world)) { worldMined = flags.world; drawTicker(); }
       drawDead();
       drawLedger();
       $("onlineN").textContent = `● ${count} online`;
@@ -884,7 +885,11 @@ if (url) {
       Object.assign(ledger, { today, total });
       if (what === "cap" || what === "worldcap" || !units) {
         if (what === "cap") showTarget(`Your daily $MINE limit (${fmtMine(ledger.cap)}) is reached: come back tomorrow (UTC)`, 2500);
-        if (what === "worldcap") showTarget(`Today's ${WORLD_DAILY_CAP.toLocaleString("en-US")} $MINE for everyone is all mined: back at 00:00 UTC`, 2500);
+        if (what === "worldcap") {
+          showTarget(`Today's ${WORLD_DAILY_CAP.toLocaleString("en-US")} $MINE for everyone is all mined: back at 00:00 UTC`, 2500);
+          worldMined = [WORLD_DAILY_CAP * UNIT, Math.floor((Date.now() + serverOffset) / 86_400_000)];
+          drawTicker();
+        }
       }
       else {
         sfx.coin();
@@ -908,6 +913,7 @@ if (url) {
     mobdead(id) { confirmed.add(id); mobs.kill(id); sfx.win(); },
     chat(l) { if (!voice?.isMuted(l.name)) chatLine(l.name, l.text, l.mine); },
     count(n) { $("onlineN").textContent = `● ${n} online`; },
+    world(units, day) { worldMined = [units, day]; drawTicker(); },
     error(text) { toast(text, "bad"); },
     signedin(wallet, token, l) {
       Object.assign(ledger, { signedIn: true, wallet, name: l.name, today: l.today, total: l.total, cap: l.cap, boost: NO_BOOST });
@@ -971,6 +977,9 @@ function tryResume(wallet) {
 let chain = null, panel = null;
 let sitesOpen = null; // mining sites open, as the room last said (the title screen's count; the panel's admin box)
 let countAt = 0; // when the room was last asked (loadCount)
+// The top ticker (drawTicker): everyone's earnings today as the room last said ([units, UTC day]), and the $MINE left in
+// the mining vault (whole $MINE, read from the chain).
+let worldMined = null, vaultLeft = null, tickerShown = null;
 async function signIn() {
   if (!net?.online) throw new Error("The world server is offline right now, so earnings can't be counted. Try again soon.");
   if (!chain?.account) await chain?.login();
@@ -979,6 +988,10 @@ async function signIn() {
 }
 connectChain().catch((e) => { console.warn("chain unavailable", e); return null; }).then((c) => {
   chain = c;
+  // The ticker's "left in the mining vault": read now and every 10 minutes (it only falls as players convert).
+  const readVault = () => c?.vaultBalance().then((wei) => { vaultLeft = Number(wei / 10n ** 18n); drawTicker(); }).catch(() => {});
+  readVault();
+  setInterval(readVault, 10 * 60_000);
   panel = createPanel({
     chain, net,
     ledger: () => ledger,
@@ -1296,9 +1309,58 @@ function loadCount(retry = true) {
       $("sitesTitle").hidden = false;
       $("sitesTitle").textContent = `⛏ ${j.sites.toLocaleString("en-US")} mining site${j.sites === 1 ? "" : "s"} open`;
     } else if (retry) setTimeout(() => loadCount(false), 5000);
+    // (the server's clock for the day and the countdown until the welcome sets it, as the title screen has no welcome)
+    if (typeof j?.now === "number" && !net?.online) serverOffset = j.now - Date.now();
+    if (typeof j?.mined === "number" && typeof j?.day === "number") { worldMined = [Math.round(j.mined * UNIT), j.day]; }
+    drawTicker();
   }).catch(() => {});
 }
 loadCount();
+
+// ---------------------------------------------------------------- the ticker
+// Scrolls across the top of the screen: how much of today's WORLD_DAILY_CAP $MINE is left to mine (everyone's earnings
+// today, as the room counts them: /count on the title screen, then the welcome and ["world", ...] while people mine),
+// when it resets (00:00 UTC), what's left in the mining vault, and the mining sites open. Hidden until the room has said.
+// The message is repeated to fill the screen twice over, and the strip slides by half its width, so it loops seamlessly.
+function drawTicker() {
+  const el = $("ticker");
+  if (!worldMined) { el.hidden = true; document.body.classList.remove("ticking"); return; }
+  const now = Date.now() + serverOffset, day = Math.floor(now / 86_400_000);
+  const mined = worldMined[1] === day ? worldMined[0] : 0; // (a new UTC day starts at 0)
+  const left = Math.max(0, WORLD_DAILY_CAP * UNIT - mined);
+  const ms = (day + 1) * 86_400_000 - now, h = Math.floor(ms / 3_600_000), m = Math.floor((ms % 3_600_000) / 60_000);
+  const n = (x) => Math.floor(x).toLocaleString("en-US");
+  const items = left > 0
+    ? [`⛏ <b>${n(left / UNIT)}</b> of ${n(WORLD_DAILY_CAP)} $MINE left to mine today`, `${n(mined / UNIT)} mined so far today`]
+    : [`⛏ All <b>${n(WORLD_DAILY_CAP)}</b> $MINE for today are mined`];
+  items.push(`Resets in <b>${h}h ${m}m</b> (00:00 UTC)`);
+  if (vaultLeft !== null) items.push(`<b>${n(vaultLeft)}</b> $MINE left in the mining vault`);
+  if (sitesOpen !== null) items.push(`${n(sitesOpen)} mining site${sitesOpen === 1 ? "" : "s"} open`);
+  const text = items.join(" &nbsp;&nbsp;·&nbsp;&nbsp; ");
+  el.hidden = false;
+  document.body.classList.add("ticking");
+  if (text === tickerShown) return;
+  tickerShown = text;
+  const track = $("tickerTrack");
+  // How far the strip has slid (px), so new text carries on from the same spot (a changed duration alone would make the
+  // running animation jump).
+  const anim = track.getAnimations?.()[0], oldS = parseFloat(track.style.animationDuration) || 40;
+  const slid = anim && typeof anim.currentTime === "number"
+    ? (((anim.currentTime / 1000) % oldS) / oldS) * (track.getBoundingClientRect().width / 2) : 0;
+  track.innerHTML = `<span>${text}</span>`;
+  const w = track.firstElementChild.getBoundingClientRect().width || 800;
+  const copies = Math.max(1, Math.ceil(innerWidth / w));
+  const half = `<span>${text}</span>`.repeat(copies);
+  track.innerHTML = half + half.replaceAll("<span>", `<span aria-hidden="true">`);
+  const s = Math.max(12, Math.round((w * copies) / 45)); // (about 45 px a second)
+  track.style.animationDuration = `${s}s`;
+  const moving = track.getAnimations?.()[0], loop = track.getBoundingClientRect().width / 2;
+  if (moving && loop > 0) moving.currentTime = ((slid % loop) / loop) * s * 1000;
+}
+setInterval(drawTicker, 30_000); // (the countdown, and a new day)
+const redrawTicker = () => { tickerShown = null; drawTicker(); };
+addEventListener("resize", redrawTicker);
+document.fonts?.ready.then(redrawTicker);
 
 // ---------------------------------------------------------------- mining, placing, fighting
 let breaking = null; // { x, y, z, b, t, need }

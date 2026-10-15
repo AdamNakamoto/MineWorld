@@ -33,7 +33,7 @@ function chestModel(who) {
   x.fillStyle = "rgba(20, 16, 8, 0.65)";
   x.fillRect(4, 6, 248, 36);
   x.fillStyle = "#f5c832";
-  x.font = "600 22px 'Pixelify Sans', ui-monospace, monospace";
+  x.font = "800 24px Nunito, system-ui, sans-serif";
   x.textAlign = "center";
   x.textBaseline = "middle";
   x.fillText(lootLabel(who), 128, 25, 236);

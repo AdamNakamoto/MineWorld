@@ -391,7 +391,11 @@ Knock-outs, loot chests and revives on the wire (the rest of the protocol is in 
 | room → game | `["revived", x, y, z, txHash]` / `["reviveno", why, txHash, retry]` | Done, the room has you there / refused: retry 1 the chain couldn't be read, 2 the payment wasn't used (it can pay for a later revive), 0 never |
 | room → game | `["welcome", ..., { practice, ticketsFree, reviveFree }]` | Whether revives are free right now |
 
-`GET /count` answers `{ online, sites }` for the title screen: the players connected, and the mining sites open. Old
+`GET /count` answers `{ online, sites, mined, day, cap }` for the title screen: the players connected, the mining sites
+open, and everyone's earnings so far today (`mined`, in $MINE, on UTC day `day`, out of `cap`). The ticker across the
+top of the screen shows what's left of today's cap, when it resets, the $MINE left in the mining vault and the sites
+open; in the world it's kept up to date by the welcome's `world: [units, day]` and `["world", units, day]`, which the
+room sends everyone at most every 15 seconds while people earn. Old
 logs can't be read from Cloudflare (the official RPC answers its log queries with 429, publicnode serves none), so the
 room keeps the wallets it has seen with a site (`site:<wallet>`, and how many under `sitecount`): it checks
 `MiningSites.hasSite` when a wallet signs in to earn and when its game says it opened one; the first count checks

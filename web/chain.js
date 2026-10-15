@@ -461,6 +461,8 @@ export async function connectChain() {
       }
     },
     claimable: (total) => read(C.sites, "claimable", [account, total]),
+    /// $MINE still in the mining vault (wei): what's left to mine of its 10,500,000.
+    vaultBalance: () => read(C.sites, "vaultBalance"),
     mintCrafters: (n, price) => send(C.crafters, "mint", [BigInt(n)], price * BigInt(n)),
     /// The I'M DEGEN reveal, done the honest way, at once: with `secret` (the owner), publish it (reveal), then, as soon
     /// as the next block is over, seal() (anyone can), retrying until the seed is set. If a window passed with nobody

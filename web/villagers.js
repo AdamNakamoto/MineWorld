@@ -228,7 +228,7 @@ function tag(text) {
   g.fillStyle = "rgba(20, 28, 32, 0.6)";
   g.fillRect(4, 6, 248, 36);
   g.fillStyle = "#f5e27a";
-  g.font = "600 22px 'Pixelify Sans', ui-monospace, monospace";
+  g.font = "800 24px Nunito, system-ui, sans-serif";
   g.textAlign = "center";
   g.textBaseline = "middle";
   g.fillText(text, 128, 25, 236);

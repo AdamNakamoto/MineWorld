@@ -117,6 +117,10 @@ const RECHECKS = 2, RECHECK_EVERY_S = 15; // re-reads of a player's NFTs they ma
 // opened one; the first count checks SITES_SEED (the sites' owners when this count began) and every wallet in the
 // ledger, in one multicall. A site whose wallet never signs in to the game isn't counted. Sites never close.
 const SITES_KEY = "sitecount", SITE_KEY = "site:";
+// The top ticker shows how much of today's WORLD_DAILY_CAP is left to mine: games get today's total in their welcome
+// and in /count, and everyone hears ["world", units, day] as it grows, at most every WORLD_CAST_MS (sent while people
+// earn, so it never keeps the room awake).
+const WORLD_CAST_MS = 15_000;
 const SITES_WAIT_MS = 4000, SITES_RETRY_MS = 10_000; // (a first count that failed is tried again this soon at most)
 const MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11";
 const SITES_ABI = parseAbi(["function hasSite(address) view returns (bool)"]);
@@ -242,8 +246,9 @@ export class World extends DurableObject {
     const url = new URL(req.url);
     if (url.pathname === "/count") {
       const wait = new Promise((r) => setTimeout(() => r(this.siteCount ?? null), SITES_WAIT_MS));
-      const sites = await Promise.race([this.sitesOpen(), wait]);
-      return Response.json({ online: this.players().length, sites }, { headers: { "access-control-allow-origin": "*" } });
+      const [sites, w] = await Promise.all([Promise.race([this.sitesOpen(), wait]), this.worldToday()]);
+      return Response.json({ online: this.players().length, sites, mined: w.total / UNIT, day: w.day, cap: WORLD_DAILY_CAP, now: Date.now() },
+        { headers: { "access-control-allow-origin": "*" } });
     }
     if (req.headers.get("upgrade") !== "websocket") return new Response("Expected a WebSocket", { status: 426 });
     const origin = req.headers.get("origin");
@@ -342,8 +347,9 @@ export class World extends DurableObject {
     this.save(ws, a);
     const here = this.onZone(a.zone).filter(([w]) => w !== ws);
     const total = this.players().length;
+    const w = await this.worldToday();
     this.send(ws, ["welcome", a.id, Date.now(), here.map(([, o]) => this.shown(o)), total, a.zone,
-      { practice: this.practice, ticketsFree: this.ticketsFree(), reviveFree: this.reviveFree() }]);
+      { practice: this.practice, ticketsFree: this.ticketsFree(), reviveFree: this.reviveFree(), world: [w.total, w.day] }]);
     const voices = this.players().filter(([w, o]) => w !== ws && o.voice).map(([, o]) => o.id);
     if (voices.length) this.send(ws, ["voices", voices]);
     this.zoneCast(a.zone, ["join", ...this.shown(a)], ws);
@@ -1242,7 +1248,18 @@ export class World extends DurableObject {
     this.dirtyWorld = true;
     this.scheduleFlush();
     if (ws) this.send(ws, ["earn", c, l.today, l.total, what]);
+    this.castWorld();
     return c;
+  }
+  /// Everyone hears today's world total (see WORLD_CAST_MS); a change inside the wait goes out when it's over.
+  castWorld() {
+    const due = (this.worldCastAt ?? 0) + WORLD_CAST_MS - Date.now();
+    if (due > 0) {
+      this.worldCastTimer ??= setTimeout(() => { this.worldCastTimer = null; this.castWorld(); }, due);
+      return;
+    }
+    this.worldCastAt = Date.now();
+    if (this.world) this.everyone(["world", this.world.total, this.world.day]);
   }
 
   scheduleFlush() {
@@ -1613,6 +1630,7 @@ export class World extends DurableObject {
     } else if (what === "world") {
       (await this.worldToday()).total = toUnits(mine);
       this.dirtyWorld = true;
+      this.castWorld();
     } else return;
     this.scheduleFlush();
     const l = a.wallet ? (await this.ledger(a.wallet))[1] : null;

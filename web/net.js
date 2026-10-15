@@ -58,7 +58,7 @@ function nameTag(text) {
   g.fillStyle = "#ffffff";
   g.textAlign = "center";
   g.textBaseline = "middle";
-  g.font = "600 26px 'Silkscreen', ui-monospace, monospace";
+  g.font = "800 28px Nunito, system-ui, sans-serif";
   g.fillText(text, 128, 33, 228);
   const t = new THREE.CanvasTexture(c);
   t.minFilter = THREE.LinearFilter;
@@ -253,6 +253,7 @@ export function createNet(url, scene, h) {
       case "mobdead": h.mobdead?.(m[1]); break;
       case "chat": h.chat?.({ id: m[1], name: m[2], text: m[3], mine: m[1] === id }); break;
       case "count": h.count?.(m[1]); break;
+      case "world": h.world?.(m[1], m[2]); break;
       case "err": h.error?.(m[1]); break;
       case "sys": h.sys?.(m[1]); break;
       case "regrow": h.regrow?.(m[1]); break;
