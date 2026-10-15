@@ -783,8 +783,11 @@ seed; 0 until `reveal`), `entropyMoves` (how often the owner moved it on), `tota
    most 3 times, each in public, and any seal within a window fixes the seed for good; after `reveal` the sale never
    reopens, and after the seal the looks never change.
 3. **No two alike:** `_shuffle` is a bijection on 0..3,332 for every seed, and 3,480 ≥ 3,333 makes the combination
-   index injective, so no two tokens share eyes, mouth, cheeks and top (all always visible: headwear covers at most
-   the face's top row, and shades keep the eyes' shape).
+   index injective, so no two tokens share eyes, mouth, cheeks and top, and all of them always show: headwear covers at
+   most the face's top row, shades keep the eyes' shape, and nothing worn covers the blush (row 4's outer pixels; the
+   glasses' lower frame and the hood's face edge stop short of them since the pre-launch review below).
+   `tools/degen-skin-check.mjs --faces` draws all 800,400 combinations of top x headwear x accessory x the 60 faces
+   and finds each face distinct; `test_BlushShowsUnderGlassesAndTheHood` checks the same on chain.
 4. **Royalty enforcement is always routed through the validator:** no path moves a Crafter between two non-zero
    addresses without calling it (`transferFrom`, both `safeTransferFrom`s, anything reaching `_update`); it can't be
    set to zero or a non-contract; `royaltyInfo` is always 5% to the treasury; holders can always move their own
@@ -1314,3 +1317,13 @@ is the card.
 **Gas**: `tokenURI` 1.45M-2.30M over the vector tokens; the heaviest of the 3,333 under the vector seed (#525) 2.30M;
 the sealed one 1.01M. `render` alone 1.02M-1.54M. All well under the 15M the test requires; the five heaviest fit a
 10M `eth_call`.
+
+**Pre-launch review (not IMD).** Before the mainnet deploy, six independent reviewers went over everything since
+25121ea (access and initialisation, MiningSites accounting, MinePayments and the token, MineWorldCrafters, the
+renderer, the deploy path), and two or three skeptics tried to refute each finding. One survived, LOW: the glasses'
+lower frame (`web/degen-skin-art.js`, accessory "glasses") and the hood's face edge (headwear style "hood") covered
+both blush pixels, so about 180 tokens per seed listed "Cheeks: Blush" without showing it, and under about 0.5% of
+seeds two tokens drew the same card (e.g. #1311 and #2077 under keccak256(abi.encode("sim 213"))), against the
+on-chain "no two look alike". Fixed in the art (the glasses' lower frame is `.11..11.`, the hood's edge starts at row
+5), CrafterArt.sol and the vectors regenerated, and two checks added (above). A direct simulation over 4,000 random
+seeds compares every token's card with every other's and finds no two alike.

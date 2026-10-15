@@ -18,7 +18,7 @@ import * as D from "../web/degen-skin.js";
 import * as ART from "../web/degen-skin-art.js";
 
 const hash = { keccak256, encodeAbiParameters };
-const seeds = (process.argv[2] ?? "20261015,1,2,3,4").split(",").map(BigInt);
+const seeds = (process.argv.slice(2).find((a) => !a.startsWith("--")) ?? "20261015,1,2,3,4").split(",").map(BigInt);
 let failed = false;
 const fail = (msg) => { console.error(`FAIL ${msg}`); failed = true; };
 
@@ -95,4 +95,27 @@ for (const [k, list] of Object.entries(lists)) {
   const row = list.map((o) => `${o.name}${o.tier ? ` [${D.RARITIES[o.tier]}]` : ""}${t ? ` ${o.w} (${pct(o.w / t)})` : ""}`);
   console.log(`  ${k} (${list.length}): ${row.join("; ")}`);
 }
+// ---------------------------------------------------------------- every face shows (--faces, about 90 s)
+// Two DEGENs never share their eyes, mouth, cheeks and top (the shuffle), and the on-chain text says no two look alike:
+// so nothing worn may hide any part of the face. For every top, headwear and accessory, the 60 eye, mouth and cheek
+// combinations must draw 60 different cards. (The pre-launch review found glasses and the hood covering the blush.)
+if (process.argv.includes("--faces")) {
+  let combos = 0, clashes = 0;
+  for (let top = 0; top < D.TOPS.length; top++) for (let headwear = 0; headwear < D.HEADWEAR.length; headwear++)
+    for (let accessory = 0; accessory < D.ACCESSORIES.length; accessory++) {
+      const seen = new Map();
+      for (let eyes = 0; eyes < D.EYES.length; eyes++) for (let mouth = 0; mouth < D.MOUTHS.length; mouth++)
+        for (let cheeks = 0; cheeks < D.CHEEKS.length; cheeks++) {
+          const t = { background: 0, skin: 0, eyes, mouth, cheeks, top, bottoms: 0, shoes: 0, headwear, accessory };
+          const card = D.cardSvg(t);
+          combos++;
+          if (seen.has(card)) {
+            if (clashes++ < 5) fail(`${D.TOPS[top].name} + ${D.HEADWEAR[headwear].name} + ${D.ACCESSORIES[accessory].name}: faces ${seen.get(card)} and ${[eyes, mouth, cheeks]} look the same`);
+          } else seen.set(card, [eyes, mouth, cheeks].join(","));
+        }
+    }
+  if (clashes) fail(`${clashes} face combinations look like another`);
+  else console.log(`Every face shows: ${combos} cards, each face combination different under every top, headwear and accessory`);
+}
+
 if (failed) process.exit(1);

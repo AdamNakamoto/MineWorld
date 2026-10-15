@@ -121,6 +121,20 @@ contract CrafterArtTest is Test {
         assertEq(art.traitName(10, 2), "Legendary");
     }
 
+    /// Nothing worn hides the blush (the pre-launch review found glasses and the hood covering it, so two DEGENs that
+    /// differed only in cheeks could look the same): with glasses (accessory 2) and with the hood (headwear 22) up, a
+    /// blush still changes the picture. tools/degen-skin-check.mjs --faces checks every face under everything worn.
+    function test_BlushShowsUnderGlassesAndTheHood() public view {
+        Traits memory a = Traits(0, 0, 1, 1, 0, 5, 0, 0, 0, 2);
+        Traits memory b = Traits(0, 0, 1, 1, 1, 5, 0, 0, 0, 2);
+        assertTrue(keccak256(bytes(art.render(a))) != keccak256(bytes(art.render(b))), "glasses hide the blush");
+        a.accessory = 0;
+        b.accessory = 0;
+        a.headwear = 22;
+        b.headwear = 22;
+        assertTrue(keccak256(bytes(art.render(a))) != keccak256(bytes(art.render(b))), "the hood hides the blush");
+    }
+
     function test_TraitsPastTheTablesRevert() public {
         Traits memory ok = Traits(9, 8, 5, 4, 1, 57, 11, 7, 22, 9);
         art.render(ok);

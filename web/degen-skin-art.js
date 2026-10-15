@@ -82,7 +82,8 @@ export const MOUTHS = [
   { name: "Tongue", mask: "......../.K....K./..KKKK../....RR.." },
 ];
 
-/// Cheeks, on the face's row 4.
+/// Cheeks, on the face's row 4, at its two outer pixels: nothing worn may cover those (the glasses' lower frame and
+/// the hood's face edge stop short of them), so a blush always shows and no two DEGENs can look alike.
 export const CHEEKS = [
   { name: "None", mask: "" },
   { name: "Blush", mask: "B......B" },
@@ -287,7 +288,7 @@ export const HEAD_STYLES = {
   cap: `hat T 0 0 * * 1; hat S 0 0 * 1 1; hat F 0 0 8 1 3; hat T 0 6 * 2 3; hat T 3 2 2 2 2; hat K 3 1 2 1 2`,
   beanie: `hat T 0 0 * * 1; hat S 0 0 * 1 2; hat T 3 3 2 2 3; hat T 0 1 8 1 2; hat T 0 5 8 1 2`,
   hood: `hat T 0 0 * * 1; hat K 0 0 * * 1; hat R 0 0 7 * 1; hat L 1 0 7 * 1; hat~ R 7 0 1 1 1; hat~ R 7 4 1 4 1
-    hat F 0 0 8 1 2; hat~ F 0 4 1 4 2; hat K 0 7 * 1 2`,
+    hat F 0 0 8 1 2; hat~ F 0 5 1 3 2; hat K 0 7 * 1 2`,
   hardhat: `hat T 0 0 * * 1; hat T 3 0 2 * 3; hat S 0 0 * 1 2; hat F 3 0 2 1 4; hat T 3 6 2 2 5`,
   crown: `hat S 0 0 * 1 1; hat F 3 0 2 1 4; hat~ R 3 0 2 1 5; hat K 3 0 2 1 4
     hat T 0 0 8 8 :31.11.13/1......1/......../1......1/1......1/......../1......1/31.11.13`,
@@ -335,7 +336,7 @@ export const HEADWEAR = [
 /// drawn on the lens in this colour), so every expression still shows.
 export const ACCESSORY_STYLES = {
   chain: `jacket F 1 1 6 4 :1....1/.1..1./..11../..22..`,
-  glasses: `hat F 0 0 8 1 :111..111; hat F 0 4 8 1 :111..111; hat F 3 1 2 1 1; hat~ R 0 1 7 1 1`,
+  glasses: `hat F 0 0 8 1 :111..111; hat F 0 4 8 1 :.11..11.; hat F 3 1 2 1 1; hat~ R 0 1 7 1 1`,
   shades: `hat F 0 1 3 3 2; hat F 5 1 3 3 2; hat F 0 0 8 1 1; hat F 3 1 2 1 1; hat~ R 0 1 8 1 1; hat~ R 7 1 1 3 2; hat F 1 1 1 1 3; hat F 6 1 1 1 3`,
   scarf: `jacket S 0 0 * 3 1; jacket S 0 2 24 1 :2.2.2.2.2.2.2.2.2.2.2.2.; jacket F 1 3 2 5 1; jacket F 1 5 2 1 2; jacket F 1 7 2 1 2`,
   backpack: `jacket K 1 1 6 9 1; jacket K 1 1 6 1 2; jacket K 2 5 4 3 2; jacket K 3 6 2 1 3; jacket~ F 1 0 1 8 3; jacket~ T 1 0 1 * 3`,
