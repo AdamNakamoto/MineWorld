@@ -1,0 +1,21 @@
+<!doctype html><html><head><meta charset="utf-8"><title>downsample</title>
+<style>html,body{margin:0;overflow:hidden;background:#000}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas><script>
+// Downsamples a supersampled render (?src=&w=&h=) by repeated halving, then one last high-quality step, for clean
+// antialiasing without seams. Used by render.sh.
+const q = new URLSearchParams(location.search), W = +q.get("w"), H = +q.get("h");
+const im = new Image();
+im.onload = () => {
+  let src = im, w = im.width, h = im.height;
+  while (w / 2 >= W) {
+    const c = document.createElement("canvas"); c.width = w / 2; c.height = h / 2;
+    const g = c.getContext("2d"); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high";
+    g.drawImage(src, 0, 0, w / 2, h / 2); src = c; w /= 2; h /= 2;
+  }
+  const out = document.getElementById("c"); out.width = W; out.height = H;
+  const g = out.getContext("2d"); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high";
+  g.drawImage(src, 0, 0, W, H);
+  document.title = "done";
+};
+im.src = q.get("src");
+</script></body></html>

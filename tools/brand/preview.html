@@ -1,0 +1,59 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Brand preview</title>
+<!-- Checks the brand art at the sizes people see it: the logo circle-cropped at 400, 120, 48, 32 and 24 px on dark and
+     light grounds; the X header at 50% with the profile picture drawn where X desktop puts it (a circle centred at
+     (207, 500) with radius 167 at full size, ringed in the page colour) and the y 60-440 band that survives X's top
+     and bottom crops; the OpenSea banner at 50% with phone centre crops of 840 and 700 px, and those crops on their
+     own as a phone shows them. Rendered by render.sh when it is given an output path. -->
+<style>
+  html, body { margin: 0; width: 1640px; background: #15171c; font-family: ui-monospace, Menlo, monospace; color: #d9dce3; }
+  .sec { padding: 18px 28px 8px; } h2 { margin: 0 0 12px; font-size: 15px; font-weight: 600; letter-spacing: .02em; }
+  .row { display: flex; gap: 24px; align-items: flex-end; flex-wrap: wrap; }
+  .pane { padding: 20px; border-radius: 12px; display: flex; gap: 20px; align-items: flex-end; }
+  .dark { background: #000; } .light { background: #fff; color: #333; }
+  .c { border-radius: 50%; display: block; }
+  .cap { font-size: 12px; text-align: center; margin-top: 6px; opacity: .75; }
+  .banner { position: relative; overflow: visible; }
+  .banner img.b { display: block; }
+  .pfp { position: absolute; border-radius: 50%; box-sizing: border-box; border: 3px solid #000; }
+  .band { position: absolute; left: 0; right: 0; border-top: 2px dashed rgba(255,90,90,.95); border-bottom: 2px dashed rgba(255,90,90,.95); pointer-events: none; }
+  .crop { position: absolute; top: -4px; bottom: -4px; border-left: 2px dashed; border-right: 2px dashed; pointer-events: none; }
+  .crop span { position: absolute; top: -18px; left: 4px; font-size: 11px; white-space: nowrap; }
+  .phone { overflow: hidden; border-radius: 10px; position: relative; }
+  .phone img { display: block; position: absolute; top: 0; }
+</style></head><body>
+<div class="sec"><h2>LOGO, CIRCLE-CROPPED: 400 / 120 / 48 / 32 / 24 PX (ON BLACK AND ON WHITE)</h2>
+  <div class="row" id="logos"></div>
+</div>
+<div class="sec"><h2 style="margin-top:6px">X HEADER AT 50%: PROFILE PICTURE AT ITS REAL DESKTOP SIZE (CENTRE 207,500, R 167); DASHED: THE SAFE BAND Y 60-440</h2>
+  <div class="row" style="align-items:flex-start">
+    <div class="banner" style="margin-bottom:96px"><img class="b" src="../../web/brand/banner-x.png" width="750" height="250">
+      <img class="pfp" src="../../web/brand/logo.png" style="left:20px;top:166.5px;width:167px;height:167px">
+      <div class="band" style="top:30px;height:190px"></div></div>
+    <div class="banner"><img class="b" src="../../web/brand/banner-x.png" width="750" height="250"></div>
+  </div>
+</div>
+<div class="sec"><h2>OPENSEA BANNER AT 50%: PHONE CENTRE CROPS OF 840 PX (RED) AND 700 PX (YELLOW)</h2>
+  <div class="row" style="align-items:flex-start">
+    <div class="banner" style="margin-top:14px"><img class="b" src="../../web/brand/banner-opensea.png" width="700" height="175">
+      <div class="crop" style="left:140px;width:416px;border-color:rgba(255,90,90,.95)"><span style="color:#ff6a6a">840</span></div>
+      <div class="crop" style="left:175px;width:346px;border-color:rgba(255,215,60,.95)"><span style="color:#ffd43c;top:auto;bottom:-18px">700</span></div></div>
+    <div>
+      <div class="cap" style="text-align:left;margin:0 0 6px">840 px crop, as a phone shows it</div>
+      <div class="phone" style="width:390px;height:162.5px"><img src="../../web/brand/banner-opensea.png" style="left:-130px;width:650px;height:162.5px"></div>
+    </div>
+    <div>
+      <div class="cap" style="text-align:left;margin:0 0 6px">700 px crop</div>
+      <div class="phone" style="width:390px;height:195px"><img src="../../web/brand/banner-opensea.png" style="left:-195px;width:780px;height:195px"></div>
+    </div>
+  </div>
+</div>
+<script>
+const sizes = [400, 120, 48, 32, 24];
+let h = "";
+for (const cls of ["dark", "light"]) {
+  h += `<div class="pane ${cls}">` + sizes.map((s) => `<div><img class="c" src="../../web/brand/logo.png" width="${s}" height="${s}"><div class="cap">${s}</div></div>`).join("") + "</div>";
+}
+document.getElementById("logos").innerHTML = h;
+</script>
+</body></html>

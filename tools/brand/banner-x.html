@@ -1,0 +1,74 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>MineWorldCraft X header</title>
+<!-- The X (Twitter) header, 1500 x 500. The wordmark and two lines of type in the middle band (y 60-440), over a lineup
+     of seven DEGENs (their real NFT cards) standing on the tiny blocky home planet at dusk; the miner in the middle
+     holds the game's crystal pickaxe. The rocket and its three worlds are in the night sky, and a small
+     "ROBINHOOD CHAIN / MINEWORLDCRAFT.FUN" label sits in the clear sky at the left, above the profile picture.
+     Keep-out: X draws the profile picture over the lower left, a circle centred at (207, 500) with radius 167 at
+     this size (x 40-374, y 333 and below), so only sky and glow go there. Every number can be tried out with a URL
+     parameter (?wy=90&size=216...). -->
+<style>
+  html, body { margin: 0; width: 1500px; height: 500px; overflow: hidden; background: #0b1026; }
+  #bg, #fg { position: absolute; left: 0; top: 0; width: 1500px; height: 500px; }
+</style>
+<script src="lib/degen.js"></script><script src="lib/brand.js"></script><script src="lib/scene.js"></script></head>
+<body>
+<canvas id="bg"></canvas>
+<svg id="fg" xmlns="http://www.w3.org/2000/svg" width="1500" height="500" viewBox="0 0 1500 500"></svg>
+<script>
+(() => {
+const W = 1500, H = 500, Q = new URLSearchParams(location.search), qn = (k, d) => (Q.has(k) ? +Q.get(k) : d);
+const C = qn("cx", 790);                       // the art's middle: a little right of centre, away from the avatar
+const AV = { x: 207, y: 500, r: 167 };          // X's profile picture on desktop
+const g = S.ctx(document.getElementById("bg"), W, H);
+
+// The wordmark (the brand's own pixel letters, WORLD in gold) and two lines: the game's own title-screen line, and
+// the collection.
+const wy = qn("wy", 84), wp = qn("wp", 7), wm = S.wordmark(C, wy, wp);
+const l1 = S.text([["MINE. FIGHT. BUILD. EARN ", "ink"], ["$MINE", "gold"], [".", "ink"]], qn("p1", 3), C, qn("y1", 168));
+const l2 = S.text([["I'M DEGEN", "green"], [" · ", "lilac"], ["3,333 ON-CHAIN FROGS", "ink"]], qn("p2", 3), C, qn("y2", 202));
+// Where: a small label in the clear sky at the left, above the profile picture (it starts at y 333).
+const u1 = S.text([["ROBINHOOD CHAIN", "lilac"]], 2, qn("ux", 190), qn("uy", 270), { gap: 1 });
+const u2 = S.text([["MINEWORLDCRAFT.FUN", "gold"]], 2, qn("ux", 190), qn("uy", 270) + 22, { gap: 1 });
+// Night sky (no stars in the type), then the dusk glow along the planet's rim.
+const R = qn("R", 2800), crest = qn("crest", 406);
+S.sky(g, W, H, { glowTop: 150, glowBottom: 470, stars: 210, seed: 11,
+  keepOut: [S.box(wm, wy, wp, 26), S.box(l1, qn("y1", 168), 3), S.box(l2, qn("y2", 202), 3), S.box(u1, qn("uy", 270), 2), S.box(u2, qn("uy", 270) + 22, 2)] });
+S.dusk(g, W, H, { cx: C, cy: crest + R, R }, { depth: qn("dd", 130), mid: C, spread: 900 });
+
+// The rocket's worlds: Cinderfall (the boss), Deepvein (2x $MINE), Red Mesa (PvP), and the rocket on its way.
+S.worlds.boss(g, qn("bx", 176), qn("by", 172), 44, 4);
+S.worlds.deep(g, qn("dx", 1404), qn("dy", 96), 32, 4);
+S.worlds.pvp(g, qn("px", 1250), qn("py", 262), 18, 4);
+for (let i = 0; i < 6; i++) { g.fillStyle = `rgba(232,236,244,${0.55 - i * 0.08})`; const s = 10 - i; g.fillRect(1318 - i * 21, 238 + i * 14, s, s); }
+S.rocket(g, qn("rx", 1350), qn("ry", 206), 5, 0.98);
+
+// The home planet. Plants keep out of the avatar.
+const planet = S.roundPlanet(g, W, H, { cx: C, cy: crest + R, R, bs: 32, seed: 4, dirt: 1, mine: 0.17, plants: 70, plantSpan: 17,
+  avoid: (x) => Math.hypot(x - AV.x, 470 - AV.y) < AV.r + 20 });
+
+// The lineup: real DEGENs, made from the collection's traits. dx: where each stands, px from the middle along the
+// ground; the miner in the middle with the crystal pickaxe.
+const deg = (dx) => (Math.asin(dx / R) * 180) / Math.PI;
+const L = [
+  { dx: -370, look: { skin: "Ice", eyes: "Surprised", mouth: "Small O", top: "Space Suit White", hw: "Goggles" } },
+  { dx: -262, look: { skin: "Purple", eyes: "Happy", mouth: "Smile", cheeks: "Blush", top: "Royal Robe Red", hw: "Wizard Hat" } },
+  { dx: -152, look: { skin: "Mint", eyes: "Calm", mouth: "Tongue", cheeks: "Blush", top: "Hoodie Black", hw: "Cap Red", acc: "Shades", bottoms: "Joggers Black", shoes: "Sneakers Red" } },
+  { dx: 0, look: { skin: "Leaf", eyes: "Calm", mouth: "Grin", cheeks: "Blush", top: "Miner's Vest Orange", hw: "Hard Hat Yellow", acc: "Tool Belt", bottoms: "Cargo Khaki", shoes: "Work Boots" },
+    k: qn("mk", 1), held: S.heldPick(qn("ps", 4.6), qn("prot", 4)) },
+  { dx: 156, look: { skin: "Gold", eyes: "Starry", mouth: "Grin", cheeks: "Blush", top: "Royal Robe Purple", hw: "Crown Jewelled", acc: "Gold Chain" } },
+  { dx: 264, look: { skin: "Stone", eyes: "Determined", mouth: "Flat", top: "Knight Armour Iron", hw: "Viking Helmet" } },
+  { dx: 372, look: { skin: "Lime", eyes: "Calm", mouth: "Grin", top: "Tracksuit Teal", hw: "Headphones Pink", acc: "Gold Chain" } },
+];
+const size = qn("size", 208);
+// $MINE crystal and gold growing between them
+let fg = S.crystalOn(planet, deg(-207), 3.2) + S.crystalOn(planet, deg(210), 3.2, "gold") + S.crystalOn(planet, deg(-316), 2.5, "gold")
+  + S.crystalOn(planet, deg(318), 2.5) + S.crystalOn(planet, deg(452), 2.8) + S.crystalOn(planet, deg(-84), 2.2);
+// back to front: the ones further round the planet first
+for (const d of [...L].sort((a, b) => Math.abs(b.dx) - Math.abs(a.dx))) fg += S.degenOn(planet, B.degen(d.look), deg(d.dx), size * (d.k || 1), { held: d.held });
+
+fg += wm.svg + l1.svg + l2.svg + (qn("url", 1) ? u1.svg + u2.svg : "");
+document.getElementById("fg").innerHTML = fg;
+document.title = `l1 ${Math.round(l1.w)} l2 ${Math.round(l2.w)}`;
+})();
+</script></body></html>

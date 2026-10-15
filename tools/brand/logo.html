@@ -1,0 +1,75 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>MineWorldCraft logo</title>
+<!-- The profile picture and collection logo, 1000 x 1000: the DEGEN miner as a mascot bust, rendered in 3D from its
+     real 64 x 64 skin (the outer layer standing off the head as in the game, so the eyes and the hard hat have depth),
+     the head drawn big so the face reads at 48 and 32 px. A navy sticker outline with a thin violet rim holds the
+     silhouette against the stepped purple glow of $MINE crystal; a $MINE crystal cluster (the game's own sprite)
+     grows up from the lower right edge; the hard hat's lamp is lit. Everything that matters sits inside the central circle. -->
+<style>html,body{margin:0;width:1000px;height:1000px;overflow:hidden;background:#0b1026}svg{display:block}</style>
+<script src="lib/degen.js"></script><script src="lib/brand.js"></script></head>
+<body><svg id="s" xmlns="http://www.w3.org/2000/svg" width="1000" height="1000" viewBox="0 0 1000 1000"></svg>
+<script>
+const Q = new URLSearchParams(location.search);
+const num = (k, d) => (Q.has(k) ? +Q.get(k) : d);
+// The mascot: the DEGEN miner, from the collection's own traits (hi-vis vest, yellow hard hat with its lamp).
+const t = B.degen({ skin: "Leaf", eyes: "Calm", mouth: "Grin", cheeks: "Blush", top: "Miner's Vest Orange", hw: "Hard Hat Yellow", acc: "Gold Chain" });
+const px = D.skinColours(t);
+const u = num("u", 46), topK = num("top", 0.22);               // screen pixels per skin pixel; how much of the top shows
+const P = { ex: [u, -0.11 * u], ey: [0, -u], ez: [0.36 * u, topK * u], ox: 0, oy: 0 };
+const proj = ([x, y, z]) => [P.ox + x * P.ex[0] + y * P.ey[0] + z * P.ez[0], P.oy + x * P.ex[1] + y * P.ey[1] + z * P.ez[1]];
+// Centre the head's bounding box (hat layer: x -4.5..4.5, y 23.5..32.5, z -4.5..4.5) on (cx, cy).
+const corners = [];
+for (const x of [-4.5, 4.5]) for (const y of [23.5, 32.5]) for (const z of [-4.5, 4.5]) corners.push(proj([x, y, z]));
+const bx = [Math.min(...corners.map((c) => c[0])), Math.max(...corners.map((c) => c[0]))];
+const by = [Math.min(...corners.map((c) => c[1])), Math.max(...corners.map((c) => c[1]))];
+const cx = num("cx", 500), cy = num("cy", 440);
+P.ox = cx - (bx[0] + bx[1]) / 2; P.oy = cy - (by[0] + by[1]) / 2;
+// A chibi bust: the body and arms at k times the head's scale, hanging from the neck.
+const k = num("body", 0.62), [nx, ny] = proj([0, 24, 0]);
+const Pb = { ex: P.ex.map((v) => v * k), ey: P.ey.map((v) => v * k), ez: P.ez.map((v) => v * k), ox: 0, oy: 0 };
+Pb.ox = nx - 24 * Pb.ey[0]; Pb.oy = ny - 24 * Pb.ey[1];
+let figure = B.render3d(px, [["armL", "FT", 0], ["armL", "FT", 1], ["body", "FT", 0], ["body", "FT", 1], ["armR", "FRT", 0], ["armR", "FRT", 1]], Pb, { seam: 0.6 });
+figure += B.render3d(px, [["head", "KLU", 1], ["head", "FRT", 0], ["head", "FRT", 1]], P, { seam: 0.6 });
+
+// A stepped (pixel) disc of radius r on a grid of g pixels, centred at (x, y).
+function pixDisc(x, y, r, g, fill) {
+  let d = "";
+  for (let j = -Math.ceil(r / g); j < Math.ceil(r / g); j++) {
+    const yy = (j + 0.5) * g, n = Math.round(Math.sqrt(Math.max(0, r * r - yy * yy)) / g);
+    if (n > 0) d += `M${x - n * g} ${y + j * g}h${2 * n * g}v${g}h${-2 * n * g}z`;
+  }
+  return `<path fill="${fill}" d="${d}"/>`;
+}
+// A pixel sparkle: a plus with a bright core, arms k wide and 2.5k long.
+const star = (x, y, k, c, core = "#ffffff") => `<path fill="${c}" d="M${x - k / 2} ${y - 2.5 * k}h${k}v${5 * k}h${-k}z M${x - 2.5 * k} ${y - k / 2}h${5 * k}v${k}h${-5 * k}z"/><rect x="${x - k / 2}" y="${y - k / 2}" width="${k}" height="${k}" fill="${core}"/>`;
+
+const ol = num("ol", 16), rim = num("rim", 7), rimC = Q.get("rimc") || "#a47cff";
+let s = `<defs>
+  <filter id="outline" x="-20%" y="-20%" width="140%" height="140%">
+    <feMorphology in="SourceAlpha" operator="dilate" radius="${ol}" result="d"/>
+    <feMorphology in="SourceAlpha" operator="dilate" radius="${ol + rim}" result="d2"/>
+    <feFlood flood-color="${rimC}"/><feComposite in2="d2" operator="in" result="r"/>
+    <feFlood flood-color="#0b1026"/><feComposite in2="d" operator="in" result="o"/>
+    <feMerge>${rim ? '<feMergeNode in="r"/>' : ""}<feMergeNode in="o"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <radialGradient id="lamp" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#fffbe0" stop-opacity=".9"/><stop offset=".4" stop-color="#ffe680" stop-opacity=".35"/><stop offset="1" stop-color="#ffd23f" stop-opacity="0"/></radialGradient>
+  <radialGradient id="gemglow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#ef86ff" stop-opacity=".55"/><stop offset=".5" stop-color="#d25bff" stop-opacity=".2"/><stop offset="1" stop-color="#d25bff" stop-opacity="0"/></radialGradient>
+</defs>
+<rect width="1000" height="1000" fill="#0b1026"/>`;
+// The $MINE crystal glow: stepped rings, navy to violet.
+const G = 20;
+s += pixDisc(500, 500, 480, G, "#171340") + pixDisc(500, 500, 430, G, "#24185a") + pixDisc(500, 500, 370, G, "#351d7c") + pixDisc(500, 500, 300, G, "#4a239f");
+// Sparkles in the glow, clear of the hard hat.
+if (num("stars", 1)) s += star(150, 520, 9, "#f5c832", "#fff6c8") + star(870, 560, 7, "#f5c832", "#fff6c8") + star(250, 800, 6, "#ef86ff", "#ffd8ff") + star(285, 120, 6, "#ef86ff", "#ffd8ff") + star(730, 105, 6, "#f5c832", "#fff6c8");
+// The DEGEN, with a navy outline and a thin violet rim so it reads as a sticker at any size.
+s += `<g filter="url(#outline)">${figure}</g>`;
+// A $MINE crystal cluster (the game's own crystal sprite) growing up from the lower right edge, with a soft glow.
+const gem = num("gem", 1), gx = num("gx", 780), gy = num("gy", 825), gk = num("gk", 13);
+if (gem) s += `<circle cx="${gx}" cy="${gy}" r="${gk * 12}" fill="url(#gemglow)"/><g transform="translate(${gx - 8 * gk} ${gy - 8 * gk}) scale(${gk})" shape-rendering="crispEdges">${B.sprite(B.CLUSTER_ART, "crystal", "#0b1026", 1)}</g>`;
+// The hard hat's lamp, lit: a soft glow, then a crisp pixel glint (a long four-point star with a white core).
+const [lx, ly] = proj([0, 31.95, 4.5]);
+const glint = (x, y, k) => `<g shape-rendering="crispEdges"><path fill="#fff6c8" d="M${x - k / 2} ${y - 4 * k}h${k}v${8 * k}h${-k}z M${x - 4 * k} ${y - k / 2}h${8 * k}v${k}h${-8 * k}z"/>`
+  + `<path fill="#ffffff" d="M${x - k / 2} ${y - 2 * k}h${k}v${4 * k}h${-k}z M${x - 2 * k} ${y - k / 2}h${4 * k}v${k}h${-4 * k}z M${x - k} ${y - k}h${2 * k}v${2 * k}h${-2 * k}z"/></g>`;
+s += `<circle cx="${lx}" cy="${ly}" r="${u * 1.25}" fill="url(#lamp)"/>` + glint(lx, ly - u * 0.05, u * 0.16);
+document.getElementById("s").innerHTML = s;
+</script></body></html>

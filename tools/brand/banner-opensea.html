@@ -1,0 +1,59 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>I'M DEGEN OpenSea banner</title>
+<!-- The OpenSea collection banner, 1400 x 350. In the middle (phones crop the sides): a small MINEWORLDCRAFT over a
+     big gold I'M DEGEN and the line "3,333 PLAYABLE ON-CHAIN FROGS", all under 600 px wide, and the rocket
+     lifting off its pad at the top of the tiny blocky home planet. Three DEGENs (their real NFT cards) stand on each
+     shoulder of the planet, wholly outside an 840 px centre crop (x 280-1120), so a phone shows each one whole or
+     not at all. Every number can be tried out with a URL parameter. -->
+<style>
+  html, body { margin: 0; width: 1400px; height: 350px; overflow: hidden; background: #0b1026; }
+  #bg, #fg { position: absolute; left: 0; top: 0; width: 1400px; height: 350px; }
+</style>
+<script src="lib/degen.js"></script><script src="lib/brand.js"></script><script src="lib/scene.js"></script></head>
+<body>
+<canvas id="bg"></canvas>
+<svg id="fg" xmlns="http://www.w3.org/2000/svg" width="1400" height="350" viewBox="0 0 1400 350"></svg>
+<script>
+(() => {
+const W = 1400, H = 350, CX = 700, Q = new URLSearchParams(location.search), qn = (k, d) => (Q.has(k) ? +Q.get(k) : d);
+const g = S.ctx(document.getElementById("bg"), W, H);
+const R = qn("R", 5000), crest = qn("crest", 292);
+// The title block: MINEWORLDCRAFT, then I'M DEGEN big in gold, then the line.
+const k1 = B.pixelLine([["MINE", S.INK, S.SH.ink], ["WORLD", S.GOLD, S.SH.gold], ["CRAFT", S.INK, S.SH.ink]], B.DISPLAY, qn("kp", 3), CX, qn("ky", 24), { gap: 2, shadow: [1, 1], ol: S.OUT });
+const t1 = B.pixelLine([["I'M DEGEN", S.GOLD, S.SH.gold]], B.DISPLAY, qn("tp", 8), CX, qn("ty", 62), { gap: 2, shadow: [1, 1], ol: S.OUT });
+const l1 = S.text([["3,333 ", "ink"], ["PLAYABLE", "green"], [" ON-CHAIN FROGS", "ink"]], qn("lp", 3), CX, qn("ly", 158));
+// Night sky (no stars in the type), then the dusk glow along the planet's rim.
+S.sky(g, W, H, { glowTop: 70, glowBottom: 320, stars: 190, seed: 23,
+  keepOut: [S.box(k1, qn("ky", 24), qn("kp", 3), 14), S.box(t1, qn("ty", 62), qn("tp", 8), 26), S.box(l1, qn("ly", 158), qn("lp", 3))] });
+S.dusk(g, W, H, { cx: CX, cy: crest + R, R }, { depth: qn("dd", 96), mid: CX, spread: 800 });
+// The rocket's other worlds, small, clear of the title.
+S.worlds.boss(g, qn("bx", 316), qn("by", 70), 24, 4);
+S.worlds.deep(g, qn("dx", 1086), qn("dy", 60), 20, 4);
+S.worlds.pvp(g, qn("px", 1036), qn("py", 214), 12, 4);
+
+// The home planet: its crest under the title, its shoulders under the DEGENs.
+const planet = S.roundPlanet(g, W, H, { cx: CX, cy: crest + R, R, bs: 32, seed: 6, dirt: 1, mine: 0.2, plants: 90, plantSpan: 8.5,
+  avoid: (x) => Math.abs(x - CX) < 70 });
+// The rocket lifting off its pad at the top of the world.
+S.launch(g, CX, crest - qn("rp", 6), qn("rp", 6), qn("lift", 10), 5);
+
+// The DEGENs on the planet's shoulders, real looks from the collection's traits; dx: px from the middle.
+const deg = (dx) => (Math.asin(dx / R) * 180) / Math.PI;
+const L = [
+  { dx: -630, look: { skin: "Purple", eyes: "Happy", mouth: "Smile", cheeks: "Blush", top: "Royal Robe Red", hw: "Wizard Hat" } },
+  { dx: -548, look: { skin: "Ice", eyes: "Surprised", mouth: "Small O", top: "Space Suit White", hw: "Goggles" } },
+  { dx: -466, look: { skin: "Leaf", eyes: "Calm", mouth: "Grin", cheeks: "Blush", top: "Miner's Vest Orange", hw: "Hard Hat Yellow", acc: "Tool Belt", bottoms: "Cargo Khaki", shoes: "Work Boots" } },
+  { dx: 466, look: { skin: "Gold", eyes: "Starry", mouth: "Grin", cheeks: "Blush", top: "Royal Robe Purple", hw: "Crown Jewelled", acc: "Gold Chain" } },
+  { dx: 548, look: { skin: "Mint", eyes: "Calm", mouth: "Tongue", cheeks: "Blush", top: "Hoodie Black", hw: "Cap Red", acc: "Shades", bottoms: "Joggers Black", shoes: "Sneakers Red" } },
+  { dx: 630, look: { skin: "Stone", eyes: "Determined", mouth: "Flat", top: "Knight Armour Iron", hw: "Viking Helmet" } },
+];
+const size = qn("size", 172);
+let fg = S.crystalOn(planet, deg(-96), 3) + S.crystalOn(planet, deg(96), 3, "gold") + S.crystalOn(planet, deg(-372), 2.6, "gold") + S.crystalOn(planet, deg(370), 2.6)
+  + S.crystalOn(planet, deg(-290), 2.2) + S.crystalOn(planet, deg(292), 2.2, "gold");
+for (const d of [...L].sort((a, b) => Math.abs(b.dx) - Math.abs(a.dx))) fg += S.degenOn(planet, B.degen(d.look), deg(d.dx), size, { maxTilt: 8 });
+
+fg += k1.svg + t1.svg + l1.svg;
+document.getElementById("fg").innerHTML = fg;
+document.title = `k ${Math.round(k1.w)} t ${Math.round(t1.w)} l ${Math.round(l1.w)}`;
+})();
+</script></body></html>
