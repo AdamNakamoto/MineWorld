@@ -32,61 +32,74 @@ contract CraftersHarness is MineWorldCrafters {
     }
 }
 
-/// The on-chain art and traits against the JS that defines them (web/crafters.js, web/crafters-art.js): every
-/// expected value in CrafterVectors.sol was worked out by the JS (tools/gen-crafter-art.mjs).
+/// Exposes a DEGEN's skin as the game's texture holds it: 64 x 64 RGBA bytes, row by row (empty pixels all zero), as
+/// skinPixels() in web/degen-skin.js gives it (tests only: the collection itself only shows the card).
+contract ArtHarness is CrafterArt {
+    function skin(Traits calldata t) external pure returns (bytes memory rgba) {
+        uint256 canvas = _skin(t);
+        rgba = new bytes(16384);
+        assembly ("memory-safe") {
+            let out := add(rgba, 32)
+            for { let i := 0 } lt(i, 4096) { i := add(i, 1) } {
+                let c := mload(add(canvas, shl(5, i)))
+                // 0x1rrggbb, or 0: rr gg bb ff, or four zeros.
+                if c { mstore(add(out, shl(2, i)), shl(224, or(shl(8, and(c, 0xffffff)), 0xff))) }
+            }
+        }
+    }
+}
+
+/// The on-chain art and traits against the JS that defines them (web/degen-skin.js, web/degen-skin-art.js): every
+/// expected value in CrafterVectors.sol was worked out by the JS (tools/gen-degen-art.mjs).
 contract CrafterArtTest is Test {
-    CrafterArt art;
+    ArtHarness art;
     CraftersHarness crafters;
 
     function setUp() public {
-        art = new CrafterArt();
+        art = new ArtHarness();
         crafters = new CraftersHarness(address(new StrictValidator()), art);
     }
 
     /// The generated files must come from the JS as it is now. If this fails, run
-    /// `~/.local/node/bin/node tools/gen-crafter-art.mjs` and run the tests again.
+    /// `~/.local/node/bin/node tools/gen-degen-art.mjs` and run the tests again.
     function test_ArtIsUpToDateWithTheJs() public view {
-        string memory hint = ": changed since CrafterArt.sol was generated; run ~/.local/node/bin/node tools/gen-crafter-art.mjs";
-        assertEq(keccak256(vm.readFileBinary("../web/crafters-art.js")), CrafterVectors.ART_JS, string.concat("web/crafters-art.js", hint));
-        assertEq(keccak256(vm.readFileBinary("../web/crafters.js")), CrafterVectors.RULES_JS, string.concat("web/crafters.js", hint));
-        assertEq(keccak256(vm.readFileBinary("../tools/gen-crafter-art.mjs")), CrafterVectors.GENERATOR, string.concat("tools/gen-crafter-art.mjs", hint));
+        string memory hint = ": changed since CrafterArt.sol was generated; run ~/.local/node/bin/node tools/gen-degen-art.mjs";
+        assertEq(keccak256(vm.readFileBinary("../web/degen-skin-art.js")), CrafterVectors.ART_JS, string.concat("web/degen-skin-art.js", hint));
+        assertEq(keccak256(vm.readFileBinary("../web/degen-skin.js")), CrafterVectors.RULES_JS, string.concat("web/degen-skin.js", hint));
+        assertEq(keccak256(vm.readFileBinary("../tools/gen-degen-art.mjs")), CrafterVectors.GENERATOR, string.concat("tools/gen-degen-art.mjs", hint));
     }
 
     // ---------------------------------------------------------------- pictures
 
-    /// Every option of every trait, drawn byte for byte as svg() in web/crafters.js draws it.
+    /// Every option of every trait: the skin pixel for pixel as skinPixels() paints it, the card byte for byte as
+    /// cardSvg() writes it, the attributes and the rarity.
     function test_RenderMatchesTheJs() public view {
         CrafterVectors.Look[] memory v = CrafterVectors.looks();
         for (uint256 i; i < v.length; i++) {
+            string memory at = string.concat("look ", vm.toString(i));
             bytes memory svg = bytes(art.render(v[i].traits));
-            assertEq(svg.length, v[i].svgLength, string.concat("look ", vm.toString(i), ": length"));
-            assertEq(keccak256(svg), v[i].svg, string.concat("look ", vm.toString(i), ": picture"));
-            assertEq(art.rarityOf(v[i].traits), v[i].rarity, string.concat("look ", vm.toString(i), ": rarity"));
+            assertEq(svg.length, v[i].cardLength, string.concat(at, ": card length"));
+            assertEq(keccak256(svg), v[i].card, string.concat(at, ": card"));
+            assertEq(keccak256(art.skin(v[i].traits)), v[i].skin, string.concat(at, ": skin"));
+            assertEq(keccak256(bytes(art.attributes(v[i].traits))), v[i].attributes, string.concat(at, ": attributes"));
+            assertEq(art.rarityOf(v[i].traits), v[i].rarity, string.concat(at, ": rarity"));
         }
     }
 
     function test_SealedPictureMatchesTheJs() public view {
-        assertEq(keccak256(bytes(art.sealedSvg())), CrafterVectors.SEALED_SVG);
-    }
-
-    function test_AttributesMatchTheJs() public view {
-        CrafterVectors.Look[] memory v = CrafterVectors.looks();
-        for (uint256 i; i < v.length; i++) {
-            assertEq(keccak256(bytes(art.attributes(v[i].traits))), v[i].attributes, string.concat("look ", vm.toString(i)));
-        }
+        bytes memory svg = bytes(art.sealedSvg());
+        assertEq(svg.length, CrafterVectors.SEALED_SVG_LENGTH);
+        assertEq(keccak256(svg), CrafterVectors.SEALED_SVG);
     }
 
     function test_TraitNamesMatchTheJs() public {
-        uint256[9] memory counts = [
-            CrafterRules.BACKGROUNDS, CrafterRules.SKINS, CrafterRules.EYES, CrafterRules.GAZES, CrafterRules.BLUSHES,
-            CrafterRules.HAIRS, CrafterRules.HATS, CrafterRules.OUTFITS, CrafterRules.RARITIES
+        uint256[11] memory counts = [
+            CrafterRules.BACKGROUNDS, CrafterRules.SKINS, CrafterRules.EYES, CrafterRules.MOUTHS, CrafterRules.CHEEKS,
+            CrafterRules.TOPS, CrafterRules.BOTTOMS, CrafterRules.SHOES, CrafterRules.HEADWEAR, CrafterRules.ACCESSORIES,
+            CrafterRules.RARITIES
         ];
-        bytes32[9] memory expected = [
-            CrafterVectors.BACKGROUND_NAMES, CrafterVectors.SKIN_NAMES, CrafterVectors.EYES_NAMES,
-            CrafterVectors.GAZE_NAMES, CrafterVectors.BLUSH_NAMES, CrafterVectors.HAIR_NAMES, CrafterVectors.HAT_NAMES,
-            CrafterVectors.OUTFIT_NAMES, CrafterVectors.RARITY_NAMES
-        ];
-        for (uint256 kind; kind < 9; kind++) {
+        bytes32[11] memory expected = CrafterVectors.names();
+        for (uint256 kind; kind < 11; kind++) {
             string memory all = art.traitName(kind, 0);
             for (uint256 i = 1; i < counts[kind]; i++) all = string.concat(all, "|", art.traitName(kind, i));
             assertEq(keccak256(bytes(all)), expected[kind], vm.toString(kind));
@@ -94,31 +107,37 @@ contract CrafterArtTest is Test {
             art.traitName(kind, counts[kind]);
         }
         vm.expectRevert(CrafterArt.BadTraits.selector);
-        art.traitName(9, 0);
-        assertEq(art.traitName(0, 7), "Gold");
-        assertEq(art.traitName(8, 0), "Common");
-        assertEq(art.traitName(8, 1), "Rare");
-        assertEq(art.traitName(8, 2), "Legendary");
-        assertEq(art.traitName(3, 1), "Right");
-        assertEq(art.traitName(5, 8), "Rainbow Long");
-        assertEq(art.traitName(6, 0), "None");
+        art.traitName(11, 0);
+        assertEq(art.traitName(0, 0), "Sky");
+        assertEq(art.traitName(1, 8), "Gold");
+        assertEq(art.traitName(2, 5), "Starry");
+        assertEq(art.traitName(5, 0), "Hoodie Grey");
+        assertEq(art.traitName(5, 41), "Miner's Vest Orange");
+        assertEq(art.traitName(5, 57), "Knight Armour Gold");
+        assertEq(art.traitName(8, 0), "None");
+        assertEq(art.traitName(8, CrafterRules.HOOD), "Hood");
+        assertEq(art.traitName(10, 0), "Common");
+        assertEq(art.traitName(10, 1), "Rare");
+        assertEq(art.traitName(10, 2), "Legendary");
     }
 
     function test_TraitsPastTheTablesRevert() public {
-        Traits memory ok = Traits(35, 15, 5, 1, 7, 4, 9, 1);
+        Traits memory ok = Traits(9, 8, 5, 4, 1, 57, 11, 7, 22, 9);
         art.render(ok);
         art.attributes(ok);
         assertEq(art.rarityOf(ok), 2);
-        for (uint256 f; f < 8; f++) {
+        for (uint256 f; f < 10; f++) {
             Traits memory t = ok;
-            if (f == 0) t.hair = 36;
-            if (f == 1) t.outfit = 16;
+            if (f == 0) t.background = 10;
+            if (f == 1) t.skin = 9;
             if (f == 2) t.eyes = 6;
-            if (f == 3) t.gaze = 2;
-            if (f == 4) t.background = 8;
-            if (f == 5) t.skin = 5;
-            if (f == 6) t.hat = 10;
-            if (f == 7) t.blush = 2;
+            if (f == 3) t.mouth = 5;
+            if (f == 4) t.cheeks = 2;
+            if (f == 5) t.top = 58;
+            if (f == 6) t.bottoms = 12;
+            if (f == 7) t.shoes = 8;
+            if (f == 8) t.headwear = 23;
+            if (f == 9) t.accessory = 10;
             vm.expectRevert(CrafterArt.BadTraits.selector);
             art.render(t);
             vm.expectRevert(CrafterArt.BadTraits.selector);
@@ -128,50 +147,109 @@ contract CrafterArtTest is Test {
         }
     }
 
-    // ---------------------------------------------------------------- traits
-
-    /// traitsOf(seed, id) as web/crafters.js works it out, and the token's picture and attributes.
-    function test_TraitsMatchTheJs() public view {
-        CrafterVectors.Token[] memory v = CrafterVectors.tokens();
-        for (uint256 i; i < v.length; i++) {
-            Traits memory t = crafters.traitsFor(CrafterVectors.SEED, v[i].id);
-            string memory id = vm.toString(v[i].id);
-            assertEq(abi.encode(t), abi.encode(v[i].traits), string.concat("token ", id, ": traits"));
-            assertEq(keccak256(bytes(art.render(t))), v[i].svg, string.concat("token ", id, ": picture"));
-            assertEq(keccak256(bytes(art.attributes(t))), v[i].attributes, string.concat("token ", id, ": attributes"));
-            assertEq(art.rarityOf(t), v[i].rarity, string.concat("token ", id, ": rarity"));
+    /// Bottoms and Shoes are listed only when the top doesn't bring its own trousers or boots: a hoodie shows both,
+    /// a suit (its own trousers) no Bottoms, a space suit (trousers and boots) neither.
+    function test_BottomsAndShoesFollowTheTop() public view {
+        string[3] memory names = [art.traitName(5, 0), art.traitName(5, 30), art.traitName(5, 54)];
+        assertEq(names[0], "Hoodie Grey");
+        assertEq(names[1], "Suit Black");
+        assertEq(names[2], "Space Suit White");
+        uint8[3] memory tops = [0, 30, 54];
+        uint256[3] memory kinds = [uint256(11), 10, 9];
+        for (uint256 i; i < 3; i++) {
+            string memory json = string.concat('{"attributes":', art.attributes(Traits(0, 0, 0, 0, 0, tops[i], 3, 4, 0, 0)), "}");
+            assertEq(Json.rarityAt(json) + 1, kinds[i]);
+            assertEq(Json.has(json, '"Bottoms"'), i == 0);
+            assertEq(Json.has(json, '"Shoes"'), i < 2);
         }
     }
 
-    /// The whole token: valid JSON, its name, the picture as a base64 data URI of render(traits), the attributes.
+    // ---------------------------------------------------------------- traits
+
+    /// traitsOf(seed, id) as web/degen-skin.js works it out, under several seeds, and each token's skin, card,
+    /// attributes and rarity.
+    function test_TraitsMatchTheJs() public view {
+        CrafterVectors.Token[] memory v = CrafterVectors.tokens();
+        uint256[3] memory seeds = CrafterVectors.seeds();
+        for (uint256 i; i < v.length; i++) {
+            Traits memory t = crafters.traitsFor(seeds[v[i].seed], v[i].id);
+            string memory at = string.concat("seed ", vm.toString(v[i].seed), " token ", vm.toString(v[i].id));
+            assertEq(abi.encode(t), abi.encode(v[i].traits), string.concat(at, ": traits"));
+            bytes memory svg = bytes(art.render(t));
+            assertEq(svg.length, v[i].cardLength, string.concat(at, ": card length"));
+            assertEq(keccak256(svg), v[i].card, string.concat(at, ": card"));
+            assertEq(keccak256(art.skin(t)), v[i].skin, string.concat(at, ": skin"));
+            assertEq(keccak256(bytes(art.attributes(t))), v[i].attributes, string.concat(at, ": attributes"));
+            assertEq(art.rarityOf(t), v[i].rarity, string.concat(at, ": rarity"));
+        }
+    }
+
+    /// Every one of the 3,333 under each seed: their traits and rarities, the whole run of them, exactly as the JS.
+    function test_EveryTokensTraitsMatchTheJs() public view {
+        uint256[3] memory seeds = CrafterVectors.seeds();
+        bytes32[3] memory traitRuns = CrafterVectors.traitsRuns();
+        bytes32[3] memory rarityRuns = CrafterVectors.rarityRuns();
+        uint256[3][3] memory expected = CrafterVectors.rarityCounts();
+        for (uint256 k; k < seeds.length; k++) {
+            bytes memory run = new bytes(10 * CrafterRules.SUPPLY);
+            bytes memory rarities = new bytes(CrafterRules.SUPPLY);
+            uint256[3] memory counts;
+            for (uint256 id = 1; id <= CrafterRules.SUPPLY; id++) {
+                Traits memory t = crafters.traitsFor(seeds[k], id);
+                bytes10 packed = bytes10(abi.encodePacked(t.background, t.skin, t.eyes, t.mouth, t.cheeks, t.top, t.bottoms, t.shoes, t.headwear, t.accessory));
+                for (uint256 b; b < 10; b++) run[10 * (id - 1) + b] = packed[b];
+                uint8 r = CrafterRules.rarity(t);
+                rarities[id - 1] = bytes1(r);
+                counts[r]++;
+            }
+            assertEq(keccak256(run), traitRuns[k], string.concat("seed ", vm.toString(k), ": traits"));
+            assertEq(keccak256(rarities), rarityRuns[k], string.concat("seed ", vm.toString(k), ": rarities"));
+            assertEq(abi.encode(counts), abi.encode(expected[k]));
+            console2.log("rarity over the 3,333, seed", k);
+            console2.log("  Common, Rare, Legendary:", counts[0], counts[1], counts[2]);
+        }
+    }
+
+    /// The whole token: valid JSON, its name, the picture as a base64 data URI of render(traits), the attributes
+    /// (named by traitName), Rarity last.
     function test_TokenURIMatchesTheJs() public {
         CrafterVectors.Token[] memory v = CrafterVectors.tokens();
         crafters.setSeed(CrafterVectors.SEED);
         address holder = makeAddr("holder");
-        for (uint256 i; i < v.length; i++) crafters.mintId(holder, v[i].id);
-        for (uint256 i; i < v.length; i += 4) {
+        for (uint256 i; i < v.length; i++) if (v[i].seed == 0) crafters.mintId(holder, v[i].id);
+        for (uint256 i; i < v.length; i += 3) {
+            if (v[i].seed != 0) continue;
             string memory json = Json.decodeURI(crafters.tokenURI(v[i].id));
             string memory svg = art.render(v[i].traits);
-            assertEq(keccak256(bytes(svg)), v[i].svg);
+            assertEq(keccak256(bytes(svg)), v[i].card);
             assertEq(vm.parseJsonString(json, ".name"), string.concat("I'M DEGEN #", vm.toString(v[i].id)));
             assertEq(vm.parseJsonString(json, ".image"), string.concat("data:image/svg+xml;base64,", vm.toBase64(svg)));
             assertTrue(bytes(vm.parseJsonString(json, ".description")).length > 0);
-            uint8[8] memory index = [
-                v[i].traits.background, v[i].traits.skin, v[i].traits.eyes, v[i].traits.gaze, v[i].traits.blush,
-                v[i].traits.hair, v[i].traits.hat, v[i].traits.outfit
-            ];
-            string[8] memory kinds = ["Background", "Skin", "Eyes", "Gaze", "Blush", "Hair", "Hat", "Outfit"];
-            for (uint256 k; k < 8; k++) {
-                string memory at = string.concat(".attributes[", vm.toString(k), "]");
-                assertEq(vm.parseJsonString(json, string.concat(at, ".trait_type")), kinds[k]);
-                assertEq(vm.parseJsonString(json, string.concat(at, ".value")), art.traitName(k, index[k]));
-            }
-            // Then the rarity, and nothing more without an attributes extension.
-            assertEq(vm.parseJsonString(json, ".attributes[8].trait_type"), "Rarity");
-            assertEq(vm.parseJsonString(json, ".attributes[8].value"), art.traitName(8, v[i].rarity));
+            // The traits, in order, by name (Bottoms and Shoes only when the top shows them), then the rarity.
+            Traits memory t = v[i].traits;
+            uint256 k;
+            k = _attr(json, k, "Background", art.traitName(0, t.background));
+            k = _attr(json, k, "Skin", art.traitName(1, t.skin));
+            k = _attr(json, k, "Eyes", art.traitName(2, t.eyes));
+            k = _attr(json, k, "Mouth", art.traitName(3, t.mouth));
+            k = _attr(json, k, "Cheeks", art.traitName(4, t.cheeks));
+            k = _attr(json, k, "Top", art.traitName(5, t.top));
+            if (!CrafterRules.legs(t.top)) k = _attr(json, k, "Bottoms", art.traitName(6, t.bottoms));
+            if (!CrafterRules.feet(t.top)) k = _attr(json, k, "Shoes", art.traitName(7, t.shoes));
+            k = _attr(json, k, "Headwear", art.traitName(8, t.headwear));
+            k = _attr(json, k, "Accessory", art.traitName(9, t.accessory));
+            k = _attr(json, k, "Rarity", art.traitName(10, v[i].rarity));
             assertEq(crafters.rarityOf(v[i].id), v[i].rarity);
-            assertFalse(vm.keyExistsJson(json, ".attributes[9]"));
+            assertFalse(vm.keyExistsJson(json, string.concat(".attributes[", vm.toString(k), "]")));
         }
+    }
+
+    /// Attribute `k` is {"trait_type": kind, "value": value}; the next one's index.
+    function _attr(string memory json, uint256 k, string memory kind, string memory value) internal pure returns (uint256) {
+        string memory at = string.concat(".attributes[", vm.toString(k), "]");
+        assertEq(vm.parseJsonString(json, string.concat(at, ".trait_type")), kind);
+        assertEq(vm.parseJsonString(json, string.concat(at, ".value")), value);
+        return k + 1;
     }
 
     function test_SealedTokenURI() public {
@@ -199,23 +277,36 @@ contract CrafterArtTest is Test {
         }
     }
 
-    /// tokenURI is a view, read with eth_call: it must stay far below RPC gas caps (often 50M; aim under 15M).
+    /// tokenURI is a view, read with eth_call: it must stay far below RPC gas caps (often 50M; aim under 15M). Over
+    /// every vector token under SEED, the heaviest five DEGENs of the 3,333 (the longest cards) among them, and the
+    /// sealed one. Marketplaces' eth_calls (10M and 30M budgets, as OpenSea's) get the whole, valid JSON.
     function test_TokenURIGas() public {
         CrafterVectors.Token[] memory v = CrafterVectors.tokens();
         crafters.setSeed(CrafterVectors.SEED);
-        for (uint256 i; i < v.length; i++) crafters.mintId(address(this), v[i].id);
+        for (uint256 i; i < v.length; i++) if (v[i].seed == 0) crafters.mintId(address(this), v[i].id);
         uint256 min = type(uint256).max;
         uint256 max;
         for (uint256 i; i < v.length; i++) {
+            if (v[i].seed != 0) continue;
             uint256 g = _gasOf(address(crafters), abi.encodeCall(crafters.tokenURI, (v[i].id)));
             if (g < min) min = g;
             if (g > max) max = g;
         }
+        uint256[5] memory heavy = CrafterVectors.heaviest();
+        uint256 heaviest = _gasOf(address(crafters), abi.encodeCall(crafters.tokenURI, (heavy[0])));
+        for (uint256 i; i < heavy.length; i++) {
+            (bool ok, bytes memory ret) = address(crafters).staticcall{gas: 10_000_000}(abi.encodeCall(MineWorldCrafters.tokenURI, (heavy[i])));
+            assertTrue(ok, "the heaviest tokenURIs must fit a 10M eth_call");
+            string memory json = Json.decodeURI(abi.decode(ret, (string)));
+            assertEq(vm.parseJsonString(json, ".name"), string.concat("I'M DEGEN #", vm.toString(heavy[i])));
+        }
         crafters.setSeed(0);
         uint256 sealedGas = _gasOf(address(crafters), abi.encodeCall(crafters.tokenURI, (v[0].id)));
-        console2.log("tokenURI gas over the vectors: min", min, "max", max);
+        console2.log("tokenURI gas over the vector tokens: min", min, "max", max);
+        console2.log("tokenURI gas, the heaviest DEGEN (id, gas):", heavy[0], heaviest);
         console2.log("tokenURI gas, sealed", sealedGas);
         assertLt(max, 15_000_000);
+        assertLt(heaviest, 15_000_000);
         assertLt(sealedGas, 15_000_000);
     }
 
@@ -252,8 +343,8 @@ contract CrafterArtTest is Test {
 
     // ---------------------------------------------------------------- the shuffle
 
-    /// No two of the 3,333 share hair, outfit, eyes and gaze, for a few seeds (every token takes a different one of
-    /// the 6,912 combinations), and every trait stays in its table.
+    /// No two of the 3,333 share a face (eyes, mouth, cheeks) and a top, for a few seeds (every token takes a
+    /// different one of the 3,480 combinations), and every trait stays in its table.
     function test_EveryCrafterIsUnique() public view {
         uint256[4] memory seeds = [CrafterVectors.SEED, 1, type(uint256).max, uint256(keccak256("another seed"))];
         for (uint256 k; k < seeds.length; k++) _checkUnique(seeds[k]);
@@ -265,26 +356,28 @@ contract CrafterArtTest is Test {
     }
 
     function _checkUnique(uint256 s) internal view {
-        uint256[28] memory seen; // a 6,912-bit set
-        uint256[2] memory gazes;
+        uint256[14] memory seen; // a 3,480-bit set
+        uint256[2] memory cheeks;
         for (uint256 id = 1; id <= CrafterRules.SUPPLY; id++) {
             Traits memory t = crafters.traitsFor(s, id);
-            assertLt(t.hair, CrafterRules.HAIRS);
-            assertLt(t.outfit, CrafterRules.OUTFITS);
-            assertLt(t.eyes, CrafterRules.EYES);
-            assertLt(t.gaze, CrafterRules.GAZES);
             assertLt(t.background, CrafterRules.BACKGROUNDS);
             assertLt(t.skin, CrafterRules.SKINS);
-            assertLt(t.hat, CrafterRules.HATS);
-            assertLt(t.blush, CrafterRules.BLUSHES);
-            uint256 c = t.hair + 36 * (t.outfit + 16 * (t.eyes + 6 * uint256(t.gaze)));
+            assertLt(t.eyes, CrafterRules.EYES);
+            assertLt(t.mouth, CrafterRules.MOUTHS);
+            assertLt(t.cheeks, CrafterRules.CHEEKS);
+            assertLt(t.top, CrafterRules.TOPS);
+            assertLt(t.bottoms, CrafterRules.BOTTOMS);
+            assertLt(t.shoes, CrafterRules.SHOES);
+            assertLt(t.headwear, CrafterRules.HEADWEAR);
+            assertLt(t.accessory, CrafterRules.ACCESSORIES);
+            uint256 c = t.eyes + 6 * (t.mouth + 5 * (t.cheeks + 2 * uint256(t.top)));
             uint256 bit = 1 << (c & 255);
-            assertEq(seen[c >> 8] & bit, 0, "two Crafters share hair, outfit, eyes and gaze");
+            assertEq(seen[c >> 8] & bit, 0, "two DEGENs share a face and a top");
             seen[c >> 8] |= bit;
-            gazes[t.gaze]++;
+            cheeks[t.cheeks]++;
         }
-        // The combinations are spread over the whole range: half look each way.
-        assertApproxEqAbs(gazes[0], gazes[1], 2);
+        // The combinations are spread over the whole range: half have blush.
+        assertApproxEqAbs(cheeks[0], cheeks[1], 2);
     }
 
     /// For any seed, the shuffle sends 0..3332 to 0..3332 with no two the same.
@@ -302,59 +395,57 @@ contract CrafterArtTest is Test {
 
     // ---------------------------------------------------------------- rarity
 
-    /// Every Crafter's rarity under the vector seed, as rarityOf() in web/crafters.js gives it: the counts and the
-    /// whole run of 3,333, exactly.
-    function test_RarityMatchesTheJsForEveryCrafter() public view {
-        uint256[3] memory counts;
-        bytes memory run = new bytes(CrafterRules.SUPPLY);
-        for (uint256 id = 1; id <= CrafterRules.SUPPLY; id++) {
-            uint8 r = art.rarityOf(crafters.traitsFor(CrafterVectors.SEED, id));
-            counts[r]++;
-            run[id - 1] = bytes1(r);
-        }
-        console2.log("rarity over the 3,333 under the vector seed: Common", counts[0]);
-        console2.log("                                             Rare  ", counts[1]);
-        console2.log("                                             Legendary", counts[2]);
-        assertEq(abi.encode(counts), abi.encode(CrafterVectors.rarityCounts()));
-        assertEq(keccak256(run), CrafterVectors.RARITY_SEQUENCE);
-        // Roughly the odds: 68.8%, 25.2%, 6%.
-        assertApproxEqAbs(counts[0], 2293, 120);
-        assertApproxEqAbs(counts[1], 840, 100);
-        assertApproxEqAbs(counts[2], 200, 60);
-    }
-
-    /// The rule, spelled out here independently of the generated table: Legendary with the Gold background (7);
-    /// Rare with the Night background (6) or a hard hat (7, 8, 9: yellow, orange, white); Common otherwise. Nothing
-    /// else matters.
-    function test_RarityIsTheBackgroundAndTheHat() public view {
-        assertEq(art.traitName(0, 6), "Night");
-        assertEq(art.traitName(0, 7), "Gold");
-        assertEq(art.traitName(6, 7), "Hard Hat Yellow");
-        assertEq(art.traitName(6, 8), "Hard Hat Orange");
-        assertEq(art.traitName(6, 9), "Hard Hat White");
-        for (uint8 b; b < CrafterRules.BACKGROUNDS; b++) {
-            for (uint8 h; h < CrafterRules.HATS; h++) {
-                uint8 want = b == 7 ? 2 : (b == 6 || h >= 7 ? 1 : 0);
-                assertEq(art.rarityOf(Traits(3, 2, 1, 0, b, 4, h, 1)), want);
-                assertEq(art.rarityOf(Traits(35, 15, 5, 1, b, 0, h, 0)), want);
-                assertEq(CrafterRules.rarity(b, h), want);
+    /// The rule, spelled out here independently of the generated tables: Legendary with a gold skin, a crown or gold
+    /// armour; Rare with an ice, purple or stone skin, a royal robe, a space suit, iron armour, a wizard hat or a
+    /// viking helmet; Common otherwise. Nothing else matters.
+    function test_RarityIsTheVisibleTiers() public view {
+        assertEq(art.traitName(1, 5), "Ice");
+        assertEq(art.traitName(1, 7), "Stone");
+        assertEq(art.traitName(1, 8), "Gold");
+        assertEq(art.traitName(5, 52), "Royal Robe Red");
+        assertEq(art.traitName(5, 56), "Knight Armour Iron");
+        assertEq(art.traitName(5, 57), "Knight Armour Gold");
+        assertEq(art.traitName(8, 18), "Wizard Hat");
+        assertEq(art.traitName(8, 19), "Viking Helmet");
+        assertEq(art.traitName(8, 20), "Crown Gold");
+        assertEq(art.traitName(8, 21), "Crown Jewelled");
+        for (uint8 s; s < CrafterRules.SKINS; s++) {
+            for (uint8 top; top < CrafterRules.TOPS; top++) {
+                for (uint8 h; h < CrafterRules.HEADWEAR; h++) {
+                    uint8 want = _want(s, top, h);
+                    Traits memory t = Traits(h % 10, s, top % 6, top % 5, h % 2, top, top % 12, h % 8, h, (s + top + h) % 10);
+                    assertEq(CrafterRules.rarity(t), want);
+                    if ((s + top + h) % 37 == 0) assertEq(art.rarityOf(t), want);
+                }
             }
         }
     }
 
-    /// The weighted picks follow their weights over a full mint (loose bounds: one seed).
-    function test_WeightedPicksFollowTheWeights() public view {
-        uint256[10] memory hats;
-        uint256[8] memory backgrounds;
+    function _want(uint8 s, uint8 top, uint8 h) internal pure returns (uint8) {
+        if (s == 8 || top == 57 || h == 20 || h == 21) return 2;
+        if (s >= 5 || top >= 52 || h == 18 || h == 19) return 1;
+        return 0;
+    }
+
+    /// The weighted picks follow their weights over a full mint (loose bounds: one seed), and the hood is only ever
+    /// up on a hoodie, about a third of those with nothing else on the head.
+    function test_WeightedPicksAndTheHood() public view {
+        uint256[23] memory headwear;
+        uint256[9] memory skins;
+        uint256 bareHoodies;
         for (uint256 id = 1; id <= CrafterRules.SUPPLY; id++) {
             Traits memory t = crafters.traitsFor(CrafterVectors.SEED, id);
-            hats[t.hat]++;
-            backgrounds[t.background]++;
+            headwear[t.headwear]++;
+            skins[t.skin]++;
+            if (CrafterRules.hoodie(t.top) && (t.headwear == 0 || t.headwear == CrafterRules.HOOD)) bareHoodies++;
+            if (t.headwear == CrafterRules.HOOD) assertTrue(CrafterRules.hoodie(t.top), "a hood on a top that isn't a hoodie");
         }
-        // None 40%, Hard Hat White 4%; Sky 18%, Gold 6%.
-        assertApproxEqAbs(hats[0], 1333, 120);
-        assertApproxEqAbs(hats[9], 133, 50);
-        assertApproxEqAbs(backgrounds[0], 600, 90);
-        assertApproxEqAbs(backgrounds[7], 200, 60);
+        // None 56/168 (less the hoods), Hard Hat Yellow 12/168, Crown Jewelled 1/168; Leaf 26%, Gold 2%.
+        assertApproxEqAbs(headwear[0] + headwear[CrafterRules.HOOD], 1111, 110);
+        assertApproxEqAbs(headwear[10], 238, 60);
+        assertApproxEqAbs(headwear[21], 20, 15);
+        assertApproxEqAbs(skins[0], 867, 100);
+        assertApproxEqAbs(skins[8], 67, 30);
+        assertApproxEqAbs(headwear[CrafterRules.HOOD] * 3, bareHoodies, 60);
     }
 }

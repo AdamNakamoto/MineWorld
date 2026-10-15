@@ -15,7 +15,7 @@
 // Guests earn nothing, so they get no boost.
 //
 // How the server knows: a Crafter's boost comes from `["wear", tokenId]` (ownerOf on MineWorldCrafters, its rarity
-// from the revealed seed, crafters.js rarityOf, and its level from CrafterLevels.levelOf); any other slot's from
+// from the revealed seed, degen-skin.js rarityOf, and its level from CrafterLevels.levelOf); any other slot's from
 // `["equip", slot, tokenId]` (ownerOf on that slot's contract, and its tier from it). It checks again every few
 // minutes while the player earns, so a token sold or upgraded mid-session is noticed (and at once, on `["recheck"]`,
 // which the game sends right after its player levels up the Crafter they wear). It sends the player
@@ -43,7 +43,7 @@ import { zoneOf } from "./zones.js";
 export const STATS = ["speed", "earn", "cap", "move"];
 export const MAX = { speed: 150, earn: 150, cap: 300, move: 100 };
 
-/// A token's tier is an index into this (the same three as the Crafters' rarities, crafters.js RARITIES).
+/// A token's tier is an index into this (the same three as the DEGENs' rarities, degen-skin.js RARITIES).
 export const TIERS = ["Common", "Rare", "Legendary"];
 
 /// What a Crafter's level (bought on-chain, CrafterLevels) adds on top of its rarity's boost. Every Crafter is level 1
@@ -63,7 +63,7 @@ export const CRAFTER_LEVELS = {
 /// contract); `tiers`: the boost for each tier (Common, Rare, Legendary); and `levels` if tokens have levels.
 export const SLOTS = {
   crafter: {
-    name: "DIO", env: "CRAFTERS_ADDRESS", contract: null, live: true, // (its address is the Crafters' own setting)
+    name: "DEGEN", env: "CRAFTERS_ADDRESS", contract: null, live: true, // (its address is the Crafters' own setting)
     tierOf: "rarity",
     tiers: [{ speed: 5, earn: 5, cap: 10 }, { speed: 10, earn: 10, cap: 25 }, { speed: 20, earn: 20, cap: 50 }],
     levels: { env: "LEVELS_ADDRESS", contract: null, fn: "levelOf", table: CRAFTER_LEVELS },

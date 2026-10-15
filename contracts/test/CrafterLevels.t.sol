@@ -125,11 +125,17 @@ contract CrafterLevelsTest is Test {
         vm.stopPrank();
     }
 
-    /// The "Level" trait in the token's metadata (after the eight traits and the rarity), and its top.
+    /// The "Level" trait in the token's metadata (after the traits and the rarity), and its top.
     function _levelInURI(uint256 id) internal view returns (uint256 level, uint256 top) {
         string memory json = Json.decodeURI(crafters.tokenURI(id));
-        assertEq(vm.parseJsonString(json, ".attributes[9].trait_type"), "Level");
-        return (vm.parseJsonUint(json, ".attributes[9].value"), vm.parseJsonUint(json, ".attributes[9].max_value"));
+        string memory at = _after(json, 1);
+        assertEq(vm.parseJsonString(json, string.concat(at, ".trait_type")), "Level");
+        return (vm.parseJsonUint(json, string.concat(at, ".value")), vm.parseJsonUint(json, string.concat(at, ".max_value")));
+    }
+
+    /// The path of the `n`th attribute after the rarity (the extension's).
+    function _after(string memory json, uint256 n) internal pure returns (string memory) {
+        return string.concat(".attributes[", vm.toString(Json.rarityAt(json) + n), "]");
     }
 
     // ---------------------------------------------------------------- deploy
@@ -354,7 +360,7 @@ contract CrafterLevelsTest is Test {
             assertTrue(logs[i].topics.length == 0 || logs[i].topics[0] != refresh);
         }
         string memory json = Json.decodeURI(crafters.tokenURI(2));
-        assertFalse(vm.keyExistsJson(json, ".attributes[9]"));
+        assertFalse(vm.keyExistsJson(json, _after(json, 1)));
         vm.prank(owner);
         crafters.setAttributesExtension(address(levels));
         (uint256 level,) = _levelInURI(2);
@@ -378,9 +384,8 @@ contract CrafterLevelsTest is Test {
         crafters.setAttributesExtension(address(two));
         vm.stopPrank();
         string memory json = Json.decodeURI(crafters.tokenURI(2));
-        assertEq(vm.parseJsonString(json, ".attributes[8].trait_type"), "Rarity");
-        assertEq(vm.parseJsonString(json, ".attributes[9].value"), "Happy");
-        assertEq(vm.parseJsonUint(json, ".attributes[10].value"), 7);
+        assertEq(vm.parseJsonString(json, string.concat(_after(json, 1), ".value")), "Happy");
+        assertEq(vm.parseJsonUint(json, string.concat(_after(json, 2), ".value")), 7);
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
         crafters.setAttributesExtension(address(levels));
@@ -412,8 +417,7 @@ contract CrafterLevelsTest is Test {
         crafters.setAttributesExtension(address(broken));
         assertEq(crafters.extraAttributes(1), "");
         string memory json = Json.decodeURI(crafters.tokenURI(1));
-        assertEq(vm.parseJsonString(json, ".attributes[8].trait_type"), "Rarity");
-        assertFalse(vm.keyExistsJson(json, ".attributes[9]"));
+        assertFalse(vm.keyExistsJson(json, _after(json, 1)));
         vm.expectRevert(abi.encodeWithSelector(IERC721Errors.ERC721NonexistentToken.selector, 99));
         crafters.extraAttributes(99);
     }

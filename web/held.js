@@ -235,13 +235,21 @@ export function heldModel(id, view = "third") {
 
 /// Minecraft's bare right arm for first person (PlayerModel's rightArm, as ItemInHandRenderer.renderPlayerArm draws
 /// it): a 4 x 12 x 4 box hanging from the shoulder (its pivot 5 pixels right of the body's middle and 2 down; in model
-/// units, sixteenths, y down the arm), tilted out 0.1 radians by the idle sway at rest. The sleeve in the outfit's
-/// colour, the hand at its end in the skin's (avatar.js colours). Its own meshes: dispose() them when done.
-export function bareArm({ skin, sleeve }) {
+/// units, sixteenths, y down the arm), tilted out 0.1 radians by the idle sway at rest. Drawn from your skin when
+/// avatar.js gives `arm` (the arm cut from the skin, as your miner's); else the sleeve in the outfit's colour and the
+/// hand at its end in the skin's (avatar.js colours). Its own meshes: dispose() them when done (not the skin's
+/// texture, which your miner's dispose() frees).
+export function bareArm({ skin, sleeve, arm }) {
   const P = 1 / 16;
   const part = new THREE.Group();
   part.position.set(-5 * P, 2 * P, 0);
   part.rotation.set(0, 0, 0.1, "ZYX");
+  if (arm) {
+    const a = arm(P);
+    a.position.set(-1 * P, 4 * P, 0);
+    part.add(a);
+    return part;
+  }
   const box = (h, y, colour, grow = 0) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry((4 + grow) * P, h * P, (4 + grow) * P), new THREE.MeshLambertMaterial({ color: colour }));
     m.position.set(-1 * P, y * P, 0);

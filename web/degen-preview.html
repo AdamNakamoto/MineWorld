@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>I'M DEGEN preview</title>
+<!-- A review page for the I'M DEGEN skins (degen-skin.js): cards for random tokens under a test seed, every trait option,
+     the skin textures, and the numbers (rarity split over all 3,333, sizes). Not linked from the game.
+     ?view=grid | traits | skins | stats picks one section; &seed=N changes the test seed. -->
+<style>
+  :root { --bg: #f2f3f5; --ink: #1f2029; --muted: #6b707a; --card: #fff; --line: #d9dce2; }
+  body { margin: 0; padding: 20px; background: var(--bg); color: var(--ink); font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 22px 0 8px; }
+  .note { color: var(--muted); margin: 0 0 12px; }
+  .grid { display: grid; grid-template-columns: repeat(6, 180px); gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 6px; }
+  .card img { width: 100%; display: block; border-radius: 6px; }
+  .card .cap { font-size: 12px; margin-top: 4px; display: flex; justify-content: space-between; gap: 6px; }
+  .card .cap b { font-weight: 600; }
+  .card .attrs { font-size: 10.5px; color: var(--muted); margin-top: 2px; line-height: 1.3; }
+  .t1 { color: #2a6ad0; } .t2 { color: #c08a00; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .row .card { width: 112px; padding: 4px; }
+  .row .card .cap { font-size: 11px; justify-content: center; text-align: center; }
+  .skins { display: flex; flex-wrap: wrap; gap: 16px; }
+  .skin { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
+  .skin canvas { width: 512px; height: 512px; image-rendering: pixelated; display: block;
+    background: repeating-conic-gradient(#e6e8ec 0 25%, #fff 0 50%) 0 0 / 16px 16px; }
+  table { border-collapse: collapse; background: var(--card); }
+  td, th { border: 1px solid var(--line); padding: 4px 8px; text-align: left; font-size: 13px; }
+  th { background: #f7f8fa; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div id="out"></div>
+<script type="module">
+  import * as D from "./degen-skin.js";
+  import * as ART from "./degen-skin-art.js";
+
+  const q = new URLSearchParams(location.search);
+  const view = q.get("view") ?? "all";
+  const SEED = BigInt(q.get("seed") ?? "20261015");
+  // (viem only where the tokens' traits are needed: the other views draw straight from the tables.)
+  const needAll = ["all", "grid", "cards", "stats"].includes(view) || (view === "skins" && q.get("ids"));
+  const hash = needAll ? await import("https://esm.sh/viem@2").then((v) => ({ keccak256: v.keccak256, encodeAbiParameters: v.encodeAbiParameters })) : null;
+  const out = document.getElementById("out");
+  if (q.get("size")) document.head.insertAdjacentHTML("beforeend", `<style>.row .card { width: ${Number(q.get("size"))}px; }</style>`);
+  const pic = (svg) => `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  const html = (s) => out.insertAdjacentHTML("beforeend", s);
+
+  // Every token under the test seed.
+  const all = [];
+  if (needAll) for (let id = 1; id <= D.SUPPLY; id++) all.push({ id, t: D.traitsOf(SEED, id, hash) });
+  for (const a of all) a.r = D.rarityOf(a.t);
+
+  // A little random generator (for picking which tokens to show), seeded so the page is the same each time.
+  let rs = Number(SEED % 2147483647n) || 1;
+  const rand = () => (rs = (rs * 48271) % 2147483647) / 2147483647;
+
+  function card(a, big = true) {
+    const attrs = D.attributes(a.t).filter(([k]) => k !== "Rarity").map(([k, v]) => `${k}: ${v}`).join(" · ");
+    return `<div class="card"><img src="${pic(D.cardSvg(a.t))}" alt="">
+      <div class="cap"><b>#${a.id}</b><span class="t${a.r}">${D.RARITIES[a.r]}</span></div>
+      ${big ? `<div class="attrs">${esc(attrs)}</div>` : ""}</div>`;
+  }
+
+  if (view === "cards") {
+    // Just cards, no captions (for the README): &n= of them, the same mix of rarities as the grid.
+    const n = Number(q.get("n") ?? 12), want = [Math.round(n * 0.6), Math.round(n * 0.3), 0], picked = [];
+    want[2] = n - want[0] - want[1];
+    const ids = all.map((a) => a.id);
+    for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
+    for (const id of ids) {
+      const a = all[id - 1];
+      if (want[a.r] > 0) { want[a.r]--; picked.push(a); }
+      if (picked.length === n) break;
+    }
+    html(`<div style="display:grid;grid-template-columns:repeat(${Math.min(6, n)},180px);gap:10px">${picked.map((a) => `<img width="180" style="border-radius:8px" src="${pic(D.cardSvg(a.t))}">`).join("")}</div>`);
+  }
+
+  if (view === "all" || view === "grid") {
+    // 24 tokens at random: 14 Common, 7 Rare, 3 Legendary.
+    const want = [14, 7, 3], picked = [];
+    const ids = all.map((a) => a.id);
+    for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
+    for (const id of ids) {
+      const a = all[id - 1];
+      if (want[a.r] > 0) { want[a.r]--; picked.push(a); }
+      if (picked.length === 24) break;
+    }
+    picked.sort((x, y) => x.id - y.id);
+    html(`<h1>I'M DEGEN: 24 tokens under test seed ${SEED}</h1><p class="note">14 Common, 7 Rare and 3 Legendary picked at random from the 3,333.</p>
+      <div class="grid">${picked.map((a) => card(a)).join("")}</div>`);
+  }
+
+  if (view === "all" || view === "traits") {
+    // Every option of every trait, each on the same plain DEGEN.
+    const base = { background: 0, skin: 0, eyes: 1, mouth: 0, cheeks: 0, top: 0, bottoms: 0, shoes: 0, headwear: 0, accessory: 0 };
+    const rows = [
+      ["Skin", "skin", ART.SKINS], ["Eyes", "eyes", ART.EYES], ["Mouth", "mouth", ART.MOUTHS], ["Cheeks", "cheeks", ART.CHEEKS],
+      ["Top", "top", ART.TOPS], ["Bottoms", "bottoms", ART.BOTTOMS], ["Shoes", "shoes", ART.SHOES],
+      ["Headwear", "headwear", ART.HEADWEAR], ["Accessory", "accessory", ART.ACCESSORIES], ["Background", "background", ART.BACKGROUNDS],
+    ];
+    html(`<h1>I'M DEGEN: every trait option</h1><p class="note">Each on the plain DEGEN (Leaf skin, calm eyes, smile, grey hoodie, blue jeans, white sneakers); the hood is shown on the grey hoodie.</p>`);
+    const only = q.get("only");
+    for (const [label, key, list] of rows) {
+      if (only && !only.split(",").includes(key)) continue;
+      const cards = list.map((o, i) => {
+        const t = { ...base, [key]: i };
+        const r = D.rarityOf(t);
+        const tier = o.tier ? ` <span class="t${o.tier}">${D.RARITIES[o.tier]}</span>` : "";
+        const w = o.w !== undefined ? ` <span style="color:#999">w${o.w}</span>` : "";
+        return `<div class="card"><img src="${pic(D.cardSvg(t))}" alt=""><div class="cap">${esc(o.name)}${tier}${w}</div></div>`;
+      });
+      html(`<h2>${label} (${list.length})</h2><div class="row">${cards.join("")}</div>`);
+    }
+  }
+
+  if (view === "all" || view === "skins") {
+    html(`<h1>I'M DEGEN: skin textures (64 x 64, shown x8)</h1><div class="skins" id="skins"></div>`);
+    const ids = (q.get("ids") ?? "").split(",").filter(Boolean).map(Number);
+    const show = ids.length ? ids.map((id) => all[id - 1]) : [{ id: "Rookie", t: D.ROOKIE, r: 0 }];
+    // Or traits given straight: &t=background,skin,eyes,mouth,cheeks,top,bottoms,shoes,headwear,accessory (several split by "|").
+    for (const s of (q.get("t") ?? "").split("|").filter(Boolean)) {
+      const t = D.unpackTraits(s.split(",").map(Number));
+      if (t) show.push({ id: s, t, r: D.rarityOf(t) });
+    }
+    for (const a of show) {
+      const c = document.createElement("canvas");
+      c.width = c.height = 64;
+      c.getContext("2d").putImageData(new ImageData(D.skinPixels(a.t), 64, 64), 0, 0);
+      const box = document.createElement("div");
+      box.className = "skin";
+      box.innerHTML = `<div class="cap"><b>${typeof a.id === "number" ? `#${a.id}` : a.id}</b> ${D.RARITIES[a.r]}</div>`;
+      box.prepend(c);
+      document.getElementById("skins").append(box);
+    }
+  }
+
+  if (view === "big") {
+    // Big cards (and front views) for traits given straight: &t=... as for the skins view.
+    for (const s of (q.get("t") ?? "").split("|").filter(Boolean)) {
+      const t = s === "rookie" ? D.ROOKIE : s === "sealed" ? { sealed: true } : D.unpackTraits(s.split(",").map(Number));
+      if (!t) continue;
+      html(`<div style="display:inline-flex;gap:8px;margin:0 8px 8px 0"><img width="560" src="${pic(D.cardSvg(t))}"><img width="280" style="image-rendering:pixelated;align-self:start" src="${pic(D.frontSvg(t))}"></div>`);
+    }
+  }
+
+  if (view === "all" || view === "stats") {
+    const n = [0, 0, 0];
+    for (const a of all) n[a.r]++;
+    const seen = new Set(all.map((a) => JSON.stringify(D.packTraits(a.t))));
+    const faces = new Set(all.map((a) => `${a.t.eyes},${a.t.mouth},${a.t.cheeks},${a.t.top}`));
+    const sizes = all.map((a) => D.cardSvg(a.t)), fronts = all.map((a) => D.frontSvg(a.t));
+    const len = (s) => new TextEncoder().encode(s).length;
+    const st = (list) => {
+      const b = list.map(len), e = list.map((s) => (s.match(/<(path|rect|ellipse)/g) ?? []).length);
+      const avg = (x) => Math.round(x.reduce((p, c) => p + c, 0) / x.length);
+      return `${avg(b)} bytes on average (${Math.min(...b)}-${Math.max(...b)}), ${avg(e)} elements (${Math.min(...e)}-${Math.max(...e)})`;
+    };
+    html(`<h1>I'M DEGEN: numbers under seed ${SEED}</h1><table>
+      <tr><th>Rarity</th><td>${D.RARITIES.map((r, i) => `${r} ${n[i]} (${(100 * n[i] / D.SUPPLY).toFixed(1)}%)`).join(" · ")}</td></tr>
+      <tr><th>Unique</th><td>${seen.size} different trait sets, ${faces.size} different face-and-top combinations (of ${D.COMBOS})</td></tr>
+      <tr><th>Card SVG</th><td>${st(sizes)}</td></tr>
+      <tr><th>Front SVG</th><td>${st(fronts)}</td></tr>
+    </table>`);
+  }
+  document.body.dataset.ready = "1";
+</script>
+</body>
+</html>

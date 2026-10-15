@@ -34,15 +34,19 @@ interface IArbSys {
 }
 
 /// @title MineWorldCrafters: the I'M DEGEN collection
-/// @notice I'M DEGEN (symbol DEGEN): 3,333 pixel-art characters for MineWorldCraft, drawn and stored entirely on chain
-///         (CrafterArt). The collection was first named MineWorld Crafters; this contract and its code keep that name,
-///         and a "Crafter" in the notes below is one DEGEN. In the game each one boosts its holder's mining by its
-///         rarity and level (the game's server applies it to what it counts as earned; every payout stays within
-///         MiningSites' and the vault's limits). Minted blind (free at launch), then revealed: each token's hair,
-///         outfit, eyes and gaze come from a keyed shuffle of the token ids, so no two Crafters share that combination,
-///         and its background, skin, hat and blush are weighted picks from its own hash. The rules are the same as web/crafters.js, so the game and the chain agree on every Crafter.
-///         Each one's rarity shows in its picture: Legendary with the gold background, Rare with the night background
-///         or a hard hat, Common otherwise (about 6%, 25% and 69% of them), and it's listed as a trait. More traits
+/// @notice I'M DEGEN (symbol DEGEN): 3,333 frog characters for MineWorldCraft, each a full Minecraft-style skin (64 x 64,
+///         with its second layer), drawn and stored entirely on chain (CrafterArt paints the skin and writes the NFT's
+///         picture from it); the game puts the very same skin on the player. The collection was first named MineWorld
+///         Crafters; this contract and its code keep that name, and a "Crafter" in the notes below is one DEGEN. In
+///         the game each one boosts its holder's mining by its rarity and level (the game's server applies it to what
+///         it counts as earned; every payout stays within MiningSites' and the vault's limits). Minted blind (free at
+///         launch), then revealed: each token's face (eyes, mouth, cheeks) and top come from a keyed shuffle of the
+///         token ids, so no two Crafters share that combination, and its background, skin, bottoms, shoes, headwear
+///         and accessory are weighted picks from its own hash. The rules are the same as web/degen-skin.js, so the game
+///         and the chain agree on every Crafter. Each one's rarity shows in its picture: Legendary with a gold skin, a
+///         crown or gold armour, Rare with an ice, purple or stone skin, a royal robe, a space suit, iron armour, a
+///         wizard hat or a viking helmet, Common otherwise (about 6%, 25% and 69% of them), and it's listed as a
+///         trait. More traits
 ///         can come from an attributes extension the owner points the collection at (`setAttributesExtension`): at
 ///         launch CrafterLevels, which keeps each Crafter's "Level" (bought with $MINE; it stays with the token when
 ///         the Crafter changes hands). New stats can show on marketplaces that way without touching this contract.
@@ -368,21 +372,20 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
         if (h == 0) revert EntropyUnavailable();
     }
 
-    /// @notice A Crafter's traits once revealed: indexes into the tables of web/crafters-art.js (names from
-    ///         CrafterArt.traitName), the same as traitsOf(seed, id) in web/crafters.js.
+    /// @notice A Crafter's traits once revealed: indexes into the tables of web/degen-skin-art.js (names from
+    ///         CrafterArt.traitName), the same as traitsOf(seed, id) in web/degen-skin.js.
     function traitsOf(uint256 tokenId) external view returns (Traits memory) {
         if (seed == 0) revert NotRevealed();
         _requireOwned(tokenId);
         return _traitsFor(seed, tokenId);
     }
 
-    /// @notice A Crafter's rarity once revealed: 0 Common, 1 Rare, 2 Legendary (rarityOf in web/crafters.js; names
-    ///         from CrafterArt.traitName(8, rarity)).
+    /// @notice A Crafter's rarity once revealed: 0 Common, 1 Rare, 2 Legendary (rarityOf in web/degen-skin.js; names
+    ///         from CrafterArt.traitName(10, rarity)).
     function rarityOf(uint256 tokenId) external view returns (uint8) {
         if (seed == 0) revert NotRevealed();
         _requireOwned(tokenId);
-        Traits memory t = _traitsFor(seed, tokenId);
-        return CrafterRules.rarity(t.background, t.hat);
+        return CrafterRules.rarity(_traitsFor(seed, tokenId));
     }
 
     /// @notice The extra traits the attributes extension gives `tokenId`, as JSON objects separated by commas. "" with
@@ -421,9 +424,9 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
         }
     }
 
-    /// @dev traitsOf in web/crafters.js. The token's place in the shuffled run gives a combination of hair, outfit,
-    ///      eyes and gaze (spread over all COMBOS, a different one for every token); its own hash gives the weighted
-    ///      picks.
+    /// @dev traitsOf in web/degen-skin.js. The token's place in the shuffled run gives a combination of eyes, mouth,
+    ///      cheeks and top (spread over all COMBOS, a different one for every token); 16-bit slices of its own hash
+    ///      give the weighted picks. A hoodie with no other headwear has its hood up one time in HOOD_ONE_IN.
     function _traitsFor(uint256 s, uint256 id) internal pure returns (Traits memory t) {
         uint256 c = _shuffle(s, id - 1) * CrafterRules.COMBOS / MAX_SUPPLY;
         uint256 h;
@@ -432,17 +435,22 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
             mstore(0x20, id)
             h := keccak256(0x00, 0x40) // keccak256(abi.encode(s, id))
         }
-        uint256 hairs = CrafterRules.HAIRS;
-        uint256 outfits = CrafterRules.OUTFITS;
         uint256 eyes = CrafterRules.EYES;
-        t.hair = uint8(c % hairs);
-        t.outfit = uint8((c / hairs) % outfits);
-        t.eyes = uint8((c / (hairs * outfits)) % eyes);
-        t.gaze = uint8(c / (hairs * outfits * eyes));
+        uint256 mouths = CrafterRules.MOUTHS;
+        uint256 cheeks = CrafterRules.CHEEKS;
         t.background = CrafterRules.background(h & 0xffff);
         t.skin = CrafterRules.skin((h >> 16) & 0xffff);
-        t.hat = CrafterRules.hat((h >> 32) & 0xffff);
-        t.blush = CrafterRules.blush((h >> 48) & 0xffff);
+        t.eyes = uint8(c % eyes);
+        t.mouth = uint8((c / eyes) % mouths);
+        t.cheeks = uint8((c / (eyes * mouths)) % cheeks);
+        t.top = uint8(c / (eyes * mouths * cheeks));
+        t.bottoms = CrafterRules.bottoms((h >> 32) & 0xffff);
+        t.shoes = CrafterRules.shoes((h >> 48) & 0xffff);
+        t.headwear = CrafterRules.headwear((h >> 64) & 0xffff);
+        t.accessory = CrafterRules.accessory((h >> 80) & 0xffff);
+        if (CrafterRules.hoodie(t.top) && t.headwear == 0 && ((h >> 96) & 0xffff) % CrafterRules.HOOD_ONE_IN == 0) {
+            t.headwear = CrafterRules.HOOD;
+        }
     }
 
     /// @dev A keyed shuffle of 0..MAX_SUPPLY-1: a 4-round Feistel network on 12 bits (a permutation of 0..4095),
@@ -470,8 +478,8 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
 
     // ---------------------------------------------------------------- metadata
 
-    /// @notice Metadata and picture, all on chain: the SVG drawn by CrafterArt, the traits (rarity included) as
-    ///         attributes, then the attributes extension's (the level, at launch).
+    /// @notice Metadata and picture, all on chain: the card CrafterArt draws from the Crafter's skin (an SVG), the
+    ///         traits (rarity included) as attributes, then the attributes extension's (the level, at launch).
     function tokenURI(uint256 tokenId) public view override returns (string memory) {
         bytes memory extra = bytes(extraAttributes(tokenId));
         bytes memory end = extra.length == 0 ? bytes("]") : abi.encodePacked(",", extra, "]");

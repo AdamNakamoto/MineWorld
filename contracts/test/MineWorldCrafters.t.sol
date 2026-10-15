@@ -2,6 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC721Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
@@ -32,8 +33,18 @@ contract ForceSend {
     }
 }
 
-/// Reads the metadata JSON out of a `data:application/json;base64,` URI.
+/// Reads the metadata JSON out of a `data:application/json;base64,` URI, and finds things in it.
 library Json {
+    Vm private constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    /// The index of the Rarity attribute: the last of the collection's own, after the traits (how many traits depends
+    /// on the top: one that brings its own trousers or boots lists no Bottoms or Shoes). The extension's come after it.
+    function rarityAt(string memory json) internal pure returns (uint256 i) {
+        while (keccak256(bytes(VM.parseJsonString(json, string.concat(".attributes[", VM.toString(i), "].trait_type")))) != keccak256("Rarity")) {
+            i++;
+        }
+    }
+
     function decodeURI(string memory uri) internal pure returns (string memory) {
         bytes memory u = bytes(uri);
         bytes memory prefix = bytes("data:application/json;base64,");
@@ -804,14 +815,16 @@ contract MineWorldCraftersTest is Test {
         s.seal();
         for (uint256 id = 1; id <= 3; id++) {
             Traits memory t = s.traitsOf(id);
-            assertLt(t.hair, 36);
-            assertLt(t.outfit, 16);
+            assertLt(t.background, 10);
+            assertLt(t.skin, 9);
             assertLt(t.eyes, 6);
-            assertLt(t.gaze, 2);
-            assertLt(t.background, 8);
-            assertLt(t.skin, 5);
-            assertLt(t.hat, 10);
-            assertLt(t.blush, 2);
+            assertLt(t.mouth, 5);
+            assertLt(t.cheeks, 2);
+            assertLt(t.top, 58);
+            assertLt(t.bottoms, 12);
+            assertLt(t.shoes, 8);
+            assertLt(t.headwear, 23);
+            assertLt(t.accessory, 10);
         }
     }
 
@@ -831,10 +844,12 @@ contract MineWorldCraftersTest is Test {
         assertEq(vm.parseJsonString(json, ".image"), string.concat("data:image/svg+xml;base64,", vm.toBase64(art.render(t))));
         assertEq(vm.parseJsonString(json, ".attributes[0].trait_type"), "Background");
         assertEq(vm.parseJsonString(json, ".attributes[0].value"), art.traitName(0, t.background));
-        assertEq(vm.parseJsonString(json, ".attributes[7].trait_type"), "Outfit");
-        assertEq(vm.parseJsonString(json, ".attributes[7].value"), art.traitName(7, t.outfit));
-        assertEq(vm.parseJsonString(json, ".attributes[8].trait_type"), "Rarity");
-        assertFalse(vm.keyExistsJson(json, ".attributes[9]"), "no extra traits without an extension");
+        assertEq(vm.parseJsonString(json, ".attributes[5].trait_type"), "Top");
+        assertEq(vm.parseJsonString(json, ".attributes[5].value"), art.traitName(5, t.top));
+        uint256 r = Json.rarityAt(json);
+        assertGe(r, 8);
+        assertLe(r, 10);
+        assertFalse(vm.keyExistsJson(json, string.concat(".attributes[", vm.toString(r + 1), "]")), "no extra traits without an extension");
         assertTrue(Json.has(vm.parseJsonString(json, ".description"), "No two DEGENs look alike. Each DEGEN boosts its owner's mining in MineWorldCraft by its rarity and level"));
         assertFalse(Json.has(json, "Cosmetic"));
         vm.expectRevert(abi.encodeWithSelector(IERC721Errors.ERC721NonexistentToken.selector, 2));
@@ -1057,7 +1072,8 @@ contract MineWorldCraftersTest is Test {
         crafters.setTransferValidator(address(0));
     }
 
-    /// Rarity once revealed, from the background and hat (CrafterArt.t.sol checks it against the JS for every one).
+    /// Rarity once revealed, from the skin, top, headwear and accessory (CrafterArt.t.sol checks it against the JS for
+    /// every one).
     function test_RarityOf() public {
         _mint(alice, 3);
         _mint(bob, 2);
@@ -1068,9 +1084,11 @@ contract MineWorldCraftersTest is Test {
             Traits memory t = crafters.traitsOf(id);
             uint8 r = crafters.rarityOf(id);
             assertEq(r, art.rarityOf(t));
-            assertEq(r, t.background == 7 ? 2 : (t.background == 6 || t.hat >= 7 ? 1 : 0));
+            bool legendary = t.skin == 8 || t.top == 57 || t.headwear == 20 || t.headwear == 21;
+            bool rare = t.skin >= 5 || t.top >= 52 || t.headwear == 18 || t.headwear == 19;
+            assertEq(r, legendary ? 2 : (rare ? 1 : 0));
             string memory json = Json.decodeURI(crafters.tokenURI(id));
-            assertEq(vm.parseJsonString(json, ".attributes[8].value"), art.traitName(8, r));
+            assertEq(vm.parseJsonString(json, string.concat(".attributes[", vm.toString(Json.rarityAt(json)), "].value")), art.traitName(10, r));
         }
         vm.expectRevert(abi.encodeWithSelector(IERC721Errors.ERC721NonexistentToken.selector, 6));
         crafters.rarityOf(6);
@@ -1304,10 +1322,10 @@ contract MineWorldCraftersTest is Test {
         crafters.setAttributesExtension(x);
     }
 
-    /// The eight traits and the rarity, and nothing from the extension after them.
+    /// The traits and the rarity, and nothing from the extension after them.
     function _assertNoExtra(string memory json) internal view {
-        assertEq(vm.parseJsonString(json, ".attributes[8].trait_type"), "Rarity");
-        assertFalse(vm.keyExistsJson(json, ".attributes[9]"), "the extension's answer should have been left out");
+        uint256 r = Json.rarityAt(json);
+        assertFalse(vm.keyExistsJson(json, string.concat(".attributes[", vm.toString(r + 1), "]")), "the extension's answer should have been left out");
     }
 
     /// An extension stuck in a loop gets EXTENSION_GAS, not all the gas: tokenURI still renders, sealed or revealed,
@@ -1376,7 +1394,7 @@ contract MineWorldCraftersTest is Test {
         raw.set(abi.encode(longest));
         assertEq(crafters.extraAttributes(1), longest);
         string memory full = Json.decodeURI(crafters.tokenURI(1));
-        assertEq(vm.parseJsonString(full, ".attributes[9].trait_type"), "Note");
+        assertEq(vm.parseJsonString(full, string.concat(".attributes[", vm.toString(Json.rarityAt(full) + 1), "].trait_type")), "Note");
 
         _useExtension(address(new BombExtension()));
         assertEq(crafters.extraAttributes(1), "");
@@ -1756,7 +1774,11 @@ contract MineWorldCraftersForkTest is Test {
         vm.mockCall(address(100), abi.encodeWithSignature("arbBlockHash(uint256)", e), abi.encode(keccak256("L2 block")));
         crafters.seal();
         assertEq(crafters.seed(), uint256(keccak256(abi.encode(uint256(7), keccak256("L2 block")))));
-        assertTrue(bytes(crafters.tokenURI(1)).length > 10_000);
+        // The card, drawn on the forked chain, is the one CrafterArt renders from the revealed traits.
+        string memory json = Json.decodeURI(crafters.tokenURI(1));
+        string memory card = crafters.art().render(crafters.traitsOf(1));
+        assertGt(bytes(card).length, 2_000);
+        assertEq(vm.parseJsonString(json, ".image"), string.concat("data:image/svg+xml;base64,", vm.toBase64(card)));
     }
 }
 

@@ -19,7 +19,8 @@
 #   (MiningSites' proxy), and the script requires the proxy landed there, so the wallet sends nothing else until the
 #   stage is done. Every stage broadcasts with --slow: a transaction goes out only once the one before succeeded, so a
 #   failed step stops the run (before the token's renounce, say).
-# crafters: the on-chain art (CrafterArt) and I'M DEGEN (contract MineWorldCrafters) with the sale closed (open it later),
+# crafters: the on-chain art (CrafterArt: every DEGEN's skin and card) and I'M DEGEN (contract MineWorldCrafters) with
+#   the sale closed (open it later),
 #   owned by OWNER (handed over in two steps if the deploying wallet sets anything up first: OWNER then accepts).
 # levels: CrafterLevels (implementation and proxy; DEGEN levels paid in $MINE), for $MINE and I'M DEGEN in
 #   deployments/ (or MINE= and CRAFTERS=), owned by OWNER.

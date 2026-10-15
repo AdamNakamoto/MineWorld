@@ -1,13 +1,12 @@
 // The Mining Site panel: log in, sign in to earn (free), open a mining site (ETH) and upgrade it ($MINE), convert
-// earnings to $MINE, trade $MINE, mint or wear an I'M DIO character and level it up ($MINE), and see your NFT boosts
+// earnings to $MINE, trade $MINE, mint or wear an I'M DEGEN character and level it up ($MINE), and see your NFT boosts
 // (boosts.js). Everything about money happens here, in plain words. Every $MINE payment approves exactly what it
 // costs, then pays (chain.js payMine); part of it is burned and the rest goes to the project's treasury.
 
 import { formatEther } from "https://esm.sh/viem@2";
 import { explain } from "./chain.js";
 import { createTrade } from "./trade.js";
-import { svg, sealedSvg, HAIRS, OUTFITS, rarityOf, RARITIES } from "./crafters.js";
-import { ROOKIE } from "./avatar.js";
+import { cardSvg, sealedSvg, TOPS, HEADWEAR, rarityOf, RARITIES, ROOKIE } from "./degen-skin.js";
 import { fmtMine, unitsToWei, BLOCK_REWARDS, MOB_REWARDS, DAILY_EARN_CAP, WORLD_DAILY_CAP, ZONE_PAY } from "./rewards.js";
 import { SLOTS, SLOT_KEYS, TIERS, CRAFTER_LEVELS, MAX, NO_BOOST, issued, itemBoost, describe } from "./boosts.js";
 import { itemName } from "./blocks.js";
@@ -19,7 +18,7 @@ const mine = (wei) => Number(formatEther(wei)).toLocaleString("en-US", { maximum
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /// `game`: { chain, net, ledger() → { signedIn, wallet, today, total, cap, boost }, signIn(), toast(text, kind),
-/// wear(traits, id), leveled(tokenId, level) (a DIO was just leveled up) }. The ledger's amounts are in units
+/// wear(traits, id), leveled(tokenId, level) (a DEGEN was just leveled up) }. The ledger's amounts are in units
 /// (rewards.js UNIT).
 export function createPanel(game) {
   const el = document.getElementById("panel");
@@ -115,20 +114,20 @@ export function createPanel(game) {
           game.toast(`Converted ${mine(got.earnings)} $MINE of earnings at ${Number(got.rateBps) / 100}%: you received ${mine(got.amount)} $MINE.`, "gold");
         }
       });
-      case "mint": return run(`Minting ${data.n} DIO${data.n > 1 ? "s" : ""}`, () => chain.mintCrafters(Number(data.n), snap.crafters.price));
+      case "mint": return run(`Minting ${data.n} DEGEN${data.n > 1 ? "s" : ""}`, () => chain.mintCrafters(Number(data.n), snap.crafters.price));
       // Anyone: lock the reveal in (seal), waiting for its block and retrying until it's set. The owner: publish the
       // secret first (reveal), then the same, at once, so no window passes unsealed.
-      case "seal": return run("Locking in the I'M DIO reveal", async (step) => {
+      case "seal": return run("Locking in the I'M DEGEN reveal", async (step) => {
         await chain.revealAndSeal(null, { step });
-        return "Locked in: every DIO's look is fixed for good, and shows now.";
+        return "Locked in: every DEGEN's look is fixed for good, and shows now.";
       }, "seal");
       case "reveal": {
         const secret = (document.getElementById("revealSecret")?.value ?? "").trim();
         if (!/^\d+$/.test(secret)) return game.toast("Paste the reveal's secret (the number in your secret file).", "bad");
-        return run("Revealing I'M DIO", async (step) => {
+        return run("Revealing I'M DEGEN", async (step) => {
           await chain.revealAndSeal(secret, { step });
           secretDraft = null;
-          return "Revealed and locked in: every DIO's look is fixed for good, and shows now.";
+          return "Revealed and locked in: every DEGEN's look is fixed for good, and shows now.";
         }, "seal");
       }
       case "upsite": {
@@ -148,12 +147,12 @@ export function createPanel(game) {
         const level = m?.level ?? null;
         if (!m || !lv || level === null || level >= lv.max) return;
         const cost = lv.costs[level - 1];
-        return run(`Leveling up DIO #${id} to level ${level + 1}`, async (step) => {
+        return run(`Leveling up DEGEN #${id} to level ${level + 1}`, async (step) => {
           const now = (await chain.levelUp(id, cost, { step })) ?? level + 1;
           game.leveled?.(id, now);
           const r = m.traits ? rarityOf(m.traits) : null;
           const b = r === null ? "" : `: ${describe(itemBoost("crafter", r, now))}`;
-          return `DIO #${id} is level ${now} now${b}.${worn === id ? " Your boost updates in a moment." : ""}`;
+          return `DEGEN #${id} is level ${now} now${b}.${worn === id ? " Your boost updates in a moment." : ""}`;
         }, `crafter:${id}`);
       }
       case "wear": {
@@ -175,7 +174,7 @@ export function createPanel(game) {
     if (!chain) {
       body.innerHTML = `
         <p>Earn <b class="gold">$MINE</b> by playing: breaking natural blocks (rarer ores pay more) and defeating monsters.</p>
-        <div class="box"><h3>Coming soon</h3><p class="note">The $MINE token, mining sites and the I'M DIO collection aren't on-chain yet. You can already play, and once
+        <div class="box"><h3>Coming soon</h3><p class="note">The $MINE token, mining sites and the I'M DEGEN collection aren't on-chain yet. You can already play, and once
         you sign in, everything you earn is counted.</p></div>
         ${boostsBox(L)} ${economyBox()} ${ratesBox()}`;
       tradeEl.hidden = true;
@@ -280,9 +279,9 @@ export function createPanel(game) {
     const most = Math.min(5, left, room);
     const sizes = [1, 2, 3, 5].filter((n) => n <= most);
     return `<section class="box">
-      <h3>I'M DIO</h3>
-      <p class="note">${M.max.toLocaleString()} characters, drawn and stored fully on-chain: every picture is made by the contract itself, and no two are
-      alike (${HAIRS.length} hairs, ${OUTFITS.length} outfits, hats, skins, eyes, backgrounds). The one you wear is how your miner looks in the world.
+      <h3>I'M DEGEN</h3>
+      <p class="note">${M.max.toLocaleString()} frogs, each a full Minecraft-style skin, drawn and stored fully on-chain: every picture is made by the contract itself, and no two are
+      alike (${TOPS.length} tops, ${HEADWEAR.length - 1} headwear, skins, faces, shoes, accessories, backgrounds). The one you wear is your miner in the world, the same skin pixel for pixel.
       The one you wear also boosts your mining by its rarity and level (see Boosts). Minted sealed, revealed after the mint. Resales pay a 5%
       creator royalty.</p>
       <div class="kv"><span>Minted</span><b>${M.minted.toLocaleString()} / ${M.max.toLocaleString()}</b></div>
@@ -295,11 +294,11 @@ export function createPanel(game) {
           : `<div class="row-btns">${sizes.map((n) => `<button class="btn${n === 1 ? " gold" : ""}" data-act="mint" data-n="${n}" ${!acct || busy ? "disabled" : ""}>Mint ${n}</button>`).join("")}</div>`}
       ${revealBox(M, acct)}
       ${mine.length ? `<h3>Yours</h3><div class="miners">
-        <button class="miner ${worn === null ? "on" : ""}" data-act="wear" data-id="none"><img src="${pic(svg(ROOKIE))}" alt="">Rookie</button>
+        <button class="miner ${worn === null ? "on" : ""}" data-act="wear" data-id="none"><img src="${pic(cardSvg(ROOKIE))}" alt="">Rookie</button>
         ${mine.map((m) => {
           const r = m.traits ? rarityOf(m.traits) : null;
           return `<button class="miner ${worn === m.id ? "on" : ""}" data-act="wear" data-id="${m.id}" ${m.traits ? "" : "disabled"}>
-          <img src="${pic(m.traits ? svg(m.traits) : sealedSvg())}" alt="">#${m.id}${m.traits ? "" : " sealed"}${r === null ? "" : `<span class="tier t${r}">${RARITIES[r]}</span>`}</button>`;
+          <img src="${pic(m.traits ? cardSvg(m.traits) : sealedSvg())}" alt="">#${m.id}${m.traits ? "" : " sealed"}${r === null ? "" : `<span class="tier t${r}">${RARITIES[r]}</span>`}</button>`;
         }).join("")}
       </div><p class="note">${mine.some((m) => m.traits) ? "Tap one to wear it. Others see it once the world server has checked it's yours." : "Yours are sealed until the reveal."}</p>
       ${levelsList(M, s)}` : ""}
@@ -317,7 +316,7 @@ export function createPanel(game) {
       if (M.saleOpen || M.minted === 0) return "";
       if (!M.isOwner) return `<p class="note">Reveal: the owner publishes the secret next; then anyone can lock the reveal in, here.</p>`;
       // The owner's reveal: the secret, then seal() straight after (chain.revealAndSeal), so no window passes unsealed.
-      return `<p class="note">You own I'M DIO. Paste the reveal's secret: the panel publishes it, then locks the reveal in as soon as the next
+      return `<p class="note">You own I'M DEGEN. Paste the reveal's secret: the panel publishes it, then locks the reveal in as soon as the next
         block is over (two confirmations in your wallet; it retries until it's locked in).</p>
         <div class="row-form"><input id="revealSecret" type="password" autocomplete="off" placeholder="the reveal's secret" value="${esc(secretDraft ?? chain.devSecret ?? "")}"></div>
         <button class="btn gold wide" data-act="reveal" ${!acct || busy ? "disabled" : ""}>Reveal and lock in</button>${statusAt("seal")}`;
@@ -326,14 +325,14 @@ export function createPanel(game) {
     if (st === 3 && !M.isOwner) return `<p class="note">The reveal's window is closing or closed. If nobody locked it in, only the owner can pick a new block (it can, ${M.movesLeft ?? 0} more time${M.movesLeft === 1 ? "" : "s"}); then anyone locks it in, here.</p>`;
     const label = st === 3 ? `Pick a new block and lock it in (${M.movesLeft} left)` : "Lock in the reveal";
     const note = {
-      1: "The owner has published the reveal's secret. The reveal locks in a moment from now: anyone can press the button (gas only); every DIO's look then shows, for everyone at once.",
-      2: "Ready: anyone can lock the reveal in now (gas only). Every DIO's look is fixed then and shows for everyone at once; nobody, the owner included, can change it.",
+      1: "The owner has published the reveal's secret. The reveal locks in a moment from now: anyone can press the button (gas only); every DEGEN's look then shows, for everyone at once.",
+      2: "Ready: anyone can lock the reveal in now (gas only). Every DEGEN's look is fixed then and shows for everyone at once; nobody, the owner included, can change it.",
       3: "The reveal's window is closing or closed. As the owner you can pick a new block once it has closed (in public, at most three times in all; until then the panel tries to lock it in), and the panel then locks it in at once.",
     }[st];
     return `<p class="note">${note}</p><button class="btn gold wide" data-act="seal" ${!acct || busy ? "disabled" : ""}>${label}</button>${statusAt("seal")}`;
   }
 
-  /// Each DIO you hold: its rarity, level and boost, and what the next level costs and adds (CrafterLevels).
+  /// Each DEGEN you hold: its rarity, level and boost, and what the next level costs and adds (CrafterLevels).
   function levelsList(M, s) {
     const lv = M.levels;
     if (!lv) return "";
@@ -345,7 +344,7 @@ export function createPanel(game) {
       const then = r === null || !next ? null : itemBoost("crafter", r, next);
       const short = cost !== null && s.mine !== undefined && s.mine < cost;
       return `<div class="crafter-row ${worn === m.id ? "on" : ""}">
-        <img src="${pic(m.traits ? svg(m.traits) : sealedSvg())}" alt="">
+        <img src="${pic(m.traits ? cardSvg(m.traits) : sealedSvg())}" alt="">
         <div class="cr-text">
           <b>#${m.id} · ${r === null ? "Sealed" : `<span class="tier t${r}">${RARITIES[r]}</span>`} · ${level === null ? "level ?" : `Level ${level} of ${lv.max}`}${worn === m.id ? " · worn" : ""}</b>
           <span class="boost">${now ? describe(now) : "Its boost shows once it's revealed"}</span>
@@ -358,11 +357,11 @@ export function createPanel(game) {
     }).join("");
     const burn = lv.burnBps / 100;
     return `<h3>Levels</h3><div class="crafter-rows">${rows}</div>
-      <p class="note">A level adds to the DIO's boost while you wear it, and stays with the DIO if it's sold. Paid in $MINE (approve
+      <p class="note">A level adds to the DEGEN's boost while you wear it, and stays with the DEGEN if it's sold. Paid in $MINE (approve
       exactly the cost, then pay): ${burn}% is burned for good and ${100 - burn}% goes to the project treasury.${chain.trade ? " Short of $MINE? The trade box is below." : ""}</p>`;
   }
 
-  /// Your boosts: the totals the world server last sent, what each slot adds, and the DIOs' table.
+  /// Your boosts: the totals the world server last sent, what each slot adds, and the DEGENs' table.
   function boostsBox(L) {
     const b = L.boost ?? NO_BOOST;
     const lead = L.signedIn
@@ -385,9 +384,9 @@ export function createPanel(game) {
       <p class="note">One NFT a slot, and the slots add up. They only add to what you do: blocks break faster, every block, monster and boss share
       pays more, and your daily cap (${DAILY_EARN_CAP.toLocaleString("en-US")} $MINE) is higher. Nothing pays for holding. At most +${MAX.speed}%
       speed, +${MAX.earn}% $MINE and +${MAX.cap}% cap; everyone's ${WORLD_DAILY_CAP.toLocaleString("en-US")} $MINE a day still holds.</p>
-      <details><summary class="note">DIO boosts (% speed / $MINE / daily cap): rarity and level add up</summary>${table}
-      <p class="note">Each of your DIOs shows its rarity and level below (I'M DIO, Levels); levels are bought there with $MINE, and stay
-      with the DIO.</p></details>
+      <details><summary class="note">DEGEN boosts (% speed / $MINE / daily cap): rarity and level add up</summary>${table}
+      <p class="note">Each of your DEGENs shows its rarity and level below (I'M DEGEN, Levels); levels are bought there with $MINE, and stay
+      with the DEGEN.</p></details>
     </section>`;
   }
 

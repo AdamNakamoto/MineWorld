@@ -23,7 +23,7 @@
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { createAvatar } from "./avatar.js";
 import { heldModel } from "./held.js";
-import { unpackTraits } from "./crafters.js";
+import { unpackTraits } from "./degen-skin.js";
 import { unpackBoost } from "./boosts.js";
 import { wrap, wrapDelta } from "./rules.js";
 /// An angle brought round into [-pi, pi).
@@ -128,7 +128,7 @@ export function createNet(url, scene, h) {
     backoff = Math.min(backoff * 2, 30_000);
   }
 
-  /// `look`: the Crafter they wear, as packed traits (checked on-chain by the world server), or null.
+  /// `look`: the DEGEN they wear, as packed traits (checked on-chain by the world server), or null.
   /// `pos` is where they are (flat, kept at the copy nearest you, so distances to it are the short way round);
   /// `holder` stands their avatar there on the curved planet (draw()).
   /// `gear`: the armor tiers they wear (head, chest, legs, feet), then the item in their hand (0: nothing), as the

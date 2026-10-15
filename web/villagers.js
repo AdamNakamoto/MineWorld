@@ -5,77 +5,107 @@
 
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { createAvatar } from "./avatar.js";
+import { villagerSkin } from "./villager-skins.js";
 import { TOWN, dayTime } from "./rules.js";
 import { DOORS, SPOTS } from "./town.js";
 import { place } from "./planet.js";
 
 const SPEED = 1.3; // blocks a second
 const PAUSE = 9; // seconds at each stop
-const T = (hair, outfit, eyes, gaze, skin, hat, blush = 0) => ({ hair, outfit, eyes, gaze, background: 0, skin, hat, blush });
 
-/// Who lives here: a name, a trade, a home, where they work, a look (Crafter traits) and what they say.
+/// Who lives here: a name, a trade, a home, where they work, a look (their skin: villager-skins.js) and what they say.
 export const VILLAGERS = [
-  { name: "Olwen", job: "Clerk", home: "Rose Cottage", work: "Mining Sites", look: T(10, 13, 0, 0, 0, 0), lines: [
+  { name: "Olwen", job: "Clerk", home: "Rose Cottage", work: "Mining Sites",
+    look: { tone: "fair", hair: ["long", "brown"], eyes: "blue", top: "Suit Navy", shoes: "Boots Black" },
+    lines: [
     "Welcome to Mining Sites! Press M to open your mining site and turn what you dig into $MINE.",
     "Sign in with your wallet first: then every natural block you break and every monster you beat is counted.",
     "A mining site costs a little ETH, once. You can earn without one, but you need it to convert to $MINE.",
   ] },
-  { name: "Bram", job: "Baker", home: "Miller House", work: "Bakery", look: T(11, 7, 3, 1, 2, 0, 1), lines: [
+  { name: "Bram", job: "Baker", home: "Miller House", work: "Bakery",
+    look: { tone: "tan", hair: ["short", "ginger"], top: "Tee White", bottoms: "Slacks Grey", shoes: "Sneakers White" },
+    lines: [
     "Hungry? Apples fall from leaves, berries grow on bushes, and two mushrooms with a plank make a fine stew.",
     "Hold right click with food in hand to eat. A full belly heals you; an empty one hurts.",
   ] },
-  { name: "Hilda", job: "Smith", home: "Cobble House", work: "Smithy", look: T(19, 11, 3, 0, 3, 8), lines: [
+  { name: "Hilda", job: "Smith", home: "Cobble House", work: "Smithy",
+    look: { tone: "brown", hair: ["bun", "black"], top: "Overalls Brown", shoes: "Work Boots", accessory: "Wristbands" },
+    lines: [
     "Wood, then stone: a stone pickaxe mines iron, an iron one mines gold, diamonds and the purple $MINE crystals.",
     "A sword hits much harder than a fist. Iron or better, if you're heading underground.",
   ] },
-  { name: "Corwin", job: "Trader", home: "East House", work: "Trading Post", look: T(28, 15, 2, 1, 1, 0), lines: [
+  { name: "Corwin", job: "Trader", home: "East House", work: "Trading Post",
+    look: { tone: "light", hair: ["curly", "black"], eyes: "green", top: "Jacket Corduroy", bottoms: "Cargo Khaki", headwear: "Straw Hat" },
+    lines: [
     "I trade $MINE for ETH and IMD: press M and find the trade box.",
     "Every trade pays a 4% fee to the MineWorldCraft wallet. Sending $MINE to a friend costs nothing.",
   ] },
-  { name: "Mabel", job: "Librarian", home: "Garden House", work: "Library", look: T(4, 12, 5, 0, 0, 0), lines: [
+  { name: "Mabel", job: "Librarian", home: "Garden House", work: "Library",
+    look: { tone: "fair", hair: ["long", "purple"], eyes: "grey", top: "Sweater Cream", bottoms: "Slacks Navy", shoes: "Boots Black", accessory: "Glasses" },
+    lines: [
     "This planet is small: walk in a straight line and you'll come back to where you started.",
     "Rarer ores sit deeper. $MINE crystals and diamonds hide below level 24.",
   ] },
-  { name: "Ezra", job: "Innkeeper", home: "Sunny House", work: "Tavern", look: T(1, 0, 1, 1, 4, 5, 1), lines: [
+  { name: "Ezra", job: "Innkeeper", home: "Sunny House", work: "Tavern",
+    look: { tone: "deep", hair: ["short", "black"], beard: true, top: "Flannel Red", bottoms: "Jeans Blue" },
+    lines: [
     "Pull up a chair! Type /sethome somewhere you like, and /home brings you back.",
     "Want a chat? Press B for voice with the folk near you, or T to type.",
   ] },
-  { name: "Tamsin", job: "Guard", home: "Fern House", work: "gates", look: T(24, 14, 4, 0, 2, 4), lines: [
+  { name: "Tamsin", job: "Guard", home: "Fern House", work: "gates",
+    look: { tone: "tan", hair: ["short", "brown"], eyes: "green", top: "Knight Armour Iron" },
+    lines: [
     "The town is protected: nobody mines or builds within 64 blocks of the fountain. Type /wild to head out.",
     "Mudlings, crawlers and rattlers come out at night, and rock golems deep underground. Bring a sword.",
   ] },
-  { name: "Juniper", job: "Gardener", home: "Brook House", work: "garden", look: T(5, 10, 4, 1, 1, 2, 1), lines: [
+  { name: "Juniper", job: "Gardener", home: "Brook House", work: "garden",
+    look: { tone: "light", hair: ["long", "green"], top: "Overalls Green", headwear: "Straw Hat", shoes: "Bare Feet" },
+    lines: [
     "The flower meadows are a picture. Berry bushes give one to three berries each.",
     "Flowers and grass tufts don't pay $MINE, but stone and ore do.",
   ] },
-  { name: "Rook", job: "Miner", home: "Hill House", work: "gates", look: T(9, 9, 2, 0, 3, 7), lines: [
+  { name: "Rook", job: "Miner", home: "Hill House", work: "gates",
+    look: { tone: "brown", hair: ["short", "black"], top: "Miner's Vest Orange", bottoms: "Cargo Olive", shoes: "Work Boots", headwear: "Hard Hat Yellow" },
+    lines: [
     "Stone pays a little, coal a bit more, iron and gold better, and a $MINE crystal best of all.",
     "Placed blocks pay nothing when you break them again. Only the planet's own stone counts.",
   ] },
-  { name: "Wren", job: "DIO fan", home: "West House", work: "plaza", look: T(33, 1, 5, 1, 0, 3), lines: [
-    "See my look? It's an I'M DIO. You can mint one in the Mining Site panel and wear it.",
-    "Press V to see yourself from outside. Your DIO's face is on your miner!",
-    "Wearing a DIO makes you a better miner too: faster blocks, more $MINE, a higher daily cap. Rarer and higher-level ones more.",
+  { name: "Wren", job: "DEGEN fan", home: "West House", work: "plaza",
+    look: { degen: { background: 0, skin: 3, eyes: 0, mouth: 1, cheeks: 1, top: 6, bottoms: 8, shoes: 2, headwear: 2, accessory: 0 } },
+    lines: [
+    "See my look? It's an I'M DEGEN. You can mint one in the Mining Site panel and wear it.",
+    "Press V to see yourself from outside. Your DEGEN is your miner, from its eyes to its shoes!",
+    "Wearing a DEGEN makes you a better miner too: faster blocks, more $MINE, a higher daily cap. Rarer and higher-level ones more.",
   ] },
-  { name: "Odo", job: "Elder", home: "Town Hall", work: "Town Hall", look: T(17, 13, 2, 0, 1, 0), lines: [
+  { name: "Odo", job: "Elder", home: "Town Hall", work: "Town Hall",
+    look: { tone: "light", hair: ["bald", "white"], beard: true, eyes: "blue", top: "Sweater Navy", bottoms: "Slacks Grey", shoes: "Boots Black" },
+    lines: [
     "We built this town at the top of the world. Everything past the gates is wild.",
     "Once you've signed in, pick a name in the menu (Esc) so folk know who you are.",
     "Deepvein pays double but its monsters never sleep. And in Red Mesa, other miners can take everything you carry.",
     "Get knocked out and everything you carry drops in a chest where you fell. Hurry back to it before someone else does!",
   ] },
-  { name: "Hazel", job: "Fisher", home: "Lake House", work: "pond", look: T(21, 6, 1, 1, 2, 2), lines: [
+  { name: "Hazel", job: "Fisher", home: "Lake House", work: "pond",
+    look: { tone: "tan", hair: ["bun", "ginger"], top: "Jacket Bomber", bottoms: "Jeans Light", headwear: "Beanie Blue" },
+    lines: [
     "The pond's calm today. Mind the deep water out in the wild: you sink slowly, but you do sink.",
     "Did you know the day here lasts twenty minutes? Nights are when the monsters come.",
   ] },
-  { name: "Pip", job: "Kid", home: "Rose Cottage", work: "plaza", look: T(30, 5, 0, 0, 1, 6, 1), lines: [
+  { name: "Pip", job: "Kid", home: "Rose Cottage", work: "plaza",
+    look: { tone: "fair", hair: ["curly", "blonde"], eyes: "blue", top: "Tee Yellow", bottoms: "Shorts Khaki", shoes: "Sneakers Blue", headwear: "Cap Red" },
+    lines: [
     "Have you seen the giant trees? They're in the dark forest, far from town!",
     "I'm not allowed past the gates at night. Monsters!",
   ] },
   // The shopkeeper stays at the Smithy's door, day and night: clicking him opens the shop (shop.js).
-  { name: "Garrick", job: "Armorer", stay: [14, -21, Math.PI], shop: true, look: T(28, 11, 3, 1, 3, 8), lines: [
+  { name: "Garrick", job: "Armorer", stay: [14, -21, Math.PI], shop: true,
+    look: { tone: "deep", hair: ["short", "grey"], beard: true, top: "Overalls Grey", shoes: "Work Boots", accessory: "Tool Belt" },
+    lines: [
     "Tools, weapons and armor: have a look! Everything's free while the game is being tested.",
   ] },
-  { name: "Quill", job: "Mapmaker", home: "Barn", work: "orchard", look: T(8, 3, 3, 1, 4, 9), lines: [
+  { name: "Quill", job: "Mapmaker", home: "Barn", work: "orchard",
+    look: { tone: "brown", hair: ["long", "white"], top: "Flannel Blue", bottoms: "Cargo Khaki", headwear: "Goggles", accessory: "Backpack Brown" },
+    lines: [
     "The planet is 512 blocks around. Your position is in the top-left corner.",
     "From the clock tower you can see the horizon curve away. It really is a little planet.",
     "Seen the rocket on the launch pad, north-east of the plaza? It flies to Deepvein, Cinderfall and Red Mesa.",
@@ -211,7 +241,7 @@ function tag(text) {
 
 export function createVillagers(scene) {
   const folk = VILLAGERS.map((v, i) => {
-    const av = createAvatar(v.look);
+    const av = createAvatar(null, undefined, villagerSkin(v.look));
     av.root.add(tag(`${v.name} · ${v.job}`));
     av.root.visible = false;
     scene.add(av.root);

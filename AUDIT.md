@@ -5,7 +5,9 @@ referenced is in https://github.com/AdamNakamoto/MineWorld at the commit that ad
 contracts at `ba2a8ed` (job 0792975e; section 8 lists its eight findings and their fixes), re-checked the fixes at
 `49830f2` (job 8c7ba957; section 9), again at `4de227d` (job 52b534f9; section 10) and a third time at `25121ea` (job
 10d532d5; section 11 lists its five findings and how each is resolved, with one addition since: a "revive" payment
-kind). The sections before them describe the contracts as they are now. Nothing is deployed yet: every contract in `contracts/src` is audited before
+kind). The sections before them describe the contracts as they are now. **Section 12 is new and not yet seen by IMD:**
+the collection's art was redesigned as full Minecraft-style skins, which changed `CrafterArt` (rewritten, generated)
+and, in `MineWorldCrafters`, only the traits, their names, the picture and the attributes. Nothing is deployed yet: every contract in `contracts/src` is audited before
 anything goes to Robinhood Chain. The deploy settings are in `contracts/launch.env`.
 
 **The NFT collection was renamed "I'M DEGEN"** (symbol DEGEN; one character is a DEGEN). Only what people see changed: the
@@ -63,7 +65,8 @@ Players earn **$MINE** for what they do in the game. $MINE trades in one **Unisw
   owner changes their settings (within the bounds below) and upgrades their code. The owner may hand them to a
   multisig or a timelock later. The same wallet owns the vault and I'M DEGEN, and is the treasury and the fee
   recipient.
-- **I'M DEGEN** (`MineWorldCrafters`, pictures by `CrafterArt`): 3,333 pixel-art NFTs drawn and stored entirely on
+- **I'M DEGEN** (`MineWorldCrafters`, pictures by `CrafterArt`): 3,333 frog characters, each a full Minecraft-style
+  skin (64 × 64 with its second layer; the game puts the same skin on the player), drawn and stored entirely on
   chain. Blind mint for wallets only (`msg.sender == tx.origin`; free at launch, 5 per transaction, 3 per wallet), then
   commit-reveal: `seedCommit` is fixed at
   deploy; after the mint the owner publishes the secret (`reveal(secret)`, sale closed for good), and the seed waits
@@ -74,8 +77,8 @@ Players earn **$MINE** for what they do in the game. $MINE trades in one **Unisw
   mint knowing a look, nobody, the owner included, can see one before everyone can, and the owner's only lever is
   those three public re-rolls of a window nobody sealed in. As the owner alone knows when it reveals, in practice it
   decides whether a window is sealed unless holders run the sealer (`tools/sealer.sh`) at the reveal time it
-  announces: at most a best of four public seeds. A keyed shuffle gives every token a different hair/outfit/eyes/gaze combination; background, skin, hat and
-  blush are weighted picks. ERC-2981 royalty fixed at 5% to the treasury, enforced with ERC721-C (OpenSea's registry
+  announces: at most a best of four public seeds. A keyed shuffle gives every token a different face and top (eyes ×
+  mouth × cheeks × top); background, skin, bottoms, shoes, headwear and accessory are weighted picks. ERC-2981 royalty fixed at 5% to the treasury, enforced with ERC721-C (OpenSea's registry
   `0xA000027A9B2802E1ddf7000061001e5c005A0000` at launch; the owner picks the validator, and so can relax
   enforcement). `CrafterLevels` keeps each Crafter's level, which the collection shows as a "Level" trait through its
   attributes extension (called with a fixed gas stipend, so it can't break the metadata).
@@ -137,16 +140,17 @@ Lines: all lines / code lines (neither blank nor comment). 3,629 / 2,470 in all 
 | `contracts/src/UpgradeCosts.sol` | 140 / 84 | New | Shared base: level costs, burn share, adding levels, `maxCost` |
 | `contracts/src/lib/OwnedUUPS.sol` | 88 / 52 | New (OpenZeppelin's `Ownable2Step` logic in ERC-7201 storage) | Shared base: two-step ownership, no renounce, owner-only upgrades, each proxy set up only in its own constructor |
 | `contracts/src/ICrafterAttributes.sol` | 17 / 7 | New | Interfaces between the Crafters and their attributes extension |
-| `contracts/src/MineWorldCrafters.sol` | 693 / 425 | New, built on Courier's `CourierSkins` (see below) | The NFT, I'M DEGEN: mint (wallets only, 3 per wallet at launch), commit-reveal (secret published first, L2 block entropy, sealed by anyone within the window; after it, at most 3 public move-ons by the owner), traits, on-chain metadata, enforced royalty |
-| `contracts/src/CrafterArt.sol` | 534 / 436 | New, generated (about 170 of its lines are the art and names as constants) | On-chain SVG pictures, trait names, rarity; no state |
+| `contracts/src/MineWorldCrafters.sol` | 701 / 429 | New, built on Courier's `CourierSkins` (see below) | The NFT, I'M DEGEN: mint (wallets only, 3 per wallet at launch), commit-reveal (secret published first, L2 block entropy, sealed by anyone within the window; after it, at most 3 public move-ons by the owner), traits, on-chain metadata, enforced royalty |
+| `contracts/src/CrafterArt.sol` | 757 / 619 | New, generated (about 180 of its lines are the art and names as constants); rewritten for the skins (section 12) | On-chain skins and their SVG cards, trait names, rarity; no state |
 | `contracts/src/lib/FastBase64.sol` | 50 / 40 | New (Solady's technique) | Base64 for `tokenURI` |
 | `contracts/src/MineHook.sol` | 490 / 376 | Courier's `StampHook`, one bound changed | Pool owner and v4 hook: 4% fee, one-time `openPool`, locked liquidity |
 | `contracts/src/MineRouter.sol` | 148 / 119 | Courier's `StampRouter`, renamed | Buy and sell with IMD, permit sells |
 | `contracts/src/MineEthRouter.sol` | 183 / 145 | Courier's `StampEthRouter`, renamed | Buy and sell with ETH through the IMD/ETH pool |
 | `contracts/src/lib/SafeTransfer.sol` | 33 / 26 | Courier's, byte for byte | Transfer helpers for the hook and routers |
 
-`CrafterArt.sol` is written by `tools/gen-crafter-art.mjs` from `web/crafters-art.js` and `web/crafters.js` (the game
-draws Crafters with the same JS); it isn't edited by hand, and `test_ArtIsUpToDateWithTheJs` fails when it is stale.
+`CrafterArt.sol` is written by `tools/gen-degen-art.mjs` from `web/degen-skin-art.js` and `web/degen-skin.js` (the
+game dresses the player with the same JS); it isn't edited by hand, and `test_ArtIsUpToDateWithTheJs` fails when it is
+stale.
 
 ### What is reused from Courier World, and what differs
 
@@ -278,7 +282,7 @@ Robinhood Chain fork; all 10 pass on one). At `25121ea` it was 243 passed, 10 sk
 | `MineWorldCraftersTest` | 49 | Mint rules (3 per wallet at launch, the fourth refused), `revealStatus`'s 30-block margin while `seal` takes the whole window (fuzz), the reveal (secret first, the next block's hash, `seal` by anyone within the window, a seal within it always fixing the seed (fuzz), after it only the owner moving on, at most 3 times, nobody knowing first), renounce leaving the owner in place, the ArbSys path with a mock (the next L2 block, a parent-chain skip, expiry, a failing call), enforcement and relaxing it, royalty, the treasury check, metadata (I'M DEGEN) and every misbehaving extension, links, interfaces, `tokensOfOwner` gas |
 | `SybilMintTest` | 4 | 10d532d5 #3: the auditor's sweep through 100 throwaway contracts reverts (the attacker holds 0), a contract can't mint, a wallet still mints 3, an EIP-7702 account mints as itself within the limit |
 | `RevealSeedTest` | 2 | Audit 0792975e #1: the auditor's proof, adapted to the current flow, and the grind over 52 reveal blocks |
-| `CrafterArtTest` | 19 | Pictures, traits and `tokenURI` equal to the JS's, shuffle bijection (fuzz), uniqueness, Base64 (fuzz), gas |
+| `CrafterArtTest` | 19 | Skins (pixel hashes), cards (exact SVG strings), traits of every token under three seeds, names, attributes and `tokenURI` equal to the JS's; the rarity rule spelled out; shuffle bijection (fuzz), uniqueness, Base64 (fuzz), gas (section 12) |
 | `MineHookImdFirstTest`, `MineHookImdSecondTest` | 26 + 26 | The hook and routers against a real v4 `PoolManager`, with IMD as currency0 and as currency1 |
 | `MineHookForkTest`, `LaunchForkTest` | 2 + 1 (fork) | ETH routing through the real pools; a blocked fee recipient moves its fees; the whole launch script |
 | `MineWorldCraftersForkTest` | 7 (fork) | OpenSea's live registry: holder transfers, authorized sales, strangers, unauthorized marketplaces, enforced with nothing registered; ArbSys at 0x64 (L2 numbers, not the parent chain's); `tokenURI` |
@@ -738,9 +742,11 @@ seed; 0 until `reveal`), `entropyMoves` (how often the owner moved it on), `tota
   move left), for bots and the game's panel (a client can't compare block numbers itself: the entropy block is an L2
   block).
 - Traits: `_shuffle(seed, id − 1)` is a 4-round Feistel network on 12 bits (round function
-  `keccak256(abi.encode(s, i, r)) & 63`), cycle-walked below 3,333; `c = shuffle × 6,912 / 3,333` picks one of the
-  6,912 hair × outfit × eyes × gaze combinations; background, skin, hat and blush are weighted picks from
-  `keccak256(abi.encode(seed, id))`. Rarity is a table of background and hat.
+  `keccak256(abi.encode(s, i, r)) & 63`), cycle-walked below 3,333; `c = shuffle × 3,480 / 3,333` picks one of the
+  3,480 eyes × mouth × cheeks × top combinations; background, skin, bottoms, shoes, headwear and accessory are
+  weighted picks from 16-bit slices of `keccak256(abi.encode(seed, id))`, and a hoodie with no headwear has its hood
+  up when the next slice is a multiple of 3. Rarity is the highest tier among skin, top, headwear and accessory
+  (section 12).
 - Views: `traitsOf`, `rarityOf` (revealed, existing tokens), `extraAttributes(id)` (the extension's JSON: a raw
   `staticcall` with `EXTENSION_GAS` gas and no return data copied by the call; the answer is used only if the call
   succeeded and returned at least 64 bytes, an offset of exactly 0x20 and a length of at most 4,096 that the returned
@@ -776,8 +782,9 @@ seed; 0 until `reveal`), `entropyMoves` (how often the owner moved it on), `tota
    (second re-check 52b534f9 #2): past the window `seal` reverts, only the owner can move the entropy block on, at
    most 3 times, each in public, and any seal within a window fixes the seed for good; after `reveal` the sale never
    reopens, and after the seal the looks never change.
-3. **No two alike:** `_shuffle` is a bijection on 0..3,332 for every seed, and 6,912 ≥ 3,333 makes the combination
-   index injective, so no two tokens share hair, outfit, eyes and gaze.
+3. **No two alike:** `_shuffle` is a bijection on 0..3,332 for every seed, and 3,480 ≥ 3,333 makes the combination
+   index injective, so no two tokens share eyes, mouth, cheeks and top (all always visible: headwear covers at most
+   the face's top row, and shades keep the eyes' shape).
 4. **Royalty enforcement is always routed through the validator:** no path moves a Crafter between two non-zero
    addresses without calling it (`transferFrom`, both `safeTransferFrom`s, anything reaching `_update`); it can't be
    set to zero or a non-contract; `royaltyInfo` is always 5% to the treasury; holders can always move their own
@@ -868,26 +875,31 @@ Anyone can `seal` within the window.
 
 ### 3.8 CrafterArt and FastBase64 (`contracts/src/CrafterArt.sol`, `contracts/src/lib/FastBase64.sol`)
 
-Files: those two, with `web/crafters-art.js`, `web/crafters.js` and `tools/gen-crafter-art.mjs` as the reference.
+Files: those two, with `web/degen-skin-art.js`, `web/degen-skin.js` and `tools/gen-degen-art.mjs` as the reference.
 
-**Purpose.** `CrafterArt` draws every Crafter as a 24 × 24 SVG from packed masks and palettes (`ART`), the same bytes
-`svg(traits)` in `web/crafters.js` writes; it also gives the trait names, the attributes array, the rarity and the
-sealed picture. It has no state and no owner; all functions are `pure`. `CrafterRules` (a library in the same file)
-holds the counts and the weighted picks. `FastBase64` is RFC 4648 base64 with padding, using Solady's technique (the
-alphabet in scratch memory at `0x1f`-`0x5e`, restored free-memory pointer).
+**Purpose.** `CrafterArt` paints every Crafter's 64 × 64 skin (Minecraft's layout, with the second layer) from packed
+rectangles and palettes (`ART`), in the order `layersOf()` in `web/degen-skin.js` gives, and writes its NFT card (an
+isometric SVG of the skin), the same bytes `cardSvg(traits)` writes; it also gives the trait names, the attributes
+array, the rarity and the sealed card. It has no state and no owner; all functions are `pure`. `CrafterRules` (a
+library in the same file) holds the counts, the weighted picks, the hoodie, trousers, boots and shades flags, and the
+rarity tiers. `FastBase64` is RFC 4648 base64 with padding, using Solady's technique (the alphabet in scratch memory
+at `0x1f`-`0x5e`, restored free-memory pointer).
 
 **Functions.** `render(traits)`, `sealedSvg()`, `attributes(traits)`, `rarityOf(traits)`, `traitName(kind, index)`;
 `FastBase64.encode(bytes)` (internal).
 
 **Guarantees to check.**
 1. `render`, `attributes` and `rarityOf` revert `BadTraits` for any index past its table and never revert otherwise.
-2. The output is valid SVG and valid JSON, equal to the JS's for the test vectors and every Crafter of a seed.
-3. The assembly is memory-safe: `_canvas` (20,576 bytes), `_layer` (palette slots written before read), `_svg` (one
-   buffer written in place, the free-memory pointer set after), `_name`, `FastBase64` (the word after the input
-   zeroed and restored; the alphabet over `0x40` restored), and in `MineWorldCrafters` `_shuffle`'s scratch writes
-   past the free-memory pointer and `extraAttributes` (the call data and the returned header at the free-memory
-   pointer, then the string written there and the pointer moved past it).
-4. `tokenURI` stays well under RPC `eth_call` gas caps (`test_TokenURIGas` requires < 15M).
+2. The output is valid SVG and valid JSON, equal to the JS's for the test vectors and every Crafter of three seeds.
+3. The assembly is memory-safe: `_start` (the art copied to memory, then a 131,072-byte canvas zeroed with
+   `calldatacopy` from past the call data, the free-memory pointer moved past it), `_paint` (writes only inside the
+   canvas: every rectangle lies on the 64 × 64 skin, checked by the generator), `_option`, `_background`, `_card`
+   (scratch past the free-memory pointer for a face's colours, its distinct colours, a part's pieces and their text,
+   then the SVG written after them and the free-memory pointer set past it), `_name`, `FastBase64` (the word after the
+   input zeroed and restored; the alphabet over `0x40` restored), and in `MineWorldCrafters` `_shuffle`'s scratch
+   writes past the free-memory pointer and `extraAttributes` (the call data and the returned header at the
+   free-memory pointer, then the string written there and the pointer moved past it).
+4. `tokenURI` stays well under RPC `eth_call` gas caps (`test_TokenURIGas` requires < 15M; it is 1.45M-2.30M).
 5. `FastBase64.encode` equals standard base64 for every input (fuzzed against forge's encoder, with edge cases).
 
 **Known and accepted.** View-only: a bug here can garble or break a picture, never move tokens or funds.
@@ -1237,3 +1249,68 @@ Also changed since `25121ea`:
   README, DESIGN and 3.5 say so. The game side is out of scope. Tests: `test_DeployedAsSpecified` (three kinds),
   `test_RevivesGoToTheTreasury` (`pay(2, 420e18)` sends it all to the treasury, nothing burned).
 - 254 tests, plus 10 against a Robinhood Chain fork (`--match-contract ForkTest`).
+
+## 12. I'M DEGEN redesign: full Minecraft-style skins (not audited by IMD)
+
+After the third re-check the owner redesigned the collection's art. Every DEGEN is now an original frog drawn as a full
+Minecraft-style skin (64 × 64 in Minecraft's standard layout, classic 4-pixel arms, with the second layer: hat,
+jacket, sleeves, trousers), and its NFT picture is that skin seen from the front, a little to its right and above,
+like a skin site's card. The game puts the very same skin on the player (`web/avatar.js`), so the NFT and the
+character match pixel for pixel. **IMD Swarm has not seen this change.** It touches the art and the traits only.
+
+**What changed in `MineWorldCrafters`** (the diff is `_traitsFor`, `rarityOf` and NatSpec):
+- `Traits` (declared in `CrafterArt.sol`) has ten fields: background, skin, eyes, mouth, cheeks, top, bottoms, shoes,
+  headwear, accessory (it had eight: hair, outfit, eyes, gaze, background, skin, hat, blush).
+- `_traitsFor(s, id)`: the same `_shuffle(s, id − 1)` and the same `h = keccak256(abi.encode(s, id))`.
+  `c = shuffle × 3,480 / 3,333` picks one of 3,480 eyes × mouth × cheeks × top combinations (6 × 5 × 2 × 58);
+  background, skin, bottoms, shoes, headwear and accessory are weighted picks of `h`'s 16-bit slices at bits 0, 16,
+  32, 48, 64 and 80; and a hoodie (tops 0-9) with no headwear gets the hood (headwear 22, never picked by weight)
+  when `(h >> 96) & 0xffff` is a multiple of 3.
+- `rarityOf(id)` is `CrafterRules.rarity(traits)`: the highest tier among the skin, the top, the headwear and the
+  accessory. Legendary: the gold skin, either crown, gold armour. Rare: the ice, purple or stone skin, a royal robe, a
+  space suit, iron armour, the wizard hat, the viking helmet. Common otherwise. By the weights 69.1% / 24.9% / 6.0%;
+  under the vector seed 2,299 / 823 / 211 (the other two seeds: 2,287 / 842 / 204 and 2,334 / 801 / 198).
+- `tokenURI`: the same structure. The image is `art.render(traits)`, the card (an SVG of 2.3-5.2 KB; it was about
+  10 KB). The attributes are `art.attributes(traits)`: Background, Skin, Eyes, Mouth, Cheeks, Top, Bottoms, Shoes,
+  Headwear, Accessory, Rarity, where Bottoms is left out when the top brings its own trousers (tracksuits, suits,
+  overalls, space suits, armour) and Shoes when it brings boots (space suits, armour); then the extension's traits,
+  as before (so "Level" is the attribute after Rarity, wherever that falls). The sealed picture, `art.sealedSvg()`,
+  is now a sealed card.
+
+**What didn't change**: the mint (wallets only, 5 a transaction, 3 a wallet, free), the commit-reveal (`reveal`,
+`seal`, `moveEntropyOn`, `revealStatus`, the ArbSys path), `_shuffle`, the royalty and the validator, the links and
+pictures, `contractURI`, the attributes extension and `extraAttributes`, `refreshMetadata`, ownership (no renounce),
+the storage layout, events and errors, and every other contract. Section 3.7's guarantees hold as written (3 now
+reads: no two share eyes, mouth, cheeks and top).
+
+**`CrafterArt`** (rewritten, still generated, still one contract with no state): 19,511 bytes deployed. The art (7,471
+bytes: 60 layers of 1,372 rectangles, 105 palettes, the option tables, skins and backgrounds) and the names (1,491
+bytes) are constants in its code, so no separate data contract is needed. A layer is a list of 4-byte rectangles on
+the skin (x, y, width, height and a colour code: the option's palette, the skin's, a fixed colour, or clear); a trait
+option is a layer and a palette. `_skin` paints the layers in `layersOf()`'s order: the frog, its eyes, mouth and
+cheeks, the trousers (unless the top brings its own), the top, the shoes (unless it brings boots), the accessory
+(with shades, the eyes' ink over the lenses) and the headwear (the hood in the top's colours). `_card` reads each
+visible face (the second layer where it has a pixel, else the base), lights it, fills it with its commonest colour
+and draws every other run of one colour along a row as a parallelogram, one path per colour per part. Section 3.8 has
+its functions and guarantees.
+
+**Tests**: 254 passed, 10 skipped (the fork tests; all 10 pass on a Robinhood Chain fork). `CrafterArtTest` (19) is new
+for the skins: every expected value comes from the JS through `tools/gen-degen-art.mjs`, which before writing paints
+and writes every token of three seeds from its own model of the contract's data and steps and checks them against the
+JS. `test_RenderMatchesTheJs` (94 looks that between them draw every option of every trait, every eye under shades
+and the hood on every hoodie: card string, skin pixel hash, attributes, rarity), `test_TraitsMatchTheJs` (66 tokens
+under three seeds, the five heaviest included: traits, card, skin, attributes, rarity), `test_EveryTokensTraitsMatchTheJs`
+(all 3,333 under each seed: the traits and rarities in order, and the counts), `test_TokenURIMatchesTheJs` (the JSON
+parsed: name, image, each attribute by name, Rarity last), `test_SealedPictureMatchesTheJs`, `test_SealedTokenURI`,
+`test_TraitNamesMatchTheJs`, `test_TraitsPastTheTablesRevert`, `test_BottomsAndShoesFollowTheTop`,
+`test_RarityIsTheVisibleTiers` (the rule spelled out in the test, over every skin × top × headwear),
+`test_WeightedPicksAndTheHood` (a hood only ever on a hoodie, about a third of those with nothing else on the head),
+`test_EveryCrafterIsUnique` and its fuzz (no two share a face and a top), `testFuzz_ShuffleIsABijection`,
+`test_ArtIsUpToDateWithTheJs` (fails while the generated files are stale), the Base64 tests, `test_RenderGas` and
+`test_TokenURIGas`. `MineWorldCraftersTest` and `CrafterLevelsTest` find Rarity and the extension's traits by name now
+(the number of trait attributes depends on the top), and `test_Fork_TokenURIRendersOnChain` checks the decoded image
+is the card.
+
+**Gas**: `tokenURI` 1.45M-2.30M over the vector tokens; the heaviest of the 3,333 under the vector seed (#525) 2.30M;
+the sealed one 1.01M. `render` alone 1.02M-1.54M. All well under the 15M the test requires; the five heaviest fit a
+10M `eth_call`.

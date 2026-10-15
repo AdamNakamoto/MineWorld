@@ -32,7 +32,7 @@ import { ICONS, drawRow, createHunger, EXHAUSTION, SPRINT_MIN_FOOD, HEAL_FOOD, E
 import { runCommand } from "./commands.js";
 import { createVoice } from "./voice.js";
 import { cleanName } from "./name-rules.js";
-import { packTraits, unpackTraits } from "./crafters.js";
+import { packTraits, unpackTraits } from "./degen-skin.js";
 import { connectChain, explain } from "./chain.js";
 import { createPanel } from "./panel.js";
 import { cleanChat } from "./chat-rules.js";

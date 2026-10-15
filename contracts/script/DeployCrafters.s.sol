@@ -7,8 +7,9 @@ import {CrafterArt} from "../src/CrafterArt.sol";
 import {MineWorldCrafters} from "../src/MineWorldCrafters.sol";
 import {DevTransferValidator} from "./DevTransferValidator.sol";
 
-/// @notice I'M DEGEN (contract MineWorldCrafters) on Robinhood Chain: the on-chain art (CrafterArt), then 3,333
-///         blind-minted DEGENs drawn by it, with the 5% royalty enforced.
+/// @notice I'M DEGEN (contract MineWorldCrafters) on Robinhood Chain: the on-chain art (CrafterArt: every DEGEN's
+///         64 x 64 skin and its NFT card, painted from data in its own code, about 19.5 KB), then 3,333 blind-minted
+///         DEGENs drawn by it, with the 5% royalty enforced.
 ///
 ///   ./script/deploy-mainnet.sh crafters --broadcast --browser --browser-disable-open
 ///
@@ -65,6 +66,7 @@ contract DeployCrafters is Script {
         console2.log("MineWorldCrafters", address(crafters));
         console2.log("  (the I'M DEGEN collection, symbol DEGEN)");
         console2.log("CrafterArt", address(art));
+        console2.log("  (the on-chain art: each DEGEN's skin and card)");
         console2.log("  validator", validator);
         console2.log("  owner", crafters.owner());
         if (crafters.pendingOwner() != address(0)) {

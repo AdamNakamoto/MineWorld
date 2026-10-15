@@ -1,6 +1,6 @@
 // The on-chain side: log in with a browser wallet, open a mining site (ETH) and upgrade it ($MINE), convert earnings to
-// $MINE with the room's voucher, mint I'M DIO characters (and read their traits) and level them up ($MINE), pay the game
-// in $MINE (the shop, rocket tickets: MinePayments), and trade $MINE. Every $MINE payment approves exactly what it
+// $MINE with the room's voucher, mint I'M DEGEN characters (and read their traits) and level them up ($MINE), pay the
+// game in $MINE (the shop, rocket tickets: MinePayments), and trade $MINE. Every $MINE payment approves exactly what it
 // pays, then pays (payMine). Uses web/chain.json from ./dev.sh when
 // present, otherwise the mainnet deployment (web/deployments/robinhood.json). Without either, the game plays and the
 // panel says the economy isn't live yet.
@@ -11,7 +11,7 @@ import {
   ContractFunctionRevertedError,
 } from "https://esm.sh/viem@2";
 import { pickWallet, wallets, lastWallet, rememberWallet } from "./wallet.js";
-import { traitsOf } from "./crafters.js";
+import { traitsOf } from "./degen-skin.js";
 
 const ERROR_TEXT = {
   NoSite: "Open a mining site first: only wallets with one can convert.",
@@ -22,20 +22,20 @@ const ERROR_TEXT = {
   Paused: "Converting is paused for now. Your earnings stay safe on the ledger.",
   Expired: "That voucher expired. Try again.",
   BadSignature: "The voucher didn't check out. Try again.",
-  SaleClosed: "The I'M DIO mint is closed.",
-  SoldOut: "Sold out: all 3,333 DIOs have been minted.",
+  SaleClosed: "The I'M DEGEN mint is closed.",
+  SoldOut: "Sold out: all 3,333 DEGENs have been minted.",
   BadQuantity: "Mint between 1 and 5 at a time.",
-  WalletLimit: "That would go over the most DIOs one wallet can mint (the per-wallet limit shows above the Mint buttons).",
-  OnlyWallets: "I'M DIO mints only to an ordinary wallet sending its own transaction, not through a contract or a smart-contract wallet. Mint from a regular wallet (you can move the DIOs anywhere afterwards).",
-  NotRevealed: "Still sealed: the DIOs are revealed after the mint.",
-  SaleStillOpen: "The I'M DIO mint is still open.",
+  WalletLimit: "That would go over the most DEGENs one wallet can mint (the per-wallet limit shows above the Mint buttons).",
+  OnlyWallets: "I'M DEGEN mints only to an ordinary wallet sending its own transaction, not through a contract or a smart-contract wallet. Mint from a regular wallet (you can move the DEGENs anywhere afterwards).",
+  NotRevealed: "Still sealed: the DEGENs are revealed after the mint.",
+  SaleStillOpen: "The I'M DEGEN mint is still open.",
   NoSecret: "Not yet: the owner hasn't published the reveal's secret.",
   RevealTooSoon: "Not yet: the reveal's block isn't over. Try again in a moment.",
   EntropyUnavailable: "The chain didn't give the reveal's block hash. Try again in a moment.",
   EntropyExpired: "Nobody locked the reveal in within its window. Only the owner can pick a new block now.",
   NotExpired: "The reveal's window isn't over: lock it in instead.",
   NoMovesLeft: "The reveal's block has been moved on three times already: it can't be moved again.",
-  AlreadyRevealed: "Already revealed: every DIO's look is fixed.",
+  AlreadyRevealed: "Already revealed: every DEGEN's look is fixed.",
   CostAboveMax: "The price just changed. Check the new price and try again.",
   RateBelowMin: "The level's rate just changed. Check it and try again.",
   NotActive: "This mining contract has been replaced. Reload the page to use the new one.",
@@ -48,7 +48,7 @@ const ERROR_TEXT = {
   PriceLimitAlreadyExceeded: "The pool doesn't hold any IMD to pay for sells right now.",
   MaxLevel: "That's already the top level.",
   BadLevel: "There's no such level.",
-  NotHolder: "Only the DIO's holder can level it up.",
+  NotHolder: "Only the DEGEN's holder can level it up.",
   NoSuchKind: "The game doesn't take that kind of payment.",
   ZeroAmount: "Nothing to pay.",
   ERC20InsufficientAllowance: "The price just changed, so the approval didn't cover it. Check the new price and try again.",
@@ -123,7 +123,7 @@ export async function connectChain() {
     mine: { address: dep.contracts.mine, abi: withErrors(abis.mine) },
     sites: { address: dep.contracts.sites, abi: withErrors(abis.sites) },
     crafters: dep.contracts.crafters ? { address: dep.contracts.crafters, abi: withErrors(abis.crafters) } : null,
-    // CrafterLevels and MinePayments (proxies): DIO levels, and the game's shop and tickets.
+    // CrafterLevels and MinePayments (proxies): DEGEN levels, and the game's shop and tickets.
     levels: dep.contracts.levels && abis.levels ? { address: dep.contracts.levels, abi: withErrors(abis.levels) } : null,
     payments: dep.contracts.payments && abis.payments ? { address: dep.contracts.payments, abi: withErrors(abis.payments) } : null,
   };
@@ -235,7 +235,7 @@ export async function connectChain() {
     if (C.crafters) {
       const ids = (await read(C.crafters, "tokensOfOwner", [account])).map(Number);
       const seed = s.crafters.seed;
-      // Each DIO's level (CrafterLevels; null if it can't be read), and the levels' costs: costs[i] reaches level
+      // Each DEGEN's level (CrafterLevels; null if it can't be read), and the levels' costs: costs[i] reaches level
       // i + 2.
       const L = C.levels;
       const [levels, levelInfo] = await Promise.all([
@@ -243,7 +243,7 @@ export async function connectChain() {
         L ? Promise.all([read(L, "maxLevel").then(Number), read(L, "upgradeCosts"), read(L, "upgradeBurnBps").then(Number)]) : null,
       ]);
       if (levelInfo) s.crafters.levels = { max: levelInfo[0], costs: levelInfo[1], burnBps: levelInfo[2] };
-      // Traits come from the revealed seed, worked out here exactly as the contract does (crafters.js).
+      // Traits come from the revealed seed, worked out here by the rules the contract's art follows (degen-skin.js).
       s.crafters.mine = ids.map((id, i) => {
         if (seed === 0n) return { id, traits: null, level: levels[i] };
         if (!crafterTraits.has(id)) crafterTraits.set(id, traitsOf(seed, id, hash));
@@ -362,13 +362,13 @@ export async function connectChain() {
 
   return {
     local: !!dep.local,
-    /// Local chains only (./dev.sh): the throwaway reveal secret I'M DIO was committed to.
+    /// Local chains only (./dev.sh): the throwaway reveal secret I'M DEGEN was committed to.
     devSecret: dep.local ? dep.devSecret ?? null : null,
     browserWallet,
     chainName: dep.chainName,
     explorer: dep.explorer,
     addresses: { mine: C.mine.address, sites: C.sites.address, crafters: C.crafters?.address ?? null, levels: C.levels?.address ?? null, payments: C.payments?.address ?? null },
-    /// Whether this chain has CrafterLevels (DIO levels) and MinePayments (the shop and tickets).
+    /// Whether this chain has CrafterLevels (DEGEN levels) and MinePayments (the shop and tickets).
     hasLevels: !!C.levels,
     hasPayments: !!C.payments,
     get account() { return account; },
@@ -416,7 +416,7 @@ export async function connectChain() {
     },
     claimable: (total) => read(C.sites, "claimable", [account, total]),
     mintCrafters: (n, price) => send(C.crafters, "mint", [BigInt(n)], price * BigInt(n)),
-    /// The I'M DIO reveal, done the honest way, at once: with `secret` (the owner), publish it (reveal), then, as soon
+    /// The I'M DEGEN reveal, done the honest way, at once: with `secret` (the owner), publish it (reveal), then, as soon
     /// as the next block is over, seal() (anyone can), retrying until the seed is set. If a window passed with nobody
     /// sealing, the owner's wallet moves the entropy block on (moveEntropyOn, at most 3 times in all) and seals the new
     /// one; anyone else is told only the owner can. A seal that lands too late (sent near the window's end, it
@@ -471,12 +471,12 @@ export async function connectChain() {
       const receipt = await payMine(C.sites, cost, "upgradeSite", args, { ...opts, what: " for the upgrade" });
       return Number(event(C.sites, receipt, "SiteUpgraded")?.level ?? 0) || null;
     },
-    /// Raise DIO `id` one level for `cost` $MINE (CrafterLevels.upgradeCost of its next level, as shown): approve
+    /// Raise DEGEN `id` one level for `cost` $MINE (CrafterLevels.upgradeCost of its next level, as shown): approve
     /// exactly that, then upgrade(id, cost), `cost` being the most it may charge. Resolves with its new level.
     async levelUp(id, cost, opts = {}) {
-      if (!C.levels) throw new Error("DIO levels aren't on this chain yet.");
+      if (!C.levels) throw new Error("DEGEN levels aren't on this chain yet.");
       const args = arity(C.levels, "upgrade") === 2 ? [BigInt(id), cost] : [BigInt(id)];
-      const receipt = await payMine(C.levels, cost, "upgrade", args, { ...opts, what: ` for DIO #${id}` });
+      const receipt = await payMine(C.levels, cost, "upgrade", args, { ...opts, what: ` for DEGEN #${id}` });
       return Number(event(C.levels, receipt, "CrafterUpgraded")?.level ?? 0) || null;
     },
     newRef,
