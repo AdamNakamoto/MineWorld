@@ -1,7 +1,7 @@
 // Every block face and item icon is drawn here, pixel by pixel, from fixed seeds: no image files, nothing borrowed.
 // Block faces go into one 256 x 256 atlas (16 x 16 tiles of 16 x 16 pixels).
 
-import { BLOCKS, TORCH, STICK, COAL, IRON, GOLD, DIAMOND, CRYSTAL, TOOLS, WOOD_PICK, STONE_PICK, IRON_PICK, DIAMOND_PICK,
+import { BLOCKS, TORCH, STICK, COAL, IRON, GOLD, DIAMOND, CRYSTAL, WOOD_PICK, STONE_PICK, IRON_PICK, DIAMOND_PICK,
   WOOD_SWORD, STONE_SWORD, IRON_SWORD, DIAMOND_SWORD, APPLE, BERRIES, MUSHROOM_STEW, ARMOR, CRYSTAL_PICK, CRYSTAL_SWORD, WAR_HAMMER } from "./blocks.js";
 
 const T = 16;
@@ -173,9 +173,11 @@ const TILES = {
   }),
   torch: () => tile(34, (set) => {
     for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) set(x, y, 0, 0);
-    for (let y = 6; y < T; y++) { set(7, y, 0x6b4f2e); set(8, y, 0x7d5d36); }
-    for (let y = 3; y < 6; y++) { set(7, y, 0xffd84a); set(8, y, 0xffb12e); }
-    set(7, 2, 0xfff3b0); set(8, 2, 0xffe27a);
+    // A stick, lit on its left and darker at its foot, charred under a flame that's white hot at the top.
+    for (let y = 7; y < T; y++) { set(7, y, y > 13 ? 0x6b4a24 : 0x8a6436); set(8, y, y > 13 ? 0x3e2914 : 0x5a3d1c); }
+    set(7, 6, 0x3a2a18); set(8, 6, 0x2b1c0b);
+    const flame = [[0xfff8d8, 0xfff0a8], [0xffe46a, 0xffcf40], [0xffc23a, 0xff9e24], [0xff9e24, 0xe8701a]];
+    flame.forEach(([a, b], i) => { set(7, 2 + i, a); set(8, 2 + i, b); });
   }),
   cactus_side: () => tile(35, (set, r) => {
     for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) {
@@ -505,64 +507,173 @@ const FOOD_ART = {
     "..WWwwwwwwwwWW..", "...WWWwwwwWWW...", "....WWWWWWWW....", ".....kkkkkk.....", "................", "................",
   ], { o: "#5a3a1e", S: "#b0703a", r: "#d8302c", c: "#f0e2c0", W: "#8a5c32", w: "#a87442", k: "#5a3a1e" }],
 };
-function pixelArt(px, [rows, pal]) {
-  rows.forEach((row, y) => [...row].forEach((ch, x) => { if (ch !== ".") px(x, y, pal[ch]); }));
+/// Draws 16 x 16 art ("." is empty) in palette `pal`. `rim` (0..1) darkens the pixels round its outside by that much,
+/// an outline in each pixel's own colour, darker.
+function pixelArt(px, [rows, pal], rim = 0) {
+  const solid = (x, y) => (rows[y]?.[x] ?? ".") !== ".";
+  const darken = (c) => "#" + [1, 3, 5].map((i) => Math.round(parseInt(c.slice(i, i + 2), 16) * (1 - rim)).toString(16).padStart(2, "0")).join("");
+  rows.forEach((row, y) => [...row].forEach((ch, x) => {
+    if (ch === ".") return;
+    const edge = rim > 0 && !(solid(x - 1, y) && solid(x + 1, y) && solid(x, y - 1) && solid(x, y + 1));
+    px(x, y, edge ? darken(pal[ch]) : pal[ch]);
+  }));
 }
+
+// Tools, weapons and materials: 16 x 16 pixel art in the classic block games' manner, drawn here (not copied from
+// anyone's textures): a dark outline round the outside, three or four shades inside lit from the top left, and the
+// tools laid corner to corner, the handle from the bottom left. One shape per kind, its letters shades:
+// o d m l h a material's outline, dark, mid, light and highlight; O W w the wooden handle's outline, dark and light.
+/// A material's shades: [outline, dark, mid, light, highlight].
+const MATERIALS = {
+  wood: ["#4a3418", "#7d5a2b", "#a77f45", "#c9a062", "#e6c58a"],
+  stone: ["#29292b", "#505054", "#76767a", "#98989c", "#bcbcc0"],
+  iron: ["#3b3b40", "#85858d", "#b6b6be", "#d8d8dd", "#ffffff"],
+  diamond: ["#0c3431", "#136b64", "#1fa498", "#45d6c8", "#a9f5ec"],
+  crystal: ["#250843", "#4f1a85", "#7f34c2", "#a95ee8", "#ef86ff"],
+  steel: ["#202228", "#454953", "#6c717d", "#959ba8", "#cdd2dc"], // the war hammer's dark steel
+  coal: ["#0b0b0d", "#232327", "#36363c", "#505058", "#767680"],
+  gold: ["#5a3d05", "#a9740e", "#dca21c", "#f4cd45", "#fff0a0"],
+  leather: ["#3d2412", "#6b4325", "#8f5d35", "#b07a4a", "#cf9d6c"], // Padded armor
+};
+const HANDLE = ["#2b1c0b", "#4f3418", "#7a552a"]; // outline, dark, light
+const shades = (m) => {
+  const [o, d, mid, l, h] = MATERIALS[m];
+  return { o, d, m: mid, l, h, O: HANDLE[0], W: HANDLE[1], w: HANDLE[2] };
+};
+// A pickaxe: the crescent head mirrors itself across the handle's diagonal, a point either side.
+const PICK_ART = [
+  "......ooooo.....",
+  "...ooolhhlloo...",
+  ".oollhmmlmlhlo..",
+  "omlooooooomlhlo.",
+  "ooo.......omllo.",
+  "..........womlmo",
+  ".........WO.olmo",
+  "........wO..olmo",
+  ".......WO...olmo",
+  "......wO....oldo",
+  ".....WO.....omo.",
+  "....wO......odo.",
+  "...WO.......omo.",
+  "..wO.......odo..",
+  ".WO........odo..",
+  "OO.........oo...",
+];
+// A sword: the blade outlined, a light ridge with highlights, the crossguard, the grip and the pommel. (Its tip stops a
+// pixel short of the corner, so it stays in view in first person.)
+const SWORD_ART = [
+  "............oo..",
+  "...........oho..",
+  "..........ohlo..",
+  ".........olmo...",
+  "........ohmo....",
+  ".......olmo.....",
+  "......olmo......",
+  "..o..oldo.......",
+  "..omoldo........",
+  "...dldo.........",
+  "...wdm..........",
+  "..WO.do.........",
+  ".wO...o.........",
+  "lm..............",
+  "mo..............",
+  "................",
+];
+// The war hammer: a heavy block of a head across a long handle.
+const HAMMER_ART = [
+  "........o.......",
+  ".......oho......",
+  "......ohhho.....",
+  "......olllho....",
+  ".......omllho...",
+  "........omlmlo..",
+  ".........odmmlo.",
+  "........wOodmdmo",
+  ".......WO..oddo.",
+  "......wO....oo..",
+  ".....WO.........",
+  "....wO..........",
+  "...WO...........",
+  "..wO............",
+  ".WO.............",
+  "OO..............",
+];
+// Materials: a coal lump, ingots, a cut diamond and a cluster of $MINE crystal.
+const LUMP_ART = [
+  "................", "................", "................", "......oooo......", "....oodmmdoo....",
+  "...odmlhmmddo...", "..odmlhlmmmddo..", "..odmmlmmmmddo..", "..oddmmmmmdddo..", "...odddmmddddo..",
+  "...ooddddddoo...", ".....oooooo.....", "................", "................", "................", "................",
+];
+const INGOT_ART = [
+  "................", "................", "................", "................", "................",
+  "....oooooooo....", "...ohhhhhhhlo...", "..ohllllllllmo..", ".ommmmmmmmmmmdo.", ".ollmmmmmmmmddo.",
+  ".odddddddddddoo.", ".oooooooooooooo.", "................", "................", "................", "................",
+];
+const GEM_ART = [
+  "................", "................", "....oooooooo....", "...ohhllllmmo...", "..ohlhlllllmmo..",
+  ".ohllllllllmmdo.", ".oddmmmmmmmmddo.", "..ollmmmmmmddo..", "...olmmmmmddo...", "....olmmmddo....",
+  ".....olmddo.....", "......oldo......", ".......oo.......", "................", "................", "................",
+];
+const CLUSTER_ART = [
+  "................", ".......oo.......", "......ohlo......", ".....ohlmdo.....", ".....ohlmdo.oo..",
+  ".....ohlmdoolmo.", "..oo.ohlmdolmdo.", ".ohloohlmdolmdo.", ".ohlmohlmdolmdo.", ".ohlmohlmdolmdo.",
+  ".ohlmohlmdolmdo.", ".ohlmohlmdolmdo.", ".ohlmohlmdolmdo.", ".oooooooooooooo.", "................", "................",
+];
+/// Item id -> [its art, its material].
+const ITEM_ART = {
+  [WOOD_PICK]: [PICK_ART, "wood"], [STONE_PICK]: [PICK_ART, "stone"], [IRON_PICK]: [PICK_ART, "iron"],
+  [DIAMOND_PICK]: [PICK_ART, "diamond"], [CRYSTAL_PICK]: [PICK_ART, "crystal"],
+  [WOOD_SWORD]: [SWORD_ART, "wood"], [STONE_SWORD]: [SWORD_ART, "stone"], [IRON_SWORD]: [SWORD_ART, "iron"],
+  [DIAMOND_SWORD]: [SWORD_ART, "diamond"], [CRYSTAL_SWORD]: [SWORD_ART, "crystal"],
+  [WAR_HAMMER]: [HAMMER_ART, "steel"],
+  [COAL]: [LUMP_ART, "coal"], [IRON]: [INGOT_ART, "iron"], [GOLD]: [INGOT_ART, "gold"],
+  [DIAMOND]: [GEM_ART, "diamond"], [CRYSTAL]: [CLUSTER_ART, "crystal"],
+};
 
 function drawItemIcon(g, id) {
   const px = (x, y, c) => { g.fillStyle = c; g.fillRect(x * 2, y * 2, 2, 2); };
-  const gem = (c1, c2) => {
-    const pts = [[7, 4], [8, 4], [6, 5], [7, 5], [8, 5], [9, 5], [5, 6], [6, 6], [7, 6], [8, 6], [9, 6], [10, 6], [6, 7], [7, 7], [8, 7], [9, 7], [7, 8], [8, 8], [7, 9], [8, 9]];
-    for (const [x, y] of pts) px(x, y + 2, (x + y) % 3 ? c1 : c2);
-  };
-  const tool = TOOLS[id];
-  const head = { 0: "#b88d55", 1: "#8a8a8a", 2: "#e4e4e4", 3: "#5fe8e0", 4: "#d25bff" };
   if (ARMOR[id]) return drawArmor(px, ARMOR[id]);
-  if (id === WAR_HAMMER) {
-    for (let i = 0; i < 10; i++) px(3 + i, 14 - i, i % 2 ? "#6b4f2e" : "#7d5d36");
-    for (let y = 1; y <= 6; y++) for (let x = 9; x <= 14; x++) if (!(x === 9 && y === 1) && !(x === 14 && y === 6)) px(x, y, y === 1 || x === 9 ? "#c8ccd4" : "#8a8e96");
+  if (ITEM_ART[id]) return pixelArt(px, [ITEM_ART[id][0], shades(ITEM_ART[id][1])]);
+  if (id === STICK) {
+    // The handle on its own, corner to corner, darker at its ends.
+    for (let v = 1; v <= 14; v++) {
+      px(14 - v, v, v === 1 || v === 14 ? HANDLE[0] : HANDLE[v % 2 ? 2 : 1]);
+      px(15 - v, v, HANDLE[0]);
+    }
     return;
   }
-  if (id === STICK) { for (let i = 0; i < 12; i++) px(3 + i, 13 - i, i % 2 ? "#6b4f2e" : "#7d5d36"); return; }
-  if (id === COAL) return gem("#2a2a2a", "#4a4a4a");
-  if (id === IRON) return gem("#d8d0c8", "#a89c90");
-  if (id === GOLD) return gem("#f5d33a", "#d1a520");
-  if (id === DIAMOND) return gem("#5fe8e0", "#2fb0b0");
-  if (id === CRYSTAL) return gem("#d25bff", "#8f2fd0");
-  if (id === APPLE || id === BERRIES || id === MUSHROOM_STEW) return pixelArt(px, FOOD_ART[id]);
-  if (tool?.kind === "pick") {
-    const c = head[[WOOD_PICK, STONE_PICK, IRON_PICK, DIAMOND_PICK, CRYSTAL_PICK].indexOf(id)];
-    for (let i = 0; i < 10; i++) px(4 + i, 13 - i + 0, i % 2 ? "#6b4f2e" : "#7d5d36");
-    for (const [x, y] of [[6, 2], [7, 2], [8, 2], [9, 2], [10, 2], [11, 3], [12, 3], [13, 4], [13, 5], [14, 6], [14, 7], [5, 3], [4, 3]]) px(x, y + 1, c);
-    return;
-  }
-  if (tool?.kind === "sword") {
-    const c = head[[WOOD_SWORD, STONE_SWORD, IRON_SWORD, DIAMOND_SWORD, CRYSTAL_SWORD].indexOf(id)];
-    for (let i = 0; i < 9; i++) { px(6 + i, 9 - i, c); px(7 + i, 9 - i, c); }
-    for (const [x, y] of [[3, 10], [4, 9], [5, 10], [6, 11], [4, 11]]) px(x, y, "#5a4a3a");
-    px(3, 12, "#6b4f2e"); px(2, 13, "#7d5d36");
-    return;
-  }
+  if (id === APPLE || id === BERRIES || id === MUSHROOM_STEW) return pixelArt(px, FOOD_ART[id], 0.45);
   g.fillStyle = "#f0f";
   g.fillRect(8, 8, 16, 16);
 }
 
-/// Armor colours by tier (Padded, Iron, Diamond, Crystal): main, shade, highlight.
-export const ARMOR_COLOURS = [
-  ["#a8784a", "#7a5232", "#c89a68"], ["#c8ccd4", "#8a8e96", "#eef0f4"], ["#5fe8e0", "#2fb0b0", "#b8fff8"], ["#c070f0", "#7a2fb8", "#f0c8ff"],
-];
+/// Armor by tier (Padded, Iron, Diamond, Crystal): its material (MATERIALS), and the colours worn armor is drawn in
+/// (avatar.js): main, shade, highlight.
+const ARMOR_MATERIALS = ["leather", "iron", "diamond", "crystal"];
+export const ARMOR_COLOURS = ARMOR_MATERIALS.map((m) => [MATERIALS[m][3], MATERIALS[m][2], MATERIALS[m][4]]);
+// The four pieces, letters as the tools' (o d m l h).
 const ARMOR_ART = {
-  head: ["..xxxxxxxxxxxx..", ".xhhhhhhhhhhhhx.", ".xmmmmmmmmmmmmx.", ".xmmmmmmmmmmmmx.", ".xmms......smmx.", ".xms........smx.", ".xs..........sx.", "..x..........x.."],
-  chest: ["xxxx......xxxx..", "xhhxxxxxxxxhhx..", "xmmmhhhhhhmmmx..", ".xmmmmmmmmmmx...", "..xmmmmmmmmx....", "..xmmmssmmmx....", "..xmmmmmmmmx....", "..xmmmmmmmmx....", "..xsssssssss....", "..xxxxxxxxxx...."],
-  legs: ["xxxxxxxxxxxx", "xhhhhhhhhhhx", "xmmmmmmmmmmx", "xmmmmxxmmmmx", "xmmmx..xmmmx", "xmmmx..xmmmx", "xmmmx..xmmmx", "xmmsx..xsmmx", "xsssx..xsssx", "xxxxx..xxxxx"],
-  feet: ["............", "xxxx....xxxx", "xhmx....xmhx", "xmmx....xmmx", "xmmxx..xxmmx", "xmmmmx.xmmmmx", "xssssx.xssssx", "xxxxxx.xxxxxx"],
+  head: [
+    "................", "................", "................", ".....oooooo.....", "...oohhhllloo...",
+    "..ohhlllllllmo..", "..ohllllllllmo..", "..olllmmmmmmdo..", "..olmoooooomdo..", "..olmo....omdo..",
+    "..olmo....omdo..", "..oooo....oooo..", "................", "................", "................", "................",
+  ],
+  chest: [
+    "................", "................", "..ooo......ooo..", ".ohlo......olmo.", ".ohlloooooolmdo.",
+    ".ohlhhllllllmdo.", ".oolllllllllmoo.", "..ollllllllmdo..", "..ollmmmmmmmdo..", "..olmmmmmmmmdo..",
+    "...olmmmmmmdo...", "...oddddddddo...", "...oooooooooo...", "................", "................", "................",
+  ],
+  legs: [
+    "................", "................", "..oooooooooooo..", "..ohhhhhhhhhlo..", "..olllllllllmo..",
+    "..ollmmmmmmmdo..", "..ollmo..olmdo..", "..olmdo..olmdo..", "..olmdo..olmdo..", "..olmdo..olmdo..",
+    "..olmdo..olmdo..", "..odddo..odddo..", "..ooooo..ooooo..", "................", "................", "................",
+  ],
+  feet: [
+    "................", "................", "................", "................", "................",
+    "................", "................", "...oooo...oooo..", "...ohlo...ohlo..", "...olmo...olmo..",
+    ".oohlmo.oohlmo..", ".ohllmo.ohllmo..", ".odddmo.odddmo..", ".oooooo.oooooo..", "................", "................",
+  ],
 };
 function drawArmor(px, a) {
-  const [m, sh, hi] = ARMOR_COLOURS[a.tier - 1];
-  const art = ARMOR_ART[a.slot];
-  const ox = Math.floor((16 - art[0].length) / 2), oy = Math.floor((16 - art.length) / 2);
-  art.forEach((row, y) => [...row].forEach((c, x) => {
-    if (c === ".") return;
-    px(ox + x, oy + y, c === "x" ? "#1a1a22" : c === "h" ? hi : c === "s" ? sh : m);
-  }));
+  pixelArt(px, [ARMOR_ART[a.slot], shades(ARMOR_MATERIALS[a.tier - 1])]);
 }

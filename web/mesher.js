@@ -65,6 +65,16 @@ export function patchEdits(blocks, x0, z0, prev, next, natural) {
   for (const [i, b] of next) put(i, b);
   return { changed, lit };
 }
+/// How much open sky reaches height y of a column whose top is `t` (columnTop): all of it above everything, fading
+/// block by block under cover, and shady under leaves (the deeper, the shadier) down to a dim forest floor.
+export function columnSky(t, y) {
+  const rock = t & 255;
+  if (y <= rock) return Math.max(0, 1 - (rock - y + 1) * 0.16);
+  const leaves = t >> 8;
+  return y > leaves ? 1 : Math.max(0.4, 0.86 - (leaves - y) * 0.035);
+}
+/// What's left of a glowing block's light (strength s) d blocks away (counted along the axes).
+export const lightReach = (s, d) => s * (1 - d / 9);
 /// The glowing blocks of a chunk, as [lx, y, lz, strength].
 export function chunkLights(blocks) {
   const out = [];
@@ -179,13 +189,7 @@ function meshPadded(pad, top, lights, x0, z0) {
   // Open sky above a column lights it fully; under cover it fades block by block, and light from an open column
   // next door spills in a little (so walls under an overhang, and cave mouths, aren't black). Under leaves it's
   // shady, the more so the deeper under them, down to a dim forest floor.
-  const colSky = (x, y, z) => {
-    if (x < 0 || z < 0 || x >= P || z >= P) return 0;
-    const t = top[z * P + x], rock = t & 255;
-    if (y <= rock) return Math.max(0, 1 - (rock - y + 1) * 0.16);
-    const leaves = t >> 8;
-    return y > leaves ? 1 : Math.max(0.4, 0.86 - (leaves - y) * 0.035);
-  };
+  const colSky = (x, y, z) => (x < 0 || z < 0 || x >= P || z >= P ? 0 : columnSky(top[z * P + x], y));
   const skyAt = (x, y, z) => {
     if (y >= HEIGHT) return 1;
     const own = colSky(x, y, z);
@@ -197,8 +201,7 @@ function meshPadded(pad, top, lights, x0, z0) {
   const blockAt = near.length ? (x, y, z) => {
     let best = 0;
     for (const [lx, ly, lz, s] of near) {
-      const d = Math.abs(lx - x) + Math.abs(ly - y) + Math.abs(lz - z);
-      const v = s * (1 - d / 9);
+      const v = lightReach(s, Math.abs(lx - x) + Math.abs(ly - y) + Math.abs(lz - z));
       if (v > best) best = v;
     }
     return best;

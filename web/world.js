@@ -13,7 +13,7 @@ import * as THREE from "https://esm.sh/three@0.160.0";
 import { BLOCKS, AIR, WATER } from "./blocks.js";
 import { CHUNK, HEIGHT, WORLD, wrap } from "./rules.js";
 import { index, CHUNKS, naturalBlock } from "./worldgen.js";
-import { meshArea, chunkTops, chunkLights, columnTop, patchEdits, LIGHT } from "./mesher.js";
+import { meshArea, chunkTops, chunkLights, columnTop, patchEdits, LIGHT, columnSky, lightReach } from "./mesher.js";
 import { BEND_GLSL, uniforms as bendUniforms, view as bendView, nearest, bentBounds } from "./planet.js";
 
 /// The view radius can't reach half way round (CHUNKS / 2), or a chunk would be wanted on both sides at once.
@@ -507,6 +507,29 @@ export function createWorld(scene, atlas) {
       z = wrap(z);
       const c = chunkAt(x, z);
       return c ? c.tops[(z - c.cz * CHUNK) * CHUNK + (x - c.cx * CHUNK)] & 255 : -1;
+    },
+    /// The light at (x, y, z) as the mesher lights a face there: the open sky that reaches it (0..1, with a little spilling
+    /// in from an open column next door) and the nearest glowing block's (0..1). For what isn't drawn with the chunks,
+    /// such as the first-person hand.
+    lightAt(x, y, z) {
+      x = Math.floor(x); y = Math.floor(y); z = Math.floor(z);
+      const col = (cx, cz) => {
+        cx = wrap(cx); cz = wrap(cz);
+        const c = chunkAt(cx, cz);
+        return c ? columnSky(c.tops[(cz - c.cz * CHUNK) * CHUNK + (cx - c.cx * CHUNK)], y) : 1;
+      };
+      let sky = y >= HEIGHT ? 1 : col(x, z);
+      if (sky < 1) sky = Math.max(sky, 0.8 * Math.max(col(x + 1, z), col(x - 1, z), col(x, z + 1), col(x, z - 1)));
+      const across = (d) => Math.abs(d - WORLD * Math.round(d / WORLD)); // (the short way round the world)
+      let block = 0;
+      for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+        const c = chunkAt(wrap(x + dx * CHUNK), wrap(z + dz * CHUNK));
+        for (const [lx, ly, lz, s] of c?.lights ?? []) {
+          const d = across(c.cx * CHUNK + lx - x) + Math.abs(ly - y) + across(c.cz * CHUNK + lz - z);
+          block = Math.max(block, lightReach(s, d));
+        }
+      }
+      return { sky, block };
     },
     setRadius(r) { radius = Math.max(1, Math.min(MAX_RADIUS, r)); },
     get radius() { return radius; },

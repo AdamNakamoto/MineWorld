@@ -74,25 +74,33 @@ sunLight.position.set(0.4, 1, 0.3);
 scene.add(ambient, sunLight);
 // What's in your hand in first person is drawn as Minecraft draws it: in its own pass after the world, with the depth
 // cleared first (so it never sinks into a wall), through its own camera at the eye looking along -z with a fixed
-// field of view (sprinting's widening doesn't stretch it), lit like the world where you stand (frame() copies the
-// world's lights). The hand itself hangs in handScene: see "held item" below.
+// field of view (sprinting's widening doesn't stretch it), lit as the world is where you stand (renderHand). The hand
+// itself hangs in handScene: see "held item" below.
 const HAND_FOV = 70;
 const handScene = new THREE.Scene();
 const handCamera = new THREE.PerspectiveCamera(HAND_FOV, 1, 0.05, 10);
+// Its light: the world's where you stand (renderHand), as an even part and a part from the upper left, in front, that
+// turns with the view, so the item's face (which looks to the left) is lit and its edges fall into shade the way a
+// solid thing's do, the top ones less than the ones facing you and down. (Minecraft's light tops out at 1, held.js.)
+const HAND_LIGHT = { even: 0.45, key: 0.65, from: [-0.75, 0.55, 0.35] };
 const handAmbient = new THREE.AmbientLight();
-const handSun = new THREE.DirectionalLight();
-handScene.add(handAmbient, handSun);
-// Minecraft's hand is placed for a 16:9 screen. On a squarer window (or a phone held upright) the same 70 degrees of
-// height would push it off the right edge, so there the hand camera keeps 16:9's width of view instead.
-const HAND_ASPECT = 16 / 9;
+const handKey = new THREE.DirectionalLight();
+handKey.position.fromArray(HAND_LIGHT.from);
+handScene.add(handAmbient, handKey);
+// Minecraft's hand is placed for a 16:9 screen, 70 degrees of view high. On a squarer window the same view would push
+// it off the right edge, so there the hand camera shows 16:9's view cut down from the left: the item sits just as it
+// does on 16:9, at the same size for the window's height, the same way from the bottom right corner. Narrower than
+// HAND_MIN_ASPECT (a phone held upright) it's that one's view, widened to fit.
+const HAND_ASPECT = 16 / 9, HAND_MIN_ASPECT = 4 / 3;
 function resize() {
   renderer.setSize(innerWidth, innerHeight, false);
   const aspect = innerWidth / innerHeight;
   camera.aspect = handCamera.aspect = aspect;
-  const t = Math.tan((HAND_FOV / 2) * (Math.PI / 180)) * Math.max(1, HAND_ASPECT / aspect);
-  handCamera.fov = 2 * Math.atan(t) * (180 / Math.PI);
   camera.updateProjectionMatrix();
-  handCamera.updateProjectionMatrix();
+  const t = Math.tan((HAND_FOV / 2) * (Math.PI / 180)), n = handCamera.near;
+  const high = t * Math.max(1, HAND_MIN_ASPECT / aspect), right = t * Math.max(aspect, HAND_ASPECT);
+  handCamera.projectionMatrix.makePerspective((right - 2 * high * aspect) * n, right * n, high * n, -high * n, n, handCamera.far);
+  handCamera.projectionMatrixInverse.copy(handCamera.projectionMatrix).invert();
 }
 addEventListener("resize", resize);
 resize();
@@ -427,16 +435,19 @@ function drawHand(a) {
   }
   heldGroup.matrixWorldNeedsUpdate = true;
 }
-/// Draws the hand over the world (frame(), after the world): lit as the world is where you stand, the sun's direction
-/// turned into the view.
-const _viewTurn = new THREE.Quaternion();
+/// Draws the hand over the world (frame(), after the world), lit as the block shader lights the world where your eyes
+/// are (world.js): the brighter of the daylight that reaches there and a light's warm glow, never quite black. So it
+/// darkens at night and in caves, and warms by a torch, with the world round it.
+const _handLight = new THREE.Color();
 function renderHand() {
   if (view !== 0 || !heldGroup.visible || !heldMesh) return;
-  handAmbient.color.copy(ambient.color);
-  handAmbient.intensity = ambient.intensity;
-  handSun.color.copy(sunLight.color);
-  handSun.intensity = sunLight.intensity;
-  handSun.position.copy(sunLight.position).applyQuaternion(_viewTurn.copy(camera.quaternion).invert());
+  const { sky, block } = world.lightAt(eyePos.x, eyePos.y, eyePos.z);
+  const day = sky * world.uniforms.daylight.value;
+  _handLight.setRGB(Math.max(day, block, 0.045), Math.max(day, block * 0.84, 0.045), Math.max(day, block * 0.62, 0.045));
+  handAmbient.color.copy(_handLight);
+  handAmbient.intensity = HAND_LIGHT.even * Math.PI;
+  handKey.color.copy(_handLight);
+  handKey.intensity = HAND_LIGHT.key * Math.PI;
   renderer.autoClear = false;
   renderer.clearDepth();
   renderer.render(handScene, handCamera);

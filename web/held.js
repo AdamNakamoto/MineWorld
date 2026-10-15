@@ -3,7 +3,8 @@
 // torch or plant is its 16 x 16 icon given one pixel of thickness (Minecraft's ItemModelGenerator). Either is a block
 // across and centred on the origin (Minecraft's model spans 0..1 and is drawn offset by -0.5), x right, y up, the
 // icon's own face towards +z. Then the model's display settings (the item models' "display") place it: in first
-// person exactly as Minecraft's, in third person at Minecraft's size in the pose avatar.js gives it.
+// person as Minecraft's (tools and weapons a touch further in, DISPLAY), in third person at Minecraft's size in the pose
+// avatar.js gives it.
 //
 // Crystal things carry Minecraft's enchantment glint: a purple sheen that slides over the item's own pixels (never the
 // clear ones round it), two layers at different angles and speeds, added on top of the lit colour, so it shows at night
@@ -47,9 +48,13 @@ const modelOf = (id) => (isBlock(id) ? "block" : TOOLS[id] || id === STICK ? "ha
 /// - third: thirdperson_righthand's scale, the model then held at `grip` (an icon pixel, x right and y down from its
 ///   top left) or, a block, its middle `at` this far from the hand (blocks; x left, y up the arm, z forward): avatar.js
 ///   turns it to suit the pose (POSES), the owner's poses rather than Minecraft's.
+/// Tools and weapons in first person are Minecraft's turn, moved a little left and up and a little larger (its own
+/// translation is [1.13, 3.2, 1.13] and scale 0.68): there a sword's tip runs off the right edge of a 16:9 screen; here
+/// it stops just inside, the blade coming up from the bottom about three quarters across, as in the classic game's
+/// pictures (main.js keeps that framing on squarer windows too).
 export const DISPLAY = {
   handheld: {
-    first: { rotation: [0, -90, 25], translation: [1.13, 3.2, 1.13], scale: 0.68 },
+    first: { rotation: [0, -90, 25], translation: [0.4, 3.9, 1.13], scale: 0.72 },
     third: { scale: 0.85, grip: [4, 12] },
   },
   generated: {
@@ -67,13 +72,15 @@ const DEG = Math.PI / 180;
 // ---------------------------------------------------------------- the glint
 /// Minecraft's enchantment glint (as Java drew it with two layers, RenderItem.renderEffect, 1.8 to 1.14): its glint
 /// texture drawn twice over the item, one layer turned -50 degrees and sliding along once every 3 s, the other turned 10 degrees
-/// and sliding back once every 4.873 s, both tinted #8040CC and added to what's there (blended by their own colour).
-/// The texture is Mojang's; this draws soft streaks of its kind instead. `size`: the streaks' repeats across an item.
-/// `squared` and `plain`: how much of the glint's colour squared (Minecraft's blend) and as it is goes on (the plain part
-/// lifts the green too, so the streaks still show, pale lavender, over an item that is purple already).
+/// and sliding back once every 4.873 s, both tinted #8040CC and added to what's there, blended by their own colour (so
+/// what's added is the colour squared: deep, saturated purple, faint except where a streak passes). The texture is
+/// Mojang's; this draws thin soft streaks of its kind instead. `size`: a layer's streaks across an item (a block);
+/// `width`: a streak's width (a share of the gap between streaks); `squared` and `plain`: how much of the tint squared
+/// (Minecraft's blend) and as it is (a touch, so a streak still shows, a paler violet, over an item that is purple
+/// already) a streak adds at its brightest. The item's own colours stay readable underneath.
 const GLINT = {
   tint: [0x80 / 255, 0x40 / 255, 0xcc / 255], layers: [{ angle: -50, period: 3 }, { angle: 10, period: 4.873 }],
-  size: 1.2, squared: 1.4, plain: 0.5,
+  size: 1.7, width: 0.11, squared: 0.75, plain: 0.1,
 };
 const glintScroll = { value: new THREE.Vector2() };
 /// Once a frame, with the time in seconds: every glinting thing (in your hand, on other miners, on worn Crystal armor)
@@ -86,38 +93,48 @@ const f = (n) => n.toFixed(5);
 const GLINT_GLSL = `
 uniform vec2 glintScroll;
 varying vec2 vGlint;
-// One layer: streaks running across the item at angle a, slid along by s (0..1, wrapping round): a broad bright one
-// and thinner faint ones, a little wavy, like the glint texture's.
+// One layer: streaks running across the item at angle a, slid along by s (0..1, wrapping round): a bright one each
+// repeat and a fainter, thinner one between, a little wavy, like the glint texture's.
 float glintLayer(vec2 p, float a, float s) {
   vec2 q = mat2(cos(a), sin(a), -sin(a), cos(a)) * p * ${f(GLINT.size)};
-  float u = 6.28318 * (q.x + s + 0.06 * sin(12.5664 * q.y));
-  float broad = pow(0.5 + 0.5 * cos(u), 6.0);
-  float thin = pow(0.5 + 0.5 * cos(3.0 * u + 2.0), 10.0) * 0.5;
-  return broad + thin + 0.12;
+  float u = q.x + s + 0.04 * sin(9.4248 * q.y);
+  float bright = (fract(u) - 0.5) / ${f(GLINT.width)};
+  float faint = (fract(u * 2.0 + 0.35) - 0.5) / ${f(GLINT.width * 0.8)};
+  return exp(-bright * bright) + 0.35 * exp(-faint * faint);
 }
 vec3 glintColour(vec2 p, float strength) {
-  vec3 tint = vec3(${GLINT.tint.map(f).join(", ")}) * strength;
-  vec3 a = tint * glintLayer(p, ${f(GLINT.layers[0].angle * DEG)}, glintScroll.x);
-  vec3 b = tint * glintLayer(p, ${f(GLINT.layers[1].angle * DEG)}, -glintScroll.y);
-  // (Minecraft blends the glint by its own colour, so what's added is its colour squared: deep, saturated purple.)
-  return (a * a + b * b) * ${f(GLINT.squared)} + (a + b) * ${f(GLINT.plain)};
+  vec3 tint = vec3(${GLINT.tint.map(f).join(", ")});
+  float a = glintLayer(p, ${f(GLINT.layers[0].angle * DEG)}, glintScroll.x);
+  float b = glintLayer(p, ${f(GLINT.layers[1].angle * DEG)}, -glintScroll.y);
+  return (tint * tint * ${f(GLINT.squared)} + tint * ${f(GLINT.plain)}) * (a * a + b * b) * strength;
 }`;
-/// Gives `material` (a MeshLambertMaterial) the glint, laid out by the mesh's own position: (x + z, y) x `scale`, so a
-/// held item's (a block across) at scale 1, worn armor's (in metres) larger; `strength` dims it (worn armor's is
-/// gentler, as Minecraft's armor glint is). It's added after the light, as Minecraft draws it unlit.
-export function withGlint(material, scale = 1, strength = 1) {
+/// Patches a MeshLambertMaterial's shader: `glint` ({ scale, strength }) adds the glint, laid out by the mesh's own
+/// position: (x + z, y) x scale, so a held item's (a block across) at scale 1, worn armor's (in metres) larger, and
+/// dimmed by strength (worn armor's is gentler, as Minecraft's armor glint is), after the light, as Minecraft draws it
+/// unlit. `solid`: the light never lifts a colour past itself (Minecraft's light tops out at 1), so a held item in full sun
+/// keeps its own colours and shading instead of washing out to white.
+function patch(material, { glint = null, solid = false }) {
   material.onBeforeCompile = (shader) => {
-    shader.uniforms.glintScroll = glintScroll;
-    shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying vec2 vGlint;")
-      .replace("#include <begin_vertex>", `#include <begin_vertex>\nvGlint = vec2(position.x + position.z, position.y) * ${f(scale)};`);
-    shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", `#include <common>\n${GLINT_GLSL}`)
-      .replace("#include <opaque_fragment>", `#include <opaque_fragment>\ngl_FragColor.rgb += glintColour(vGlint, ${f(strength)});`);
+    if (solid) {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "vec3 outgoingLight = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse + totalEmissiveRadiance;",
+        "vec3 outgoingLight = min(reflectedLight.directDiffuse + reflectedLight.indirectDiffuse, diffuseColor.rgb) + totalEmissiveRadiance;");
+    }
+    if (glint) {
+      shader.uniforms.glintScroll = glintScroll;
+      shader.vertexShader = shader.vertexShader
+        .replace("#include <common>", "#include <common>\nvarying vec2 vGlint;")
+        .replace("#include <begin_vertex>", `#include <begin_vertex>\nvGlint = vec2(position.x + position.z, position.y) * ${f(glint.scale)};`);
+      shader.fragmentShader = shader.fragmentShader
+        .replace("#include <common>", `#include <common>\n${GLINT_GLSL}`)
+        .replace("#include <opaque_fragment>", `#include <opaque_fragment>\ngl_FragColor.rgb += glintColour(vGlint, ${f(glint.strength)});`);
+    }
   };
-  material.customProgramCacheKey = () => `glint${scale}:${strength}`;
+  material.customProgramCacheKey = () => `${glint ? `glint${glint.scale}:${glint.strength}` : ""}${solid ? ":solid" : ""}`;
   return material;
 }
+/// Gives `material` (a MeshLambertMaterial) the glint (patch), `scale` and `strength` as there.
+export const withGlint = (material, scale = 1, strength = 1) => patch(material, { glint: { scale, strength } });
 /// Whether item `id` glints: Crystal tools, weapons and armor (not the war hammer).
 const glints = (id) => id === CRYSTAL_PICK || id === CRYSTAL_SWORD || ARMOR[id]?.tier === 4;
 
@@ -127,7 +144,7 @@ function blockMeshes(id) {
   const g = new THREE.BoxGeometry(1, 1, 1);
   const [top, side, bottom] = faceTiles(id);
   tileUVs(g, [side, side, top, bottom, side, side]);
-  return [new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: atlasTex, alphaTest: 0.5, transparent: id === WATER }))];
+  return [new THREE.Mesh(g, patch(new THREE.MeshLambertMaterial({ map: atlasTex, alphaTest: 0.5, transparent: id === WATER }), { solid: true }))];
 }
 
 /// Item `id`'s icon extruded one pixel thick, as Minecraft's ItemModelGenerator makes it: a block across, centred, the
@@ -138,10 +155,7 @@ function itemMeshes(id) {
   const data = canvas.getContext("2d").getImageData(0, 0, 32, 32).data;
   const S = 1 / N;
   const solid = (x, y) => x >= 0 && y >= 0 && x < N && y < N && data[(y * 2 * 32 + x * 2) * 4 + 3] > 128;
-  const material = (opts) => {
-    const m = new THREE.MeshLambertMaterial(opts);
-    return glints(id) ? withGlint(m) : m;
-  };
+  const material = (opts) => patch(new THREE.MeshLambertMaterial(opts), { glint: glints(id) ? { scale: 1, strength: 1 } : null, solid: true });
 
   // The faces: the icon itself, front and back. (Its colours used as written, as the world's: no colour space.)
   const tex = new THREE.CanvasTexture(canvas);
