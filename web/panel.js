@@ -27,6 +27,8 @@ export function createPanel(game) {
   const tradeEl = document.getElementById("tradeBox");
   const { chain } = game;
   let snap = null, busy = false, timer = 0, trade = null, worn = null;
+  // The reveal's secret as the owner pastes it (kept across the panel's refreshes, never stored).
+  let secretDraft = null;
   // What the last action said, shown where it was started (`at`: "site", "crafter:<id>"...): its progress, how it
   // ended, or why it didn't go through.
   let status = null;
@@ -81,6 +83,9 @@ export function createPanel(game) {
     el.hidden = true;
     clearInterval(timer);
   }
+  el.addEventListener("input", (e) => {
+    if (e.target.id === "revealSecret") secretDraft = e.target.value;
+  });
   el.addEventListener("click", (e) => {
     if (e.target === el || e.target.closest("[data-close]")) return close();
     const b = e.target.closest("[data-act]");
@@ -111,14 +116,21 @@ export function createPanel(game) {
         }
       });
       case "mint": return run(`Minting ${data.n} DIO${data.n > 1 ? "s" : ""}`, () => chain.mintCrafters(Number(data.n), snap.crafters.price));
-      // Anyone can lock in the reveal once the owner has published the secret and the next block is over
-      // (MineWorldCrafters.seal). Too late, seal() picks a new block instead: then press again.
-      case "seal": return run("Locking in the I'M DIO reveal", async () => {
-        const revealed = await chain.sealReveal();
-        return revealed
-          ? "Locked in: every DIO's look is fixed for good, and shows now."
-          : "Nobody locked it in in time, so the reveal now waits for a new block. Press Lock in the reveal again in a moment.";
+      // Anyone: lock the reveal in (seal), waiting for its block and retrying until it's set. The owner: publish the
+      // secret first (reveal), then the same, at once, so no window passes unsealed.
+      case "seal": return run("Locking in the I'M DIO reveal", async (step) => {
+        await chain.revealAndSeal(null, { step });
+        return "Locked in: every DIO's look is fixed for good, and shows now.";
       }, "seal");
+      case "reveal": {
+        const secret = (document.getElementById("revealSecret")?.value ?? "").trim();
+        if (!/^\d+$/.test(secret)) return game.toast("Paste the reveal's secret (the number in your secret file).", "bad");
+        return run("Revealing I'M DIO", async (step) => {
+          await chain.revealAndSeal(secret, { step });
+          secretDraft = null;
+          return "Revealed and locked in: every DIO's look is fixed for good, and shows now.";
+        }, "seal");
+      }
       case "upsite": {
         // The cost shown is the cost approved and the most the upgrade may charge (maxCost), and the rate shown is the
         // least it must buy (minRateBps): if the owner changed either meanwhile, the upgrade fails rather than charge
@@ -158,6 +170,7 @@ export function createPanel(game) {
 
   function render() {
     if (el.hidden) return;
+    if (document.activeElement?.id === "revealSecret") return; // (don't redraw under the owner's typing)
     const L = game.ledger();
     if (!chain) {
       body.innerHTML = `
@@ -262,6 +275,10 @@ export function createPanel(game) {
     const left = M.max - M.minted;
     const mine = M.mine ?? [];
     const price = M.price === 0n ? "Free (gas only)" : `${eth(M.price)} ETH`;
+    // What this wallet may still mint: the per-wallet limit (3 at launch) less what it has minted, at most 5 at once.
+    const room = M.limit === null || M.mintedByMe === null ? left : Math.max(0, M.limit - M.mintedByMe);
+    const most = Math.min(5, left, room);
+    const sizes = [1, 2, 3, 5].filter((n) => n <= most);
     return `<section class="box">
       <h3>I'M DIO</h3>
       <p class="note">${M.max.toLocaleString()} characters, drawn and stored fully on-chain: every picture is made by the contract itself, and no two are
@@ -269,11 +286,13 @@ export function createPanel(game) {
       The one you wear also boosts your mining by its rarity and level (see Boosts). Minted sealed, revealed after the mint. Resales pay a 5%
       creator royalty.</p>
       <div class="kv"><span>Minted</span><b>${M.minted.toLocaleString()} / ${M.max.toLocaleString()}</b></div>
-      <div class="kv"><span>Price</span><b>${price}</b></div>
-      ${M.limit ? `<div class="kv"><span>Per wallet</span><b>${M.limit}</b></div>` : ""}
-      ${M.saleOpen && left > 0
-        ? `<div class="row-btns">${[1, 3, 5].map((n) => `<button class="btn${n === 1 ? " gold" : ""}" data-act="mint" data-n="${n}" ${!acct || busy || n > left ? "disabled" : ""}>Mint ${n}</button>`).join("")}</div>`
-        : `<p class="note">${left <= 0 ? "Sold out." : "The mint isn't open right now."}</p>`}
+      <div class="kv"><span>Price</span><b>${price}${M.limit ? `, at most ${M.limit} per wallet` : ""}</b></div>
+      ${acct && M.mintedByMe !== null && M.limit ? `<div class="kv"><span>You've minted</span><b>${M.mintedByMe} of ${M.limit}</b></div>` : ""}
+      ${!M.saleOpen || left <= 0
+        ? `<p class="note">${left <= 0 ? "Sold out." : "The mint isn't open right now."}</p>`
+        : acct && room === 0
+          ? `<p class="note">You've minted ${M.limit}: that's the most one wallet can mint.</p>`
+          : `<div class="row-btns">${sizes.map((n) => `<button class="btn${n === 1 ? " gold" : ""}" data-act="mint" data-n="${n}" ${!acct || busy ? "disabled" : ""}>Mint ${n}</button>`).join("")}</div>`}
       ${revealBox(M, acct)}
       ${mine.length ? `<h3>Yours</h3><div class="miners">
         <button class="miner ${worn === null ? "on" : ""}" data-act="wear" data-id="none"><img src="${pic(svg(ROOKIE))}" alt="">Rookie</button>
@@ -288,19 +307,30 @@ export function createPanel(game) {
   }
 
   /// Where the reveal stands (MineWorldCrafters.revealStatus: 0 secret not out, 1 waiting, 2 sealable, 3 expired, 4
-  /// revealed), and the button anyone can press once the owner has published the secret: it locks the reveal in with
-  /// the next block's hash, which the chain only gives for 256 blocks (about 26 seconds), so the sooner the better.
+  /// revealed, 5 stuck), and the button anyone can press once the owner has published the secret: it locks the reveal
+  /// in with the next block's hash, which the chain only gives for 256 blocks (about 26 seconds). After a window nobody
+  /// sealed in, only the owner can move it on (moveEntropyOn, at most three times); the owner's reveal seals at once.
   function revealBox(M, acct) {
     const st = M.revealStatus;
     if (st === null || st === undefined || st === 4) return "";
-    if (st === 0) return M.saleOpen || M.minted === 0 ? "" : `<p class="note">Reveal: the owner publishes the secret next; then anyone can lock the reveal in, here.</p>`;
-    const button = `<button class="btn gold wide" data-act="seal" ${!acct || busy || st === 1 ? "disabled" : ""}>Lock in the reveal</button>`;
+    if (st === 0) {
+      if (M.saleOpen || M.minted === 0) return "";
+      if (!M.isOwner) return `<p class="note">Reveal: the owner publishes the secret next; then anyone can lock the reveal in, here.</p>`;
+      // The owner's reveal: the secret, then seal() straight after (chain.revealAndSeal), so no window passes unsealed.
+      return `<p class="note">You own I'M DIO. Paste the reveal's secret: the panel publishes it, then locks the reveal in as soon as the next
+        block is over (two confirmations in your wallet; it retries until it's locked in).</p>
+        <div class="row-form"><input id="revealSecret" type="password" autocomplete="off" placeholder="the reveal's secret" value="${esc(secretDraft ?? chain.devSecret ?? "")}"></div>
+        <button class="btn gold wide" data-act="reveal" ${!acct || busy ? "disabled" : ""}>Reveal and lock in</button>${statusAt("seal")}`;
+    }
+    if (st === 5) return `<p class="note">The reveal can't happen any more: its block was moved on three times and the last window passed with nobody locking it in.</p>`;
+    if (st === 3 && !M.isOwner) return `<p class="note">Nobody locked the reveal in within its window. Only the owner can pick a new block now (it can, ${M.movesLeft ?? 0} more time${M.movesLeft === 1 ? "" : "s"}); then anyone locks it in, here.</p>`;
+    const label = st === 3 ? `Pick a new block and lock it in (${M.movesLeft} left)` : "Lock in the reveal";
     const note = {
-      1: "The owner has published the reveal's secret. In a moment anyone can lock the reveal in (gas only); every DIO's look then shows, for everyone at once.",
+      1: "The owner has published the reveal's secret. The reveal locks in a moment from now: anyone can press the button (gas only); every DIO's look then shows, for everyone at once.",
       2: "Ready: anyone can lock the reveal in now (gas only). Every DIO's look is fixed then and shows for everyone at once; nobody, the owner included, can change it.",
-      3: "Nobody locked the reveal in within its 256 blocks. Press the button to pick a new block (then press again a moment later).",
+      3: "Nobody locked the reveal in within its window. As the owner you can pick a new block (in public, at most three times in all); the panel then locks it in at once.",
     }[st];
-    return `<p class="note">${note}</p>${button}${statusAt("seal")}`;
+    return `<p class="note">${note}</p><button class="btn gold wide" data-act="seal" ${!acct || busy ? "disabled" : ""}>${label}</button>${statusAt("seal")}`;
   }
 
   /// Each DIO you hold: its rarity, level and boost, and what the next level costs and adds (CrafterLevels).

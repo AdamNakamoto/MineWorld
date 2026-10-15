@@ -17,7 +17,7 @@ $STAMP hook for the 4% fee, the audited enforced-royalty NFT pattern, and server
 | DIO levels | `CrafterLevels`: a DIO's holder raises it from level 1 to 5 for 2,310, 9,471, 38,831 and 159,207 $MINE. The level belongs to the token (it stays when sold) and adds to its boost |
 | Shop and tickets | `MinePayments`: the Smithy's shop (kind 0) and rocket tickets (kind 1, 2,100 $MINE to Deepvein or Cinderfall, 210 to Red Mesa), at the prices in `web/shop.js` and `web/zones.js` |
 | Burns | Site upgrades, DIO levels and the shop burn 75% of what they cost (owner-settable, 0-100%) and send the rest to the treasury; tickets burn nothing. Taken straight from the player's wallet with an exact approval: the contracts never hold anyone's $MINE |
-| NFT | "I'M DIO" (symbol DIO; contract `MineWorldCrafters`, first named MineWorld Crafters: the code keeps that name): 3,333 characters from the user's own pixel-art designs, drawn and stored fully on-chain (the contract builds each SVG from the trait layers in `web/crafters-art.js`). Free mint (gas only; price owner-settable), per-wallet limit, commit-reveal (the owner publishes the secret, the seed waits for the next block's hash, anyone seals it). No two alike: hair x outfit x eyes x gaze is a different one of 6,912 combinations for every token; background, skin, hat and blush are weighted. The DIO a player wears is how their miner looks in the game, and boosts their mining by its rarity and level (`web/boosts.js`). 5% royalty, enforced (ERC721-C, OpenSea's registry), rate fixed. Owner can update the collection's website and social links shown on OpenSea at any time |
+| NFT | "I'M DIO" (symbol DIO; contract `MineWorldCrafters`, first named MineWorld Crafters: the code keeps that name): 3,333 characters from the user's own pixel-art designs, drawn and stored fully on-chain (the contract builds each SVG from the trait layers in `web/crafters-art.js`). Free mint (gas only; price owner-settable), at most 3 per wallet (owner-settable, 1 to 50), commit-reveal (the owner publishes the secret, the seed waits for the next block's hash, anyone seals it within the 256 blocks the chain keeps a hash for, about 26 seconds; the panel sends both at once. If nobody seals in time, only the owner can move it on to a new block, in public and at most 3 times; after that the reveal stays stuck rather than fall back to anything that could be steered). No two alike: hair x outfit x eyes x gaze is a different one of 6,912 combinations for every token; background, skin, hat and blush are weighted. The DIO a player wears is how their miner looks in the game, and boosts their mining by its rarity and level (`web/boosts.js`). 5% royalty, enforced (ERC721-C, OpenSea's registry), rate fixed. Owner can update the collection's website and social links shown on OpenSea at any time; its ownership can never be renounced, so OpenSea Studio, which lets only `owner()` edit, stays usable |
 | Treasury | Site sales, the unburned share of upgrades and shop payments, tickets, any NFT mint price and the NFT royalty. Defaults to the fee recipient `0x6e85…70eD`; separate setting |
 | Owner | `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` owns the vault, the three proxies and I'M DIO. Two-step transfer, never renounced (`OwnedUUPS`); can be a multisig or a timelock |
 
@@ -57,14 +57,14 @@ the vault caps what can be minted at 35,000 a day.
 
 **MiningSites** (UUPS proxy; `UpgradeCosts`, `MinePayer`, `OwnedUUPS`):
 - `openSite()` payable: exactly `sitePrice`, once per wallet, ETH forwarded to `treasury`; the site opens at level 1.
-  `siteOf(address) → uint64 openedAt` (0 = none), `hasSite(address) → bool`, `siteLevel(address) → level` (0 = none).
+  `siteOf(address) → uint64 openedAt` (0 = none), `hasSite(address) → bool`, `siteLevel(address) → level` (0 = none; the level as bought, kept as it is through a replacement even above that one's `maxLevel`).
   Event `SiteOpened(address indexed owner, uint256 price)`.
 - `upgradeSite(uint256 maxCost, uint256 minRateBps)`: raises the caller's site one level for `upgradeCost(level + 1)`
   $MINE, taken from the wallet with its approval: `upgradeBurnBps` (75%) burned, the rest to the treasury. The game
   passes the cost and the next level's rate it shows, and approves exactly the cost. Reverts `NoSite`, `MaxLevel`,
   `CostAboveMax(cost, maxCost)`, `RateBelowMin(rate, minRateBps)`. Event `SiteUpgraded(address indexed owner, uint256 level, uint256 cost, uint256 burned)`.
   `maxLevel()` (5 at launch), `upgradeCost(level)` (2 to maxLevel), `upgradeCosts()`, `upgradeBurnBps()`.
-- Rates: `rateBps(address)` (the wallet's, 0 without a site), `levelRateBps(level)`, `rates()`: 5,000, 6,000, 7,000,
+- Rates: `rateBps(address)` (the wallet's, 0 without a site; a level above the top earns the top rate), `levelRateBps(level)`, `rates()`: 5,000, 6,000, 7,000,
   8,500 and 10,000 at launch.
 - `claim(uint256 total, uint64 deadline, bytes signature)`: msg.sender must have a site, not paused, `deadline` not
   passed, EIP-712 signature by `signer` over `Earnings(address player,uint256 total,uint64 deadline)` with domain
@@ -87,9 +87,10 @@ the vault caps what can be minted at 35,000 a day.
 Owner: `proposeDistributor` (an address, code or not: a proxy's predicted address), `cancelDistributor`,
 `acceptDistributor` (after `DISTRIBUTOR_DELAY`, 2 days, and only a contract whose `owner()` is the vault's owner,
 `vault()` the vault and `predecessor()` the current distributor), `sweep`. A replacement MiningSites proxy is deployed
-with `initialize` in its constructor (which alone, or the vault's owner, can run it; it accepts the vault's pending
-distributor and records the current one as its predecessor). It carries each player's site, `settled` and `claimed`
-over (`bookOf` reads through; a player's first `openSite`, `upgradeSite` or `claim` imports them), and the replaced
+with `initialize` in its constructor (the only place it can run: a proxy deployed without it can never be set up; it
+accepts the vault's pending distributor and records the current one as its predecessor). The vault's checks catch
+mistakes, not a contract built to lie, so the owner proposes only a proxy it deploys itself, from its own wallet. It carries each player's site, `settled` and `claimed`
+over (`bookOf` reads through; a player's first `openSite`, `upgradeSite` or `claim` imports them; levels as they are), and the replaced
 one retires: its `openSite`, `upgradeSite` and `claim` revert `NotActive`. Per-day counters restart at a replacement.
 
 **CrafterLevels** (UUPS proxy): `levelOf(tokenId)` (1 until upgraded), `upgrade(tokenId, maxCost)` by the token's

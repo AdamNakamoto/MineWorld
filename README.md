@@ -170,8 +170,8 @@ servers only, so players behind strict networks may not connect until a TURN rel
 | DIO levels | Every DIO starts at level 1; its holder raises it to level 5 for 2,310, 9,471, 38,831 and 159,207 $MINE (half a site's). The level stays with the DIO when it's sold, shows as its "Level" trait, and adds to its boost (below) |
 | Shop and tickets | Paid in $MINE through `MinePayments` at the game's prices (`web/shop.js` `CATALOG`, `web/zones.js` `ticket`): the shop's 75% burned and 25% to the treasury; rocket tickets (2,100 for Deepvein or Cinderfall, 210 for Red Mesa) all to the treasury |
 | Burns | Site upgrades and DIO levels burn 75% of what they cost and send 25% to the treasury, as the shop does. The token counts every mint against its 21M cap, so a burn is for good: the supply only ever shrinks from what was minted |
-| NFT: I'M DIO | "I'M DIO" (symbol DIO; the contract is `MineWorldCrafters`): 3,333 pixel-art characters, drawn and stored entirely on chain, no two alike. The one a player wears is how their miner looks, and boosts their mining by its rarity and level (below). Free blind mint (5 a transaction, 10 a wallet; the owner can set a price, paid straight to the treasury), then revealed: the owner publishes the secret committed at deploy, and the seed waits for the next block's hash, which anyone then locks in (`seal`), so nobody can pick looks or see them before everyone else. 5% royalty, enforced through the transfer validator the owner picks (it can relax that, in public) |
-| Owner and treasury | `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` owns the vault, the three upgradeable contracts and I'M DIO, and is the treasury (site sales, the unburned share of upgrades and payments, tickets, any mint price, the royalty) and the fee recipient. Ownership moves in two steps and can't be renounced; it can be handed to a multisig or a timelock. A treasury must take ETH where ETH is sent to it (MiningSites and I'M DIO refuse one that doesn't) |
+| NFT: I'M DIO | "I'M DIO" (symbol DIO; the contract is `MineWorldCrafters`): 3,333 pixel-art characters, drawn and stored entirely on chain, no two alike. The one a player wears is how their miner looks, and boosts their mining by its rarity and level (below). Free blind mint, at most 3 a wallet (the owner can change that, 1 to 50, or set a price, paid straight to the treasury), then revealed: the owner publishes the secret committed at deploy, and the seed waits for the next block's hash, which anyone then locks in (`seal`) within about 26 seconds (the panel sends both at once), so nobody can pick looks or see them before everyone else. If nobody locks it in, only the owner can move it on to a new block, in public, at most 3 times. 5% royalty, enforced through the transfer validator the owner picks (it can relax that, in public) |
+| Owner and treasury | `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` owns the vault, the three upgradeable contracts and I'M DIO, and is the treasury (site sales, the unburned share of upgrades and payments, tickets, any mint price, the royalty) and the fee recipient. Ownership moves in two steps and can't be renounced; it can be handed to a multisig or a timelock (I'M DIO's only to a wallet that can sign in to OpenSea Studio: launch step 10). A treasury must take ETH where ETH is sent to it (MiningSites and I'M DIO refuse one that doesn't) |
 | No yield farming | Nothing pays for holding or waiting. $MINE comes only from playing; NFT boosts only add to what a player does |
 
 **What can change and what can't.** Fixed forever: the token (21M cap, no owner, no proxy, no pause, no blocklist, no
@@ -239,11 +239,11 @@ approved more. Short of $MINE? Buy some in the panel's trade box.
 | `MineToken.sol` | $MINE: Courier World's $STAMP (StampToken) line for line. ERC-20 with permit and burn, 21M cap counting every mint (so burns are for good), 10.5M to the hook (pool) at launch, the rest minted only by its one minter, the vault (set once). Renounced at deploy: no owner, no proxy, no pause, no tax |
 | `MineVault.sol` | The mining vault, $MINE's minter: mints straight to players when its distributor (MiningSites) asks, never more than 35,000 in a UTC day nor 10,500,000 in all. Not upgradeable. The owner can replace the distributor only in the open (`proposeDistributor`, then `acceptDistributor` two days later), and only with a contract whose `owner()` is the vault's owner, `vault()` the vault and `predecessor()` the current distributor: propose the new proxy's predicted address, deploy it with `initialize` in its constructor, then accept (the steps are in its NatSpec) |
 | `MineHook.sol`, `MineRouter.sol`, `MineEthRouter.sol` | Courier's audited `StampHook` and routers for $MINE: one pool, locked launch liquidity, 4% fee on the IMD side, buy/sell with IMD or ETH. The one difference from StampHook: the lowest start tick is -300,000 (was -400,000, as CourierPad); everything else, the 21M launch limit and the market-cap maths included, is StampHook's |
-| `MiningSites.sol` | UUPS proxy, the rules for converting: mining sites (ETH, once per wallet) with levels 1 to 5 converting 50/60/70/85/100% (`upgradeSite(maxCost, minRateBps)`, paid in $MINE: `upgradeCost(level)`, 75% burned, never more than `maxCost`, never for a rate below `minRateBps`), and the claims the vault pays: EIP-712 vouchers from the world server, a daily cap per wallet (1,500, at most 3,500) and across everyone (35,000), pause. The owner tunes prices, rates, costs and caps, adds levels (up to 20) and can upgrade it. `initialize` runs only in the proxy's constructor (or from the vault's owner). A replacement carries each player's site, `settled` and `claimed` over from its predecessor (read through, then imported on the player's first act), and the replaced one retires (`NotActive`) |
+| `MiningSites.sol` | UUPS proxy, the rules for converting: mining sites (ETH, once per wallet) with levels 1 to 5 converting 50/60/70/85/100% (`upgradeSite(maxCost, minRateBps)`, paid in $MINE: `upgradeCost(level)`, 75% burned, never more than `maxCost`, never for a rate below `minRateBps`), and the claims the vault pays: EIP-712 vouchers from the world server, a daily cap per wallet (1,500, at most 3,500) and across everyone (35,000), pause. The owner tunes prices, rates, costs and caps, adds levels (up to 20) and can upgrade it. `initialize` runs only in the proxy's own constructor, never later. A replacement carries each player's site (its level as bought, even above the replacement's top, which then earns the top rate), `settled` and `claimed` over from its predecessor (read through, then imported on the player's first act), and the replaced one retires (`NotActive`) |
 | `CrafterLevels.sol` | UUPS proxy: each DIO's level (`levelOf`, 1 to `maxLevel`), raised by its holder with `upgrade(tokenId, maxCost)` for `upgradeCost(level)` $MINE (75% burned, never more than `maxCost`). I'M DIO shows it as the "Level" trait once pointed at it (`setAttributesExtension`) |
 | `MinePayments.sol` | UUPS proxy: `pay(kind, amount, ref)` takes $MINE from the player (with their exact approval), burns the kind's share, sends the rest to the treasury and emits `Paid(player, kind, amount, burned, ref)`, which the game checks. Kinds: 0 "shop" (75% burned), 1 "ticket" (nothing burned); the owner can change burn shares and add kinds. Prices live in the game, not here |
 | `MinePayer.sol`, `UpgradeCosts.sol`, `lib/OwnedUUPS.sol` | What the three proxies share: taking a payment (burned share burned from the payer's wallet, the rest to the treasury; nothing ever held), level costs, and two-step ownership that can't be renounced, with the owner alone upgrading. State in ERC-7201 namespaced storage |
-| `MineWorldCrafters.sol` | I'M DIO (symbol DIO; first named MineWorld Crafters, and the code keeps that name; Courier Skins adapted): 3,333 characters, commit-reveal (the owner publishes the secret with `reveal`; the seed waits for the next block's hash, from Arbitrum's ArbSys on Robinhood Chain, and anyone sets it with `seal`), traits from a keyed shuffle (each token a different hair, outfit, eyes and gaze) and weighted picks, fully on-chain metadata and pictures (the attributes extension gets a fixed 300,000 gas and only a well-formed string of at most 4 KB is used, so it can't break them), enforced 5% royalty (ERC721-C, OpenSea's registry; the owner picks the validator and so can relax enforcement). The owner can update the website and social links (`setLinks`) and the collection's picture and banner (`setCollectionImages`) shown on OpenSea at any time |
+| `MineWorldCrafters.sol` | I'M DIO (symbol DIO; first named MineWorld Crafters, and the code keeps that name; Courier Skins adapted): 3,333 characters, commit-reveal (the owner publishes the secret with `reveal`; the seed waits for the next block's hash, from Arbitrum's ArbSys on Robinhood Chain, and anyone sets it with `seal` within 256 L2 blocks; after a window nobody sealed in, only the owner can move it on, at most 3 times, with `moveEntropyOn`), traits from a keyed shuffle (each token a different hair, outfit, eyes and gaze) and weighted picks, fully on-chain metadata and pictures (the attributes extension gets a fixed 300,000 gas and only a well-formed string of at most 4 KB is used, so it can't break them), enforced 5% royalty (ERC721-C, OpenSea's registry; the owner picks the validator and so can relax enforcement). The owner can update the website and social links (`setLinks`) and the collection's picture and banner (`setCollectionImages`) shown on OpenSea at any time. Ownership can never be renounced, so OpenSea Studio stays usable |
 | `CrafterArt.sol` | I'M DIO's pictures as 24 x 24 SVGs, generated from `web/crafters-art.js` and `web/crafters.js` by `tools/gen-crafter-art.mjs`; never edit it by hand |
 
 ```bash
@@ -275,8 +275,13 @@ Settings are in `contracts/launch.env` (public values only). The real launch, st
 3. **Dry runs** against a fork, nothing sent: `./script/deploy-mainnet.sh crafters`, then
    `MINING_SIGNER=<that address> ./script/deploy-mainnet.sh launch`.
 4. **I'M DIO:** `./script/deploy-mainnet.sh crafters --broadcast --browser --browser-disable-open`. Open
-   http://127.0.0.1:9545 in your browser, wallet on Robinhood Chain, and approve each transaction. The reveal secret
-   goes to `~/mineworldcraft-crafters-reveal-secret.txt` (never printed): keep a copy in a password manager.
+   http://127.0.0.1:9545 in your browser, wallet on Robinhood Chain, and approve each transaction. **Sign with the
+   `OWNER` wallet itself**, so it is the collection's creator and its owner (OpenSea Studio lets only `owner()` edit
+   the collection). From any other wallet the script prints a loud warning and, if it set anything up first, an
+   `acceptOwnership` call `OWNER` must make right away. It ends with `owner()` and `pendingOwner()`: check `owner()`
+   is `OWNER` and `pendingOwner()` is 0. Free mint, at most 3 a wallet (`CRAFTERS_WALLET_LIMIT` in `launch.env`;
+   `setWalletLimit`, 1 to 50, changes it later). The reveal secret goes to
+   `~/mineworldcraft-crafters-reveal-secret.txt` (never printed): keep a copy in a password manager.
 5. **$MINE and the game contracts:** `MINING_SIGNER=<address> CRAFTERS=<I'M DIO address> ./script/deploy-mainnet.sh
    launch --broadcast --browser --browser-disable-open`: the hook, $MINE (its owner renounced), MineVault, MiningSites,
    MinePayments and CrafterLevels; the pool opened with 10.5M $MINE locked; the hook renounced. If the signing wallet
@@ -289,16 +294,27 @@ Settings are in `contracts/launch.env` (public values only). The real launch, st
 8. **The website:** `./script/export-web.sh` writes `web/deployments/robinhood.json`; put the Worker's address in
    `web/config.js` (`LIVE_ROOM`) and publish `web/` as it is (no build), e.g. on Vercel or IMD's site hosting.
 9. **The mint and the reveal:** `setSaleOpen(true)`; `setSaleOpen(false)` pauses or ends it (it can reopen until the
-   reveal). When it's over, close it and call `reveal(secret)` with the secret from step 4: the secret goes public,
-   the sale can never reopen, and the seed waits for the hash of the next L2 block. **Right after**, send `seal()`
-   (anyone can: `cast send <I'M DIO address> "seal()"`, or the panel's **Lock in the reveal** button), which sets the
-   seed; every DIO's look then shows, for everyone at once. The chain gives a block's hash for 256 L2 blocks only,
-   about 26 seconds on Robinhood Chain (~0.1 s blocks); called later, `seal()` moves the reveal on to a new block and
-   must be sent again. Nobody, the owner included, can see a look before everyone can; what's left to trust is
-   Robinhood Chain's sequencer, which produces the L2 blocks.
+   reveal). When it's over, close it and reveal with the secret from step 4, sealing at once. The easy way: log in to
+   the game as `OWNER`, open I'M DIO in the panel, paste the secret and press **Reveal and lock in**; it sends
+   `reveal(secret)`, waits for the next L2 block and sends `seal()`, retrying until the seed is set. From a terminal
+   with a Foundry keystore, one line does the same:
+   `cast send <I'M DIO> "reveal(uint256)" "$(cat ~/mineworldcraft-crafters-reveal-secret.txt)" --account <owner> --rpc-url robinhood && until cast send <I'M DIO> "seal()" --account <owner> --rpc-url robinhood; do sleep 1; done`.
+   `reveal` makes the secret public (the sale can never reopen) and the seed wait for the next L2 block's hash;
+   `seal()` sets it, and every DIO's look then shows, for everyone at once. Anyone can send `seal()`, for 256 L2
+   blocks only (the chain keeps a block's hash that long, about 26 seconds on Robinhood Chain); later it reverts
+   `EntropyExpired`. Then only `OWNER` can move the reveal on to a new block (`moveEntropyOn`, in public, at most 3
+   times in all; the panel offers it), and `seal()` must be sent again; after the third, the reveal stays stuck for
+   good (the DIOs keep working, unrevealed) rather than fall back to anything someone could steer. Nobody, the owner
+   included, can see a look before everyone can; what's left to trust is Robinhood Chain's sequencer, which produces
+   the L2 blocks, and the owner's three public re-rolls if nobody seals in time.
 10. **OpenSea:** nothing to register on chain: a collection that never configured anything on OpenSea's registry gets
-    its default list (OpenSea's SignedZone as the one authorizer), checked on Robinhood Chain. Set the collection's
-    links and pictures (or call `setLinks` and `setCollectionImages`) and turn on creator earnings in OpenSea Studio.
+    its default list (OpenSea's SignedZone as the one authorizer), checked on Robinhood Chain. In OpenSea Studio,
+    signed in as `OWNER` (it lets only the contract's `owner()` edit), set the collection's own fields there (links,
+    description, banner, creator earnings: turn them on at 5%); the contract's on-chain `contractURI` (its name,
+    description, links from `setLinks`, picture and banner from `setCollectionImages`) is what OpenSea shows until
+    then, and the fallback. I'M DIO's ownership can never be renounced (the contract refuses), so this editing stays
+    possible. **Never transfer its ownership to a contract wallet that can't sign in to OpenSea Studio**: check first
+    that OpenSea Studio accepts a multisig before handing it to one.
 
 ## The world server
 

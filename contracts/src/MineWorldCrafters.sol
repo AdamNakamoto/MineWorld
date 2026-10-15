@@ -60,7 +60,9 @@ interface IArbSys {
 ///      on OpenSea's registry, relaxes the royalty's enforcement. The links, pictures and extension can be changed at
 ///      any time, sold out or not. The art, the rarity and the 5% royalty rate can't be changed. The owner publishes
 ///      the committed secret before the block whose hash completes the seed exists, and anyone then seals it, so the
-///      owner can't pick looks nor know them before everyone else (see `reveal` and `seal`).
+///      owner can't pick looks nor know them before everyone else (see `reveal` and `seal`). Its one lever: if a whole
+///      window passes with nobody sealing, it alone can re-roll, at most three times, each in public
+///      (`moveEntropyOn`).
 ///      Ownership moves in two steps and can't be renounced, so the links can always be updated. Holders' Crafters
 ///      and ETH are never within the owner's reach.
 contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICrafterMetadata {
@@ -84,20 +86,24 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
     /// @notice How many blocks back the chain gives a block's hash (ArbSys and `blockhash` alike): the time anyone has
     ///         to `seal` once the entropy block is over.
     uint256 public constant ENTROPY_WINDOW = 256;
+    /// @notice How many times, in all, the owner can move the entropy block on after a window nobody sealed in.
+    uint256 public constant MAX_ENTROPY_MOVES = 3;
 
     /// @dev validateTransfer(address,address,address,uint256)
     bytes4 private constant VALIDATE_TRANSFER = 0xcaee23ea;
 
     /// @notice Where the reveal stands: `None` (the secret isn't public yet), `Waiting` (it is; the entropy block
-    ///         isn't over), `Sealable` (anyone can `seal` now, and everyone can already work the seed out), `Expired`
-    ///         (nobody sealed within ENTROPY_WINDOW blocks: `seal` moves the entropy block on, then seal again),
-    ///         `Revealed` (the seed is set).
+    ///         isn't over), `Sealable` (anyone can `seal` now, with a block to spare, and everyone can already work the
+    ///         seed out), `Expired` (the window is over, or ends this block: only the owner can move the entropy block
+    ///         on, `moveEntropyOn`), `Revealed` (the seed is set), `Stuck` (expired with no move left: the Crafters
+    ///         stay sealed for good).
     enum RevealStatus {
         None,
         Waiting,
         Sealable,
         Expired,
-        Revealed
+        Revealed,
+        Stuck
     }
 
     /// @notice Draws every Crafter (fixed for good).
@@ -106,14 +112,18 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
 
     /// @notice Per Crafter, in wei (0: free).
     uint256 public price;
-    /// @notice How many Crafters one wallet can mint in all.
-    uint256 public walletLimit = 10;
+    /// @notice How many Crafters one wallet can mint in all: 3 at launch (the owner can change it, 1 to
+    ///         MAX_WALLET_LIMIT).
+    uint256 public walletLimit = 3;
     bool public saleOpen;
     /// @notice The secret committed at deploy (`seedCommit`), public from `reveal` on.
     uint256 public revealedSecret;
     /// @notice The chain block whose hash `seal` mixes with the secret: the one after `reveal`'s (an Arbitrum L2 block
-    ///         number on Robinhood Chain), moved on by `seal` if nobody sealed in time. 0 until `reveal`.
+    ///         number on Robinhood Chain), moved on by the owner (`moveEntropyOn`) if nobody sealed in time. 0 until
+    ///         `reveal`.
     uint256 public entropyBlock;
+    /// @notice How many times the owner has moved the entropy block on (at most MAX_ENTROPY_MOVES).
+    uint256 public entropyMoves;
     uint256 public totalMinted;
     /// @notice How many Crafters each wallet has minted (transfers don't change it).
     mapping(address => uint256) public mintedBy;
@@ -139,8 +149,9 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
     event SaleOpen(bool open);
     /// @notice The owner published the secret; the hash of chain block `entropyBlock` (not yet made) completes the seed.
     event SecretRevealed(uint256 secret, uint256 entropyBlock);
-    /// @notice Nobody sealed in time, so the seed now waits for chain block `entropyBlock` instead.
-    event EntropyBlockSet(uint256 entropyBlock);
+    /// @notice Nobody sealed in time, so the owner moved the seed on to chain block `entropyBlock` (its `moves`-th move,
+    ///         of MAX_ENTROPY_MOVES).
+    event EntropyBlockMoved(uint256 entropyBlock, uint256 moves);
     event PriceSet(uint256 price);
     event WalletLimitSet(uint256 limit);
     event TreasurySet(address indexed treasury);
@@ -168,6 +179,13 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
     error RevealTooSoon();
     /// @notice The owner hasn't published the secret yet (`reveal`), so there's nothing to seal.
     error NoSecret();
+    /// @notice Nobody sealed within the window, so the entropy block's hash can't be read any more: only the owner can
+    ///         move it on (`moveEntropyOn`).
+    error EntropyExpired();
+    /// @notice The entropy block's window isn't over: seal instead (anyone can).
+    error NotExpired();
+    /// @notice The owner has moved the entropy block on MAX_ENTROPY_MOVES times already.
+    error NoMovesLeft();
     /// @notice The chain didn't give the entropy block's hash (never expected within the window: nothing is changed).
     error EntropyUnavailable();
     error BadSecret();
@@ -234,8 +252,8 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
     ///         So nobody can know a look before everyone can: while anyone could mint, the secret wasn't public and the
     ///         entropy block didn't exist; when the owner publishes the secret, the entropy block doesn't exist yet
     ///         (choosing when to reveal picks nothing the owner can see); once it does, its hash and the secret are
-    ///         public, so everyone can work the seed out at the same moment, and anyone can seal it. The owner has no
-    ///         step left after this.
+    ///         public, so everyone can work the seed out at the same moment, and anyone can seal it. The owner's only
+    ///         step after this is moving the entropy block on if nobody sealed in time (see `moveEntropyOn`).
     ///
     ///         On Robinhood Chain (an Arbitrum Orbit chain) the blocks are the chain's own L2 blocks, read from ArbSys
     ///         (0x64): numbered one after another, each hash its own block's. `block.number` and `blockhash` aren't
@@ -254,28 +272,22 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
     }
 
     /// @notice Set the seed, once the entropy block is over: seed = keccak256(abi.encode(revealedSecret, its hash)),
-    ///         never 0; every Crafter's look is then fixed and public. Anyone can call it, and should, promptly: the
+    ///         never 0; every Crafter's look is then fixed and public. Anyone can call it, and should, at once: the
     ///         chain gives a block's hash for ENTROPY_WINDOW (256) blocks only, about 26 seconds of Robinhood Chain's
-    ///         ~0.1 s L2 blocks. Called later than that, it moves the entropy block on to the next block instead
-    ///         (`EntropyBlockSet`) and returns 0: call it again once that one is over. Letting the window pass is the
-    ///         only way to get a different seed, it shows on chain, and anyone who seals in time stops it.
+    ///         ~0.1 s L2 blocks. The game's panel sends it right after the owner's `reveal`, retrying until it lands;
+    ///         any seal within the window fixes the seed for good. Later than that it reverts `EntropyExpired`: only
+    ///         the owner can move the entropy block on (`moveEntropyOn`).
     ///
     ///         Expiry is decided from block numbers alone, never from a failing call: a call to ArbSys that fails (a
-    ///         caller could make one run out of gas) reverts the whole seal, so nobody can move the entropy block on
-    ///         while its hash can still be read.
-    /// @return The seed, or 0 if it moved the entropy block on.
+    ///         caller could make one run out of gas) reverts the whole seal.
+    /// @return The seed.
     function seal() external returns (uint256) {
         if (seed != 0) revert AlreadyRevealed();
         uint256 b = entropyBlock;
         if (b == 0) revert NoSecret();
         uint256 current = _chainBlock();
         if (current <= b) revert RevealTooSoon();
-        if (current - b > ENTROPY_WINDOW) {
-            uint256 next = current + 1;
-            entropyBlock = next;
-            emit EntropyBlockSet(next);
-            return 0;
-        }
+        if (current - b > ENTROPY_WINDOW) revert EntropyExpired();
         uint256 s = uint256(keccak256(abi.encode(revealedSecret, _chainBlockHash(b))));
         seed = s == 0 ? 1 : s;
         emit Revealed(seed);
@@ -283,15 +295,44 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
         return seed;
     }
 
+    /// @notice After a window nobody sealed in, move the seed on to the chain's next block (then seal it at once).
+    ///         The owner only, and at most MAX_ENTROPY_MOVES (3) times in all, each in public (`EntropyBlockMoved`).
+    ///
+    ///         The trust this leaves, plainly: once a window passes unsealed, both inputs of that seed were public, so
+    ///         a re-roll is a choice. Only the owner has it, only after a window in which nobody (no player, no bot,
+    ///         not the panel) sealed, and at most three times; anyone who seals within a window ends it. After the
+    ///         third move, an entropy block left unsealed for its whole window leaves the Crafters sealed for good, as
+    ///         a lost secret would: any fallback that needed no fresh block hash could be worked out in advance (from
+    ///         the secret, chosen at deploy, or a block the owner picks by timing), so the owner could steer it; a dead
+    ///         end gives it nothing it couldn't do by never revealing. The owner chooses when each move happens, so it
+    ///         can always be ready to seal straight after.
+    /// @return next The new entropy block.
+    function moveEntropyOn() external onlyOwner returns (uint256 next) {
+        if (seed != 0) revert AlreadyRevealed();
+        uint256 b = entropyBlock;
+        if (b == 0) revert NoSecret();
+        uint256 current = _chainBlock();
+        if (current <= b || current - b <= ENTROPY_WINDOW) revert NotExpired();
+        uint256 moves = entropyMoves + 1;
+        if (moves > MAX_ENTROPY_MOVES) revert NoMovesLeft();
+        entropyMoves = moves;
+        next = current + 1;
+        entropyBlock = next;
+        emit EntropyBlockMoved(next, moves);
+    }
+
     /// @notice Where the reveal stands (see `RevealStatus`): what a bot or the game's panel checks before sealing.
-    ///         (A client can't compare block numbers itself: on Robinhood Chain the entropy block is an L2 block.)
+    ///         Sealable only while a seal sent now can still land in the window (a block to spare). (A client can't
+    ///         compare block numbers itself: on Robinhood Chain the entropy block is an L2 block.)
     function revealStatus() public view returns (RevealStatus) {
         if (seed != 0) return RevealStatus.Revealed;
         uint256 b = entropyBlock;
         if (b == 0) return RevealStatus.None;
         uint256 current = _chainBlock();
         if (current <= b) return RevealStatus.Waiting;
-        return current - b > ENTROPY_WINDOW ? RevealStatus.Expired : RevealStatus.Sealable;
+        if (current - b < ENTROPY_WINDOW) return RevealStatus.Sealable;
+        if (entropyMoves >= MAX_ENTROPY_MOVES && current - b > ENTROPY_WINDOW) return RevealStatus.Stuck;
+        return RevealStatus.Expired;
     }
 
     /// @notice The chain block the reveal counts in: ArbSys's L2 block number, or `block.number` without ArbSys.
@@ -623,7 +664,8 @@ contract MineWorldCrafters is ERC721, ERC2981, Ownable2Step, ICreatorToken, ICra
     }
 
     /// @notice Ownership can't be renounced (a renounced owner could never update the links, the price or the
-    ///         validator again). It can be handed over in two steps.
+    ///         validator again, nor edit the collection in OpenSea Studio, which lets only owner() do that). It can be
+    ///         handed over in two steps: only ever to a wallet that can sign in to OpenSea Studio.
     function renounceOwnership() public view override onlyOwner {
         revert CannotRenounce();
     }

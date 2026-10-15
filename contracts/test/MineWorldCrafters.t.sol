@@ -151,7 +151,7 @@ contract MineWorldCraftersTest is Test {
         assertEq(crafters.symbol(), "DIO");
         assertEq(crafters.MAX_SUPPLY(), 3333);
         assertEq(crafters.MAX_PER_TX(), 5);
-        assertEq(crafters.walletLimit(), 10);
+        assertEq(crafters.walletLimit(), 3);
         assertEq(crafters.price(), 0);
         assertEq(address(crafters.art()), address(art));
         assertEq(crafters.owner(), owner);
@@ -167,7 +167,7 @@ contract MineWorldCraftersTest is Test {
         assertEq(treasury.balance, 0);
         assertEq(address(crafters).balance, 0);
         // While free, sending ETH is a mistake: refused.
-        vm.prank(alice);
+        vm.prank(bob);
         vm.expectRevert(MineWorldCrafters.WrongPayment.selector);
         crafters.mint{value: 1}(1);
     }
@@ -189,6 +189,8 @@ contract MineWorldCraftersTest is Test {
 
     function test_MintRules() public {
         _setPrice(PRICE);
+        vm.prank(owner);
+        crafters.setWalletLimit(10); // (the per-transaction rules, above the launch's 3 a wallet)
         vm.startPrank(alice);
         vm.expectRevert(MineWorldCrafters.WrongPayment.selector);
         crafters.mint{value: PRICE}(2);
@@ -207,10 +209,28 @@ contract MineWorldCraftersTest is Test {
         crafters.mint{value: PRICE}(1);
     }
 
-    /// Each wallet mints at most `walletLimit` in all (10 at launch), counted by what it minted, not what it holds.
+    /// At the launch default a wallet mints 3 in all, free, and a 4th is refused.
+    function test_ThreePerWalletAtLaunch() public {
+        assertEq(crafters.price(), 0);
+        assertEq(crafters.walletLimit(), 3);
+        _mint(alice, 1);
+        _mint(alice, 2);
+        assertEq(crafters.balanceOf(alice), 3);
+        vm.prank(alice);
+        vm.expectRevert(MineWorldCrafters.WalletLimit.selector);
+        crafters.mint(1);
+        // Three at once from a fresh wallet: fine; four at once: refused whole.
+        _mint(bob, 3);
+        address carol = makeAddr("carol");
+        vm.prank(carol);
+        vm.expectRevert(MineWorldCrafters.WalletLimit.selector);
+        crafters.mint(4);
+        assertEq(crafters.balanceOf(carol), 0);
+    }
+
+    /// Each wallet mints at most `walletLimit` in all (3 at launch), counted by what it minted, not what it holds.
     function test_WalletLimit() public {
-        _mint(alice, 5);
-        _mint(alice, 5);
+        _mint(alice, 3);
         vm.prank(alice);
         vm.expectRevert(MineWorldCrafters.WalletLimit.selector);
         crafters.mint(1);
@@ -220,10 +240,9 @@ contract MineWorldCraftersTest is Test {
         vm.prank(alice);
         vm.expectRevert(MineWorldCrafters.WalletLimit.selector);
         crafters.mint(1);
-        assertEq(crafters.mintedBy(alice), 10);
+        assertEq(crafters.mintedBy(alice), 3);
         // A partial mint over the limit is refused whole.
-        _mint(bob, 5);
-        _mint(bob, 4);
+        _mint(bob, 2);
         vm.prank(bob);
         vm.expectRevert(MineWorldCrafters.WalletLimit.selector);
         crafters.mint(2);
@@ -234,7 +253,8 @@ contract MineWorldCraftersTest is Test {
         emit MineWorldCrafters.WalletLimitSet(12);
         vm.prank(owner);
         crafters.setWalletLimit(12);
-        _mint(alice, 2);
+        _mint(alice, 5);
+        _mint(alice, 4);
         assertEq(crafters.mintedBy(alice), 12);
         vm.startPrank(owner);
         vm.expectRevert(MineWorldCrafters.BadWalletLimit.selector);
@@ -392,11 +412,11 @@ contract MineWorldCraftersTest is Test {
     /// block, but the seed then waits for the next block's hash, which doesn't exist yet: nothing it minted had a
     /// look anyone could know, and the sale can't reopen to mint more.
     function test_OwnerCantMintKnowingTheLooks() public {
-        _mint(alice, 5);
+        _mint(alice, 3);
         uint256 b = vm.getBlockNumber() + 10;
         vm.roll(b);
         vm.startPrank(owner);
-        crafters.mint(5);
+        crafters.mint(3);
         vm.expectRevert(MineWorldCrafters.SaleStillOpen.selector);
         crafters.reveal(SECRET);
         crafters.setSaleOpen(false);
@@ -449,9 +469,9 @@ contract MineWorldCraftersTest is Test {
     /// Re-check 8c7ba957 #6: no party knows the looks before everyone can, and the owner can't hold them back. Until
     /// the owner publishes the secret, only it knows the secret but nobody knows the entropy; when it publishes, the
     /// entropy block doesn't exist yet; once that block is over, everyone holds the same two public inputs, and anyone
-    /// can seal. The owner has no step left, so even a year of silence from it holds nothing up.
+    /// can seal, without the owner, until the window's last block.
     function test_NoPartyKnowsTheLooksBeforeEveryoneCan() public {
-        _mint(alice, 5);
+        _mint(alice, 3);
         vm.prank(owner);
         crafters.setSaleOpen(false);
         uint256 b = vm.getBlockNumber();
@@ -471,23 +491,117 @@ contract MineWorldCraftersTest is Test {
         crafters.seal();
         assertEq(crafters.seed(), worked);
 
-        // The owner going silent after its reveal holds nothing up: a year later anyone finishes it.
+        // The owner going silent after its reveal holds nothing up within the window: a stranger seals on its last
+        // block.
         MineWorldCrafters other =
             new MineWorldCrafters(owner, treasury, 0, keccak256(abi.encode(SECRET)), address(validator), art);
         vm.prank(owner);
         other.reveal(SECRET);
-        vm.roll(vm.getBlockNumber() + 2_600_000);
-        vm.warp(vm.getBlockTimestamp() + 365 days);
-        assertEq(uint8(other.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Expired));
-        vm.prank(alice);
-        assertEq(other.seal(), 0); // moves the entropy block on
-        vm.roll(vm.getBlockNumber() + 2);
+        uint256 e2 = other.entropyBlock();
+        vm.roll(e2 + 256);
         vm.prank(alice);
         assertTrue(other.seal() != 0);
     }
 
-    /// If nobody seals within 256 blocks the hash can't be read any more: `seal` (anyone) moves the entropy block on
-    /// to the next block, in public, and returns 0; sealing again once that block is over sets the seed from it.
+    /// Second re-check 52b534f9 #2: a window nobody sealed in is no free re-roll. A stranger can neither seal it
+    /// (`EntropyExpired`) nor move it on (owner only); the owner can move it on, in public, and anyone then seals
+    /// the new block.
+    function test_AStrangerCantMoveTheEntropyBlockOn() public {
+        _mint(alice, 2);
+        vm.prank(owner);
+        crafters.setSaleOpen(false);
+        vm.prank(owner);
+        crafters.reveal(SECRET);
+        uint256 e = crafters.entropyBlock();
+        vm.prank(owner);
+        vm.expectRevert(MineWorldCrafters.NotExpired.selector);
+        crafters.moveEntropyOn(); // (only after the window, even for the owner)
+        vm.roll(e + 257);
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Expired));
+        vm.prank(bob);
+        vm.expectRevert(MineWorldCrafters.EntropyExpired.selector);
+        crafters.seal();
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, bob));
+        crafters.moveEntropyOn();
+        assertEq(crafters.entropyBlock(), e);
+        assertEq(crafters.entropyMoves(), 0);
+
+        uint256 next = e + 258;
+        vm.expectEmit(address(crafters));
+        emit MineWorldCrafters.EntropyBlockMoved(next, 1);
+        vm.prank(owner);
+        assertEq(crafters.moveEntropyOn(), next);
+        assertEq(crafters.entropyMoves(), 1);
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Waiting));
+        vm.roll(next + 1);
+        bytes32 h = this.hashOf(next);
+        vm.prank(bob);
+        crafters.seal();
+        assertEq(crafters.seed(), uint256(keccak256(abi.encode(SECRET, h))));
+    }
+
+    /// The owner moves the entropy block on at most MAX_ENTROPY_MOVES (3) times, each only after a window nobody
+    /// sealed in; after the third, a window left unsealed leaves the Crafters sealed for good (`Stuck`).
+    function test_TheOwnerMovesOnAtMostThreeTimes() public {
+        _mint(alice, 2);
+        vm.prank(owner);
+        crafters.setSaleOpen(false);
+        vm.prank(owner);
+        crafters.reveal(SECRET);
+        assertEq(crafters.MAX_ENTROPY_MOVES(), 3);
+        for (uint256 i = 1; i <= 3; i++) {
+            uint256 e = crafters.entropyBlock();
+            vm.roll(e + 200);
+            vm.prank(owner);
+            vm.expectRevert(MineWorldCrafters.NotExpired.selector);
+            crafters.moveEntropyOn();
+            vm.roll(e + 257);
+            vm.prank(owner);
+            crafters.moveEntropyOn();
+            assertEq(crafters.entropyMoves(), i);
+        }
+        uint256 last = crafters.entropyBlock();
+        vm.roll(last + 257);
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Stuck));
+        vm.prank(owner);
+        vm.expectRevert(MineWorldCrafters.NoMovesLeft.selector);
+        crafters.moveEntropyOn();
+        vm.prank(bob);
+        vm.expectRevert(MineWorldCrafters.EntropyExpired.selector);
+        crafters.seal();
+        assertEq(crafters.seed(), 0);
+        // (Within the third move's window it could still be sealed, by anyone.)
+    }
+
+    /// Any seal that lands within the window fixes the seed for good, whoever sends it and at whichever block; after
+    /// it nothing moves.
+    function testFuzz_ASealWithinTheWindowAlwaysFixesIt(uint256 offset) public {
+        offset = bound(offset, 1, 256);
+        _mint(alice, 1);
+        vm.prank(owner);
+        crafters.setSaleOpen(false);
+        vm.prank(owner);
+        crafters.reveal(SECRET);
+        uint256 e = crafters.entropyBlock();
+        vm.roll(e + offset);
+        bytes32 h = this.hashOf(e);
+        vm.prank(bob);
+        crafters.seal();
+        assertEq(crafters.seed(), uint256(keccak256(abi.encode(SECRET, h))));
+        vm.roll(e + 1_000);
+        vm.prank(owner);
+        vm.expectRevert(MineWorldCrafters.AlreadyRevealed.selector);
+        crafters.moveEntropyOn();
+        vm.prank(bob);
+        vm.expectRevert(MineWorldCrafters.AlreadyRevealed.selector);
+        crafters.seal();
+    }
+
+    /// If nobody seals within 256 blocks the hash can't be read any more: `seal` reverts, the owner moves the entropy
+    /// block on to the next block, in public, and sealing once that block is over sets the seed from it. Second
+    /// re-check 52b534f9 #4: the status says Sealable only with a block to spare (a seal landing on the window's last
+    /// block still works).
     function test_AnExpiredEntropyBlockMovesOn() public {
         _mint(alice, 2);
         vm.prank(owner);
@@ -496,21 +610,29 @@ contract MineWorldCraftersTest is Test {
         vm.prank(owner);
         crafters.reveal(SECRET);
         uint256 e = b + 1;
-        vm.roll(e + 256); // the last block its hash can be read in
+        vm.roll(e + 255);
         assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Sealable));
+        vm.roll(e + 256); // the last block its hash can be read in: a seal sent now would land after it
+        assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Expired));
         uint256 snap = vm.snapshotState();
         vm.prank(bob);
-        crafters.seal();
+        crafters.seal(); // (one already landing in it still works)
         assertEq(crafters.seed(), uint256(keccak256(abi.encode(SECRET, this.hashOf(e)))));
         vm.revertToState(snap);
+        vm.prank(owner);
+        vm.expectRevert(MineWorldCrafters.NotExpired.selector);
+        crafters.moveEntropyOn();
 
         vm.roll(e + 257);
         assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Expired));
+        vm.prank(bob);
+        vm.expectRevert(MineWorldCrafters.EntropyExpired.selector);
+        crafters.seal();
         uint256 next = e + 258;
         vm.expectEmit(address(crafters));
-        emit MineWorldCrafters.EntropyBlockSet(next);
-        vm.prank(bob);
-        assertEq(crafters.seal(), 0);
+        emit MineWorldCrafters.EntropyBlockMoved(next, 1);
+        vm.prank(owner);
+        assertEq(crafters.moveEntropyOn(), next);
         assertEq(crafters.entropyBlock(), next);
         assertEq(crafters.seed(), 0);
         assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Waiting));
@@ -579,21 +701,25 @@ contract MineWorldCraftersTest is Test {
         assertTrue(s != uint256(keccak256(abi.encode(SECRET, stale))), "the stale parent-chain hash was used");
     }
 
-    /// On ArbSys too, an entropy block left unsealed for more than 256 L2 blocks moves on to the next L2 block.
+    /// On ArbSys too, an entropy block left unsealed for more than 256 L2 blocks can't be sealed, and the owner moves
+    /// it on to the next L2 block.
     function test_Arbitrum_ExpiryMovesTheEntropyBlockOn() public {
         MockArbSys sys = _arbitrum(1_000);
         vm.prank(owner);
         crafters.setSaleOpen(false);
         vm.prank(owner);
         crafters.reveal(SECRET);
-        sys.setNumber(1_001 + 256);
+        sys.setNumber(1_001 + 255);
         assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Sealable));
         sys.setNumber(1_001 + 257);
         assertEq(uint8(crafters.revealStatus()), uint8(MineWorldCrafters.RevealStatus.Expired));
-        vm.expectEmit(address(crafters));
-        emit MineWorldCrafters.EntropyBlockSet(1_259);
         vm.prank(bob);
-        assertEq(crafters.seal(), 0);
+        vm.expectRevert(MineWorldCrafters.EntropyExpired.selector);
+        crafters.seal();
+        vm.expectEmit(address(crafters));
+        emit MineWorldCrafters.EntropyBlockMoved(1_259, 1);
+        vm.prank(owner);
+        assertEq(crafters.moveEntropyOn(), 1_259);
         sys.setNumber(1_260);
         vm.prank(bob);
         crafters.seal();
@@ -601,7 +727,7 @@ contract MineWorldCraftersTest is Test {
     }
 
     /// Expiry is read from block numbers, never from a failing call: if ArbSys fails within the window (as a call
-    /// starved of gas would), the whole seal reverts and the entropy block stays put, so nobody can force a move on.
+    /// starved of gas would), the whole seal reverts and the entropy block stays put.
     function test_Arbitrum_AFailingCallNeverMovesTheEntropyBlockOn() public {
         MockArbSys sys = _arbitrum(7_000);
         vm.prank(owner);
@@ -631,14 +757,14 @@ contract MineWorldCraftersTest is Test {
         vm.prank(owner);
         s.setSaleOpen(true);
         vm.prank(alice);
-        s.mint(5);
+        s.mint(3);
         vm.prank(owner);
         s.setSaleOpen(false);
         vm.prank(owner);
         s.reveal(secret);
         vm.roll(vm.getBlockNumber() + 2);
         s.seal();
-        for (uint256 id = 1; id <= 5; id++) {
+        for (uint256 id = 1; id <= 3; id++) {
             Traits memory t = s.traitsOf(id);
             assertLt(t.hair, 36);
             assertLt(t.outfit, 16);
@@ -895,7 +1021,8 @@ contract MineWorldCraftersTest is Test {
 
     /// Rarity once revealed, from the background and hat (CrafterArt.t.sol checks it against the JS for every one).
     function test_RarityOf() public {
-        _mint(alice, 5);
+        _mint(alice, 3);
+        _mint(bob, 2);
         vm.expectRevert(MineWorldCrafters.NotRevealed.selector);
         crafters.rarityOf(1);
         _reveal();
@@ -1029,10 +1156,19 @@ contract MineWorldCraftersTest is Test {
 
     // ---------------------------------------------------------------- owner
 
-    /// Ownership can never be renounced (not even once revealed), so the links can always be updated. It moves in
-    /// two steps.
+    /// Ownership can never be renounced (not before the reveal, not after), so the links can always be updated and
+    /// OpenSea Studio, which lets only owner() edit the collection, always has an owner to let in. It moves only in two
+    /// steps, so a transfer to 0 (or to anyone) changes nothing until that address accepts.
     function test_RenounceReverts() public {
         _mint(alice, 1);
+        vm.prank(owner);
+        vm.expectRevert(MineWorldCrafters.CannotRenounce.selector);
+        crafters.renounceOwnership();
+        assertEq(crafters.owner(), owner);
+        vm.prank(owner);
+        crafters.transferOwnership(address(0));
+        assertEq(crafters.owner(), owner, "a transfer to 0 renounced it");
+        assertEq(crafters.pendingOwner(), address(0));
         _reveal();
         vm.prank(owner);
         vm.expectRevert(MineWorldCrafters.CannotRenounce.selector);
@@ -1338,7 +1474,7 @@ contract RevealSeedTest is Test {
         vm.prank(owner);
         c.setSaleOpen(true);
         vm.prank(alice);
-        c.mint(5);
+        c.mint(3); // (5 in the auditor's original: the launch allows 3 a wallet now)
         vm.prank(owner);
         c.setSaleOpen(false);
     }

@@ -28,15 +28,19 @@ interface IDistributor {
 ///         can only replace it in the open: `proposeDistributor`, then `acceptDistributor` at least
 ///         DISTRIBUTOR_DELAY (2 days) later, so players see a change coming. Only a contract that names this vault's
 ///         owner as its owner, this vault as its vault, and the current distributor as its predecessor can take over.
+///         Those three are read from the contract itself, so they catch mistakes (a proxy left uninitialised, one set
+///         up for another vault or after another distributor), not a contract built to lie: the owner proposes only a
+///         proxy it deploys itself.
 ///
 ///         Replacing MiningSites with a new proxy, step by step:
 ///         1. Deploy the new implementation (its constructor locks it).
-///         2. `proposeDistributor(P)`, where P is the address the new ERC1967Proxy will get (for a wallet, its next
-///            CREATE address: nothing need be there yet).
+///         2. `proposeDistributor(P)`, where P is the address the new ERC1967Proxy will get from the owner's own
+///            wallet (its next CREATE address: nothing need be there yet, and nobody else can deploy there).
 ///         3. Deploy the proxy at P with `initialize` in its constructor, naming this vault and this vault's owner.
-///            MiningSites.initialize accepts this vault's pending distributor as well as its distributor, but only in
-///            the proxy's own constructor or from this vault's owner, so nobody else can ever set a proxy up; it
-///            records the current distributor as its predecessor and imports each player's books from it.
+///            MiningSites.initialize accepts this vault's pending distributor as well as its distributor, and runs
+///            only in the proxy's own constructor: a proxy deployed without it can never be set up, by anyone, so the
+///            one at P is the owner's from its first moment. It records the current distributor as its predecessor
+///            and imports each player's books from it.
 ///         4. Two days later, `acceptDistributor()`: it checks P has code, and that P's `owner()` is this vault's
 ///            owner, P's `vault()` this vault and P's `predecessor()` the current distributor, and reverts otherwise
 ///            (then propose again). A pending distributor can't mint: only `distributor` can.
@@ -168,9 +172,10 @@ contract MineVault is Ownable2Step, ReentrancyGuard {
 
     /// @notice Make the proposed distributor the distributor, once its wait is over, if it is a contract whose
     ///         `owner()` is this vault's owner, whose `vault()` is this vault and whose `predecessor()` is the current
-    ///         distributor. An uninitialised proxy is refused, and none can be set up by anyone but this vault's owner
-    ///         (see MiningSites.initialize). The limits carry over: what the old one had minted today counts against
-    ///         the new one.
+    ///         distributor. An uninitialised proxy is refused (and can never be set up: MiningSites.initialize runs
+    ///         only in a proxy's constructor). The contract answers these reads itself, so they catch mistakes, not a
+    ///         contract built to lie: propose only a proxy you deploy yourself. The limits carry over: what the old one
+    ///         had minted today counts against the new one.
     function acceptDistributor() external onlyOwner {
         address pending = pendingDistributor;
         if (pending == address(0)) revert NoProposal();

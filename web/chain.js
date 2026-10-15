@@ -25,12 +25,15 @@ const ERROR_TEXT = {
   SaleClosed: "The I'M DIO mint is closed.",
   SoldOut: "Sold out: all 3,333 DIOs have been minted.",
   BadQuantity: "Mint between 1 and 5 at a time.",
-  WalletLimit: "That's as many DIOs as one wallet can mint.",
+  WalletLimit: "That would go over the most DIOs one wallet can mint (the per-wallet limit shows above the Mint buttons).",
   NotRevealed: "Still sealed: the DIOs are revealed after the mint.",
   SaleStillOpen: "The I'M DIO mint is still open.",
   NoSecret: "Not yet: the owner hasn't published the reveal's secret.",
   RevealTooSoon: "Not yet: the reveal's block isn't over. Try again in a moment.",
   EntropyUnavailable: "The chain didn't give the reveal's block hash. Try again in a moment.",
+  EntropyExpired: "Nobody locked the reveal in within its window. Only the owner can pick a new block now.",
+  NotExpired: "The reveal's window isn't over: lock it in instead.",
+  NoMovesLeft: "The reveal's block has been moved on three times already: it can't be moved again.",
   AlreadyRevealed: "Already revealed: every DIO's look is fixed.",
   CostAboveMax: "The price just changed. Check the new price and try again.",
   RateBelowMin: "The level's rate just changed. Check it and try again.",
@@ -184,14 +187,20 @@ export async function connectChain() {
     const s = { account, accounts, local: !!dep.local, devAccounts: !browserWallet, explorer: dep.explorer, sitePrice, paused, walletCap, dailyCap, paidToday, vault, trading: !!T };
     if (C.crafters) {
       const K = C.crafters;
-      const [price, saleOpen, minted, seed, max, limit, revealStatus] = await Promise.all([
+      const [price, saleOpen, minted, seed, max, limit, revealStatus, owner, moves, mintedByMe] = await Promise.all([
         read(K, "price"), read(K, "saleOpen"), read(K, "totalMinted"), read(K, "seed"), read(K, "MAX_SUPPLY"),
         has(K, "walletLimit") ? read(K, "walletLimit") : null,
         // MineWorldCrafters.RevealStatus: 0 the secret isn't out, 1 waiting for the next block, 2 sealable (anyone can
-        // lock it in), 3 expired (seal() picks a new block), 4 revealed.
+        // lock it in, with a block to spare), 3 expired (only the owner can pick a new block), 4 revealed, 5 stuck.
         has(K, "revealStatus") ? read(K, "revealStatus").then(Number) : null,
+        read(K, "owner"),
+        has(K, "entropyMoves") ? Promise.all([read(K, "entropyMoves"), read(K, "MAX_ENTROPY_MOVES")]).then(([m, x]) => Number(x) - Number(m)) : null,
+        account ? read(K, "mintedBy", [account]).then(Number) : null,
       ]);
-      s.crafters = { price, saleOpen, minted: Number(minted), seed, max: Number(max), limit: limit === null ? null : Number(limit), revealStatus, mine: [] };
+      s.crafters = {
+        price, saleOpen, minted: Number(minted), seed, max: Number(max), limit: limit === null ? null : Number(limit), revealStatus,
+        isOwner: same(owner, account), movesLeft: moves, mintedByMe, mine: [],
+      };
     }
     if (!account) return s;
     const [eth, mine, siteAt, claimed, walletPaid, imd] = await Promise.all([
@@ -350,6 +359,8 @@ export async function connectChain() {
 
   return {
     local: !!dep.local,
+    /// Local chains only (./dev.sh): the throwaway reveal secret I'M DIO was committed to.
+    devSecret: dep.local ? dep.devSecret ?? null : null,
     browserWallet,
     chainName: dep.chainName,
     explorer: dep.explorer,
@@ -402,12 +413,40 @@ export async function connectChain() {
     },
     claimable: (total) => read(C.sites, "claimable", [account, total]),
     mintCrafters: (n, price) => send(C.crafters, "mint", [BigInt(n)], price * BigInt(n)),
-    /// Lock in the I'M DIO reveal (MineWorldCrafters.seal): once the owner has published the secret and the next block
-    /// is over, anyone can set the seed, which fixes and shows every DIO's look. Resolves true if it did, false if the
-    /// window had passed and it picked a new block instead (call it again a moment later).
-    async sealReveal() {
-      const receipt = await send(C.crafters, "seal");
-      return !!event(C.crafters, receipt, "Revealed");
+    /// The I'M DIO reveal, done the honest way, at once: with `secret` (the owner), publish it (reveal), then, as soon
+    /// as the next block is over, seal() (anyone can), retrying until the seed is set. If a window passed with nobody
+    /// sealing, the owner's wallet moves the entropy block on (moveEntropyOn, at most 3 times in all) and seals the new
+    /// one; anyone else is told only the owner can. `step(text)` hears each stage. Resolves with the seed.
+    async revealAndSeal(secret, { step } = {}) {
+      const K = C.crafters;
+      const status = async () => Number(await read(K, "revealStatus"));
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      if (secret !== null && secret !== undefined && (await status()) === 0) {
+        step?.("Publishing the reveal's secret: confirm in your wallet…");
+        await send(K, "reveal", [BigInt(secret)]);
+      }
+      for (let tries = 0; tries < 120; tries++) {
+        const st = await status();
+        if (st === 4) return read(K, "seed");
+        if (st === 5) throw new Error("The reveal can't happen any more: its block was moved on three times and the last window passed unsealed.");
+        if (st === 0) throw new Error("The owner hasn't published the reveal's secret yet.");
+        if (st === 1) { step?.("Waiting for the reveal's block to pass…"); await sleep(400); continue; }
+        if (st === 3) {
+          if (!same(await read(K, "owner"), account)) throw new Error(ERROR_TEXT.EntropyExpired);
+          step?.("Nobody locked the reveal in within its window: picking a new block (confirm in your wallet)…");
+          try { await send(K, "moveEntropyOn"); } catch (e) { if (revertName(e) !== "NotExpired") throw e; await sleep(400); }
+          continue;
+        }
+        step?.("Locking in the reveal: confirm in your wallet…");
+        try {
+          await send(K, "seal");
+        } catch (e) {
+          const n = revertName(e);
+          if (n !== "RevealTooSoon" && n !== "EntropyExpired" && n !== "AlreadyRevealed") throw e;
+          await sleep(400);
+        }
+      }
+      throw new Error("The reveal isn't locked in yet. Press the button again.");
     },
     /// The logged-in wallet's $MINE (wei), or null when logged out.
     mineBalance: () => (account ? read(C.mine, "balanceOf", [account]) : Promise.resolve(null)),

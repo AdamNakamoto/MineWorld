@@ -13,7 +13,7 @@ import {DevTransferValidator} from "./DevTransferValidator.sol";
 ///   ./script/deploy-mainnet.sh crafters --broadcast --browser --browser-disable-open
 ///
 /// Env: SEED_COMMIT (keccak256(abi.encode(secret)); keep the secret until the reveal), TREASURY (mint money, if any,
-/// and royalties), CRAFTERS_PRICE (wei per DIO, 0: free), CRAFTERS_WALLET_LIMIT (1-50, 10 by default),
+/// and royalties), CRAFTERS_PRICE (wei per DIO, 0: free), CRAFTERS_WALLET_LIMIT (1-50, 3 by default, the contract's own),
 /// CRAFTERS_VALIDATOR (OpenSea's creator fee enforcement registry), CRAFTERS_WEBSITE and CRAFTERS_SOCIAL (the
 /// collection's links) and CRAFTERS_IMAGE and CRAFTERS_BANNER (its picture and banner URLs), all four optional: the
 /// owner can set them any time with setLinks and setCollectionImages. OPEN_SALE (false: open it later with
@@ -22,6 +22,10 @@ import {DevTransferValidator} from "./DevTransferValidator.sol";
 /// then make printed (the reveal, later, is OWNER's too). On a bare local chain (../dev.sh without --fork) there's no
 /// registry, so it deploys DevTransferValidator instead. TREASURY must take ETH (a wallet, or a contract with a receive
 /// function): the collection refuses one that doesn't.
+///
+/// I'M DIO's ownership can never be renounced (the contract refuses), so OpenSea Studio, which lets only owner() edit
+/// the collection, can always be used. Deploy it from the OWNER wallet itself, so OWNER is its creator and its owner;
+/// from another wallet the script prints a loud warning, and any acceptOwnership OWNER must make at once.
 ///
 /// OpenSea's registry needs nothing registered on chain: a collection that never configured anything there gets its
 /// default list, whose one authorizer is OpenSea's SignedZone (checked on Robinhood Chain; test_Fork_EnforcedWithout-
@@ -35,15 +39,15 @@ contract DeployCrafters is Script {
         bytes32 commit = vm.envBytes32("SEED_COMMIT");
         address validator = vm.envOr("CRAFTERS_VALIDATOR", OPENSEA_REGISTRY);
         uint256 price = vm.envOr("CRAFTERS_PRICE", uint256(0));
-        uint256 walletLimit = vm.envOr("CRAFTERS_WALLET_LIMIT", uint256(10));
+        uint256 walletLimit = vm.envOr("CRAFTERS_WALLET_LIMIT", uint256(3));
         string memory website = vm.envOr("CRAFTERS_WEBSITE", string(""));
         string memory social = vm.envOr("CRAFTERS_SOCIAL", string(""));
         string memory image = vm.envOr("CRAFTERS_IMAGE", string(""));
         string memory banner = vm.envOr("CRAFTERS_BANNER", string(""));
 
         bool openSale = vm.envOr("OPEN_SALE", false);
-        // Settings only the owner can make after the deploy (the wallet limit starts at 10).
-        bool setUp = walletLimit != 10 || bytes(website).length != 0 || bytes(social).length != 0
+        // Settings only the owner can make after the deploy (the wallet limit starts at 3).
+        bool setUp = walletLimit != 3 || bytes(website).length != 0 || bytes(social).length != 0
             || bytes(image).length != 0 || bytes(banner).length != 0 || openSale;
 
         vm.startBroadcast();
@@ -75,10 +79,32 @@ contract DeployCrafters is Script {
             console2.log("  - Royalty: nothing to register on OpenSea's registry (the collection gets its default list,");
             console2.log("    OpenSea's SignedZone). In OpenSea Studio, turn on creator earnings (5%).");
         }
-        console2.log("  - The reveal: setSaleOpen(false) (a pause until the reveal), then reveal(secret): the secret goes");
-        console2.log("    public and the seed waits for the next L2 block. Right after, anyone calls seal() (the game's");
-        console2.log("    panel offers it; or cast send <collection> \"seal()\"): within 256 L2 blocks, about 26 seconds");
-        console2.log("    on Robinhood Chain. Later than that, seal() moves the entropy block on: call it again.");
+        console2.log("  - OpenSea Studio lets only owner() edit the collection (links, description, banner, earnings).");
+        console2.log("    Its ownership can never be renounced; never hand it to a contract wallet OpenSea Studio");
+        console2.log("    can't sign in with (check a multisig there first).");
+        console2.log("  - The reveal, after the mint: setSaleOpen(false), then reveal(secret) and at once seal():");
+        console2.log("    from the game's panel (log in as OWNER: it sends seal() itself), or from a terminal:");
+        console2.log(string.concat(
+            '      cast send ', vm.toString(address(crafters)), ' "reveal(uint256)" "$(cat <secret file>)" --account <owner>',
+            ' && until cast send ', vm.toString(address(crafters)), ' "seal()" --account <owner>; do sleep 1; done'
+        ));
+        console2.log("    (add --rpc-url robinhood). seal() works for anyone for 256 L2 blocks (about 26 seconds); after a");
+        console2.log("    window nobody sealed in, only OWNER can move the entropy block on (moveEntropyOn), at most 3");
+        console2.log("    times in all, each in public; then seal again.");
+        if (deployer != owner) {
+            console2.log("");
+            console2.log("  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+            console2.log("  !! WARNING: the deploying wallet is not OWNER. OpenSea Studio lets only owner() edit I'M DIO.");
+            console2.log("  !!   deployer (the collection's creator):", deployer);
+            console2.log("  !!   OWNER:                               ", owner);
+            if (crafters.pendingOwner() != address(0)) {
+                console2.log("  !! OWNER must accept the collection RIGHT AWAY (the call above): until then the deployer owns it.");
+            }
+            console2.log("  !! Recommended: deploy I'M DIO from the OWNER wallet itself, so it is creator and owner both.");
+            console2.log("  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+        }
+        console2.log("I'M DIO owner():       ", crafters.owner());
+        console2.log("I'M DIO pendingOwner():", crafters.pendingOwner());
 
         // (dev.sh sets DEV_CHAIN: an Anvil fork of Robinhood Chain has its chain ID too, and must not touch the real record.)
         if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) || block.chainid != 4663 || vm.envOr("DEV_CHAIN", false)) return crafters;

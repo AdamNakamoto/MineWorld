@@ -11,9 +11,9 @@
 #   ./dev.sh --wallet        # log in with your own browser wallet (MetaMask...) as on mainnet. The chain gets its own
 #                            # ID, so nothing signed there works elsewhere. Combines with --fork.
 #   ./dev.sh --sale          # leave the I'M DIO sale open and sealed, to try the mint and the reveal: the owner
-#                            # (account 0) closes the sale and publishes chain.json's devSecret with reveal(secret);
-#                            # a block later anyone locks the reveal in with seal() (the panel's button; not on
-#                            # --fork, see below). Without it the players get two DIOs each at once, revealed.
+#                            # (account 0) closes the sale, then the panel's "Reveal and lock in" (its secret field
+#                            # holds chain.json's devSecret) publishes it and seals at once (not on --fork, see
+#                            # below). Without it the players get two DIOs each (3 per wallet at most), revealed.
 #
 # Accounts: 0 deploys, and owns the vault, the proxies (MiningSites, MinePayments, CrafterLevels) and I'M DIO; 1 is
 # the treasury and the fee recipient; 2-9 are players, each with some $MINE (1,000,000 from the stand-in on the empty
@@ -136,8 +136,8 @@ if [ "$FORK" = 1 ]; then
 fi
 
 if [ "$SALE" = 0 ]; then
-  # Two DIOs for each player (as anyone mints them), then the sale closes and the owner publishes this chain's secret
-  # (reveal); once the next block is over, a player seals it (anyone can), which sets the seed.
+  # Two DIOs for each player (as anyone mints them; 3 a wallet at most), then the sale closes, the owner publishes
+  # this chain's secret (reveal) and the seed is sealed at once: a player sends seal() (anyone can, within the window).
   HASHES=()
   for p in "${PLAYER_LIST[@]}"; do
     HASHES+=($(cast send "$CRAFTERS" "mint(uint256)" 2 --value $((CRAFTERS_PRICE * 2)) \
@@ -145,6 +145,8 @@ if [ "$SALE" = 0 ]; then
   done
   wait_ok "${HASHES[@]}"
   cast send "$CRAFTERS" "setSaleOpen(bool)" false --from "$DEPLOYER" --unlocked --rpc-url "$RPC" >/dev/null
+  # The honest reveal: publish the secret, then seal at once (retrying until the seed is set), so no window passes
+  # unsealed.
   cast send "$CRAFTERS" "reveal(uint256)" "$SECRET" --from "$DEPLOYER" --unlocked --rpc-url "$RPC" >/dev/null
   cast rpc anvil_mine 2 --rpc-url "$RPC" >/dev/null
   if [ "$FORK" = 1 ]; then
@@ -155,7 +157,12 @@ if [ "$SALE" = 0 ]; then
     SEED=$(cast keccak "$(cast abi-encode "f(uint256,bytes32)" "$SECRET" "$(cast keccak "anvil fork")")")
     cast rpc anvil_setStorageAt "$CRAFTERS" "$(cast to-uint256 "$SLOT")" "$SEED" --rpc-url "$RPC" >/dev/null
   else
-    cast send "$CRAFTERS" "seal()" --from "${PLAYER_LIST[0]}" --unlocked --rpc-url "$RPC" >/dev/null
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      cast send "$CRAFTERS" "seal()" --from "${PLAYER_LIST[0]}" --unlocked --rpc-url "$RPC" >/dev/null 2>&1 || true
+      [ "$(cast call "$CRAFTERS" "seed()(uint256)" --rpc-url "$RPC")" != 0 ] && break
+      cast rpc anvil_mine 1 --rpc-url "$RPC" >/dev/null
+    done
+    [ "$(cast call "$CRAFTERS" "seed()(uint256)" --rpc-url "$RPC")" != 0 ] || { echo "The I'M DIO reveal didn't seal" >&2; exit 1; }
   fi
 fi
 

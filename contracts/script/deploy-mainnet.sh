@@ -37,9 +37,16 @@
 # can only be revealed with it (reveal(secret)). A dry run uses a throwaway secret and saves nothing.
 #
 # The reveal, after the mint: setSaleOpen(false), then OWNER calls reveal(secret), which publishes the secret and makes
-# the seed wait for the next L2 block's hash. Right after, anyone calls seal() (cast send <collection> "seal()", or the
-# game's panel): within 256 L2 blocks, about 26 seconds on Robinhood Chain; later than that, seal() moves the entropy
-# block on and must be called again. Nobody, the owner included, can see the looks before everyone can.
+# the seed wait for the next L2 block's hash, and seals at once: the game's panel does both (log in as OWNER, I'M DIO,
+# "Reveal and lock in"), or with a Foundry keystore:
+#   cast send <I'M DIO> "reveal(uint256)" "$(cat ~/mineworldcraft-crafters-reveal-secret.txt)" --account <owner> --rpc-url robinhood \
+#     && until cast send <I'M DIO> "seal()" --account <owner> --rpc-url robinhood; do sleep 1; done
+# Anyone can seal() for 256 L2 blocks (about 26 seconds on Robinhood Chain). After a window nobody sealed in, only OWNER
+# can move the entropy block on (moveEntropyOn, at most 3 times in all, each in public), then seal again. Nobody, the
+# owner included, can see the looks before everyone can.
+#
+# I'M DIO's ownership can never be renounced, so OpenSea Studio (which lets only owner() edit the collection) always
+# works: deploy it from the OWNER wallet itself, so OWNER is its creator and its owner.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.foundry/bin:$PATH"
@@ -152,6 +159,8 @@ if [ "$BROADCAST" = 1 ]; then
   else
     grep -E '^(OWNER|TREASURY|CRAFTERS_[A-Z_]+)=' launch.env | sed 's/^/  /'
     echo "  SEED_COMMIT=$SEED_COMMIT"
+    echo "  Sign with the OWNER wallet ($OWNER) itself: OpenSea Studio lets only the collection's owner() edit it, and"
+    echo "  OWNER should be its creator too. From another wallet, OWNER must accept the collection right after (printed)."
     [ -n "${SECRET_NOTE:-}" ] && echo "  ($SECRET_NOTE; not printed)"
   fi
   read -r -p "Type DEPLOY to continue: " ok

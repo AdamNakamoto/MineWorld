@@ -48,11 +48,11 @@ import {MineVault} from "./MineVault.sol";
 ///        cost it shows). The treasury must accept ETH (checked when it's set): `openSite` pays it directly.
 ///      - Upgrades keep every site, level and total: the state lives in ERC-7201 namespaced storage.
 ///      - Replacing this contract as the vault's distributor (a new proxy rather than an upgrade in place; MineVault
-///        has the steps): the replacement is initialised in its own constructor (or by the vault's owner), never by
-///        anyone else, and records the distributor of the moment as its `predecessor`. Each player's site (when it
+///        has the steps): the replacement is initialised in its own constructor, never later, and records the distributor of the moment as its `predecessor`. Each player's site (when it
 ///        opened, its level), `settled` and `claimed` carry over: the views read through to the predecessor, and a
 ///        player's first `openSite`, `upgradeSite` or `claim` here imports them for good (the higher of the two of
-///        each; a level above this contract's top is held at the top). So lifetime vouchers never pay twice, and
+///        each; a level is kept as bought, even above this contract's top, which converts at the top level's rate
+///        until levels are added). So lifetime vouchers never pay twice, and
 ///        chains of replacements work. The per-day counters (`paidToday`, `walletPaidToday`) restart at a
 ///        replacement; the vault's 35,000 a day still holds across it. Once replaced, this contract is retired: its
 ///        `openSite`, `upgradeSite` and `claim` revert `NotActive` (as a replacement's do until it is accepted), so
@@ -73,7 +73,8 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
     bytes32 private constant NAME_HASH = keccak256("MineWorldCraft Mining");
     bytes32 private constant VERSION_HASH = keccak256("1");
 
-    /// @dev A wallet's site: when it was opened, and its level (1 to maxLevel()). Both 0: no site.
+    /// @dev A wallet's site: when it was opened, and its level (1 to maxLevel(), or above it if carried over from a
+    ///      predecessor with more levels). Both 0: no site.
     struct Site {
         uint64 openedAt;
         uint8 level;
@@ -145,7 +146,7 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
     /// @notice The treasury refused a plain call with no ETH (a contract with no receive or fallback, say), so it
     ///         would refuse site payments too and every openSite would fail.
     error TreasuryRefusesEth();
-    /// @notice `initialize` runs only in the proxy's own constructor (ERC1967Proxy's data) or from the vault's owner.
+    /// @notice `initialize` runs only in the proxy's own constructor (ERC1967Proxy's data).
     error InitializeOutsideConstructor();
     /// @notice The vault's distributor of the moment, which a replacement follows, doesn't answer `bookOf`.
     error BadPredecessor();
@@ -172,9 +173,10 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
     ///         distributor (the launch: the vault was given the proxy's predicted address) or its pending distributor
     ///         (a replacement: proposed at its predicted address first, see MineVault; it then follows the vault's
     ///         distributor of the moment, its `predecessor`). It runs only in the proxy's own constructor
-    ///         (ERC1967Proxy's data) or when the vault's owner calls it, so nobody else can set a proxy up, whatever
-    ///         state it is left in. The vault then accepts a replacement only if its `owner()` is the vault's owner,
-    ///         its `vault()` that vault and its `predecessor()` the distributor it replaces.
+    ///         (ERC1967Proxy's data), never later, by anyone: a proxy deployed without it can never be set up, so
+    ///         nobody can make one theirs (deploy another). Its arguments, `vault_` included, are trusted only because
+    ///         whoever deploys the proxy chooses them. The vault then accepts a replacement only if its `owner()` is
+    ///         the vault's owner, its `vault()` that vault and its `predecessor()` the distributor it replaces.
     function initialize(
         IERC20 token_,
         MineVault vault_,
@@ -185,9 +187,9 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
         uint256 walletDailyCap_,
         uint256 dailyCap_
     ) external initializer {
+        // Only in the proxy's own constructor: a proxy has no code of its own until its constructor returns.
+        if (address(this).code.length != 0) revert InitializeOutsideConstructor();
         if (address(vault_) == address(0) || signer_ == address(0)) revert ZeroAddress();
-        // (A proxy has no code of its own until its constructor returns.)
-        if (address(this).code.length != 0 && msg.sender != vault_.owner()) revert InitializeOutsideConstructor();
         __Owned_init(owner_);
         __MinePayer_init(token_, treasury_);
         uint256[] memory costs = new uint256[](4);
@@ -249,7 +251,8 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
     }
 
     /// @dev `player`'s site and books, imported for good from the predecessor the first time the player acts here
-    ///      (once this is active, so the predecessor's are final): the higher of the two of each.
+    ///      (once this is active, so the predecessor's are final): the higher of the two of each, the level as bought
+    ///      (never above MAX_LEVELS, so it fits a uint8), even above this contract's top.
     function _import(address player) private {
         SitesStorage storage $ = _sites();
         MiningSites pred = $.predecessor;
@@ -257,8 +260,7 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
         $.imported[player] = true;
         (uint64 openedAt, uint256 level, uint256 done, uint256 paid) = pred.bookOf(player);
         Site storage site = $.sites[player];
-        uint256 top = maxLevel();
-        if (level > top) level = top;
+        if (level > MAX_LEVELS) level = MAX_LEVELS; // (a predecessor never has more; a bound on what's stored)
         if (level > site.level) {
             if (site.level == 0) site.openedAt = openedAt;
             site.level = uint8(level);
@@ -268,9 +270,10 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
         emit Imported(player, site.level, $.settled[player], $.claimed[player]);
     }
 
-    /// @notice `player`'s site (when it opened, its level: 0 for none) and books (`settled`, `claimed`) as this
-    ///         contract counts them: its predecessor's, through any chain of replacements, until the player first
-    ///         acts here, merged as `_import` would.
+    /// @notice `player`'s site (when it opened, its level as bought: 0 for none) and books (`settled`, `claimed`) as
+    ///         this contract counts them: its predecessor's, through any chain of replacements, until the player first
+    ///         acts here, merged as `_import` would. The level isn't held at this contract's top, so one bought on a
+    ///         predecessor with more levels survives every hop and counts in full once levels are added.
     function bookOf(address player)
         public
         view
@@ -282,8 +285,7 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
         MiningSites pred = $.predecessor;
         if (address(pred) == address(0) || $.imported[player]) return (openedAt, level, settledTotal, claimedTotal);
         (uint64 o, uint256 l, uint256 st, uint256 cl) = pred.bookOf(player);
-        uint256 top = maxLevel();
-        if (l > top) l = top;
+        if (l > MAX_LEVELS) l = MAX_LEVELS;
         if (l > level) {
             if (level == 0) openedAt = o;
             level = l;
@@ -343,14 +345,21 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
         return siteLevel(wallet) != 0;
     }
 
-    /// @notice `wallet`'s site level: 1 to maxLevel(), or 0 without a site.
+    /// @notice `wallet`'s site level as bought: 1 to maxLevel(), above it if carried over from a predecessor with
+    ///         more levels (it converts at the top level's rate until levels are added), or 0 without a site.
     function siteLevel(address wallet) public view returns (uint256 level) {
         (, level,,) = bookOf(wallet);
     }
 
     /// @notice The share of its earnings `wallet` converts when it claims now, in basis points (0 without a site).
     function rateBps(address wallet) public view returns (uint256) {
-        return levelRateBps(siteLevel(wallet));
+        return _siteRate(siteLevel(wallet));
+    }
+
+    /// @dev What a site of `level` converts: its level's rate, held at the top level's for a level above the top.
+    function _siteRate(uint256 level) private view returns (uint256) {
+        uint256 top = _sites().rates.length;
+        return levelRateBps(level > top ? top : level);
     }
 
     /// @notice The share of earnings a site of `level` converts, in basis points (0 for no such level).
@@ -381,7 +390,7 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
         _requireActive();
         _import(msg.sender);
         SitesStorage storage $ = _sites();
-        uint256 rate = levelRateBps($.sites[msg.sender].level);
+        uint256 rate = _siteRate($.sites[msg.sender].level);
         if (rate == 0) revert NoSite();
         if ($.paused) revert IsPaused();
         if (block.timestamp > deadline) revert Expired();
@@ -412,7 +421,7 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
     function claimable(address player, uint256 total) external view returns (uint256 amount) {
         SitesStorage storage $ = _sites();
         (, uint256 level, uint256 done,) = bookOf(player);
-        uint256 rate = levelRateBps(level);
+        uint256 rate = _siteRate(level);
         if ($.paused || rate == 0 || $.vault.distributor() != address(this)) return 0;
         (amount,) = _quote(player, total, rate, done);
     }

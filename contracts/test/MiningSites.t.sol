@@ -8,6 +8,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {MineToken} from "../src/MineToken.sol";
 import {MineVault} from "../src/MineVault.sol";
@@ -665,9 +666,11 @@ contract MiningSitesTest is SitesFixture {
         assertEq(sites.rateBps(alice), 5_000);
     }
 
-    /// Re-check 8c7ba957 #1: initialize runs only in the proxy's own constructor or from the vault's owner, even for
-    /// the proxy the vault names its distributor (a launch done in two steps by mistake).
-    function test_InitializeOnlyInTheConstructorOrByTheVaultsOwner() public {
+    /// Second re-check 52b534f9 #1, case (c): initialize runs only in the proxy's own constructor, so a launch done
+    /// in two steps by mistake (the vault names a proxy deployed without its initialize) leaves a proxy nobody can set
+    /// up: not a stranger (with any vault), not the vault's owner. The owner recovers by replacing it, as MineVault
+    /// sets out; the replacement follows the dead one (whose books are empty) and pays.
+    function test_InitializeOnlyInTheConstructor() public {
         MiningSites impl = new MiningSites();
         address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
         MineVault v = new MineVault(token, owner, predicted);
@@ -675,11 +678,35 @@ contract MiningSitesTest is SitesFixture {
         assertEq(p, predicted);
         vm.prank(alice);
         vm.expectRevert(MiningSites.InitializeOutsideConstructor.selector);
-        MiningSites(p).initialize(IERC20(address(token)), v, owner, treasury, alice, PRICE, WALLET_CAP, DAILY_CAP);
+        MiningSites(p).initialize(IERC20(address(token)), v, alice, alice, alice, PRICE, WALLET_CAP, DAILY_CAP);
         vm.prank(owner);
+        vm.expectRevert(MiningSites.InitializeOutsideConstructor.selector);
         MiningSites(p).initialize(IERC20(address(token)), v, owner, treasury, signer, PRICE, WALLET_CAP, DAILY_CAP);
-        assertEq(MiningSites(p).signer(), signer);
-        assertEq(MiningSites(p).predecessor(), address(0), "the launch proxy follows nobody");
+        assertEq(MiningSites(p).owner(), address(0));
+
+        // The way out: a replacement, proposed at its predicted address and deployed initialised.
+        address next = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
+        MiningSites impl2 = new MiningSites();
+        vm.prank(owner);
+        v.proposeDistributor(next);
+        MiningSites replacement = MiningSites(
+            address(
+                new ERC1967Proxy(
+                    address(impl2),
+                    abi.encodeCall(
+                        MiningSites.initialize,
+                        (IERC20(address(token)), v, owner, treasury, signer, PRICE, WALLET_CAP, DAILY_CAP)
+                    )
+                )
+            )
+        );
+        assertEq(address(replacement), next);
+        assertEq(replacement.predecessor(), p);
+        vm.warp(_now() + 2 days);
+        vm.prank(owner);
+        v.acceptDistributor();
+        assertEq(v.distributor(), next);
+        assertFalse(replacement.hasSite(carol));
     }
 
     function test_UpgradeCostsAreTheOwnersWithinBounds() public {
@@ -1418,10 +1445,10 @@ contract DistributorRaceTest is Test {
         fail("the vault minted 3,500 $MINE to whoever initialised the replacement distributor");
     }
 
-    /// Re-check 8c7ba957 #1, the other way round: the owner proposes a proxy that is already deployed but
-    /// uninitialised. Nobody but the vault's owner can set it up during the wait (not with the attacker as owner, nor
-    /// naming the vault's owner while keeping the signer and treasury), and the owner itself can, safely.
-    function test_onlyTheOwnerSetsUpALateProxy() public {
+    /// Second re-check 52b534f9 #1: a proxy the owner proposed while it sat uninitialised can never be set up, by
+    /// anyone: not a stranger naming the real vault, nor its owner, nor with a vault of its own; not the vault's owner
+    /// either. The vault refuses it, and the owner proposes a proxy it deploys initialised instead.
+    function test_aProxyLeftUninitialisedCanNeverBeSetUp() public {
         address replacement = address(new ERC1967Proxy(address(impl), ""));
         vm.prank(owner);
         vault.proposeDistributor(replacement);
@@ -1433,18 +1460,19 @@ contract DistributorRaceTest is Test {
         vm.expectRevert(MiningSites.InitializeOutsideConstructor.selector);
         MiningSites(replacement)
             .initialize(IERC20(address(token)), vault, owner, attacker, vm.addr(attackerKey), 1, 3_500e18, 35_000e18);
+        MineVault own = new MineVault(token, attacker, replacement);
+        vm.prank(attacker);
+        vm.expectRevert(MiningSites.InitializeOutsideConstructor.selector);
+        MiningSites(replacement)
+            .initialize(IERC20(address(token)), own, attacker, attacker, vm.addr(attackerKey), 1, 3_500e18, 35_000e18);
+        vm.prank(owner);
+        vm.expectRevert(MiningSites.InitializeOutsideConstructor.selector);
+        MiningSites(replacement).initialize(IERC20(address(token)), vault, owner, treasury, owner, 1, 1_500e18, 35_000e18);
         vm.warp(vm.getBlockTimestamp() + 2 days);
         vm.prank(owner);
         vm.expectRevert(MineVault.NotOwnersDistributor.selector);
-        vault.acceptDistributor(); // (still uninitialised)
-
-        vm.prank(owner);
-        MiningSites(replacement)
-            .initialize(IERC20(address(token)), vault, owner, treasury, owner, 1, 1_500e18, 35_000e18);
-        assertEq(MiningSites(replacement).predecessor(), vault.distributor());
-        vm.prank(owner);
         vault.acceptDistributor();
-        assertEq(vault.distributor(), replacement);
+        assertTrue(vault.distributor() != replacement);
         assertEq(token.totalMinted(), 0);
     }
 
@@ -1807,8 +1835,23 @@ contract ReplacementTest is Test {
         first.openSite{value: 1}();
     }
 
-    /// A level above the replacement's top is held at its top.
-    function test_ALevelAboveTheNewTopIsHeldAtTheTop() public {
+    /// Like `_replace`, with `extra` levels added on the replacement (by its owner) before it's accepted.
+    function _replaceWith(uint256 extra) internal returns (MiningSites next) {
+        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.prank(owner);
+        vault.proposeDistributor(predicted);
+        next = _proxy();
+        for (uint256 i; i < extra; i++) {
+            vm.prank(owner);
+            next.addLevel(1_000e18, 10_000);
+        }
+        vm.warp(vm.getBlockTimestamp() + 2 days);
+        vm.prank(owner);
+        vault.acceptDistributor();
+    }
+
+    /// alice at level 6 on a first contract whose top is 6 (the level bought with $MINE).
+    function _aliceAtLevelSix() internal {
         vm.startPrank(owner);
         first.addLevel(1_000e18, 10_000); // level 6 on the first
         uint256[] memory cheap = new uint256[](5);
@@ -1823,12 +1866,71 @@ contract ReplacementTest is Test {
             _upgrade(first, alice);
         }
         assertEq(first.siteLevel(alice), 6);
+    }
+
+    /// Second re-check 52b534f9 #3: a level bought above the replacement's top is kept as bought (it converts at the
+    /// top level's rate meanwhile, and can't be raised past the top), and counts in full once the level is added.
+    function test_ALevelAboveTheNewTopIsKept() public {
+        _aliceAtLevelSix();
         MiningSites second = _replace();
         assertEq(second.maxLevel(), 5);
-        assertEq(second.siteLevel(alice), 5);
-        _claim(second, alice, 100e18);
-        assertEq(second.siteLevel(alice), 5);
-        assertEq(second.rateBps(alice), 10_000);
+        assertEq(second.siteLevel(alice), 6);
+        assertEq(second.rateBps(alice), 10_000, "the top level's rate");
+        _claim(second, alice, 100e18); // imports
+        assertEq(second.siteLevel(alice), 6);
+        uint256 cost = second.upgradeCost(5);
+        vm.startPrank(alice);
+        token.approve(address(second), cost);
+        vm.expectRevert(UpgradeCosts.MaxLevel.selector);
+        second.upgradeSite(cost, 0);
+        vm.stopPrank();
+        // Once level 6 exists here (at 90%, say), alice converts at its rate and can buy level 7 when it's added.
+        uint256[] memory r = new uint256[](5);
+        (r[0], r[1], r[2], r[3], r[4]) = (5_000, 6_000, 7_000, 8_000, 8_500);
+        vm.startPrank(owner);
+        second.setRates(r);
+        second.addLevel(1_000e18, 9_000);
+        vm.stopPrank();
+        assertEq(second.siteLevel(alice), 6);
+        assertEq(second.rateBps(alice), 9_000);
+        vm.prank(owner);
+        second.addLevel(1_000e18, 9_500);
+        _upgrade(second, alice);
+        assertEq(second.siteLevel(alice), 7);
+    }
+
+    /// The auditor's scenario, asserting the fixed values: level 6 survives a hop through a contract whose top is 5,
+    /// reads as 6 on a third whose top is 8, and stays 6 after the import and another addLevel (not to be bought
+    /// again).
+    function test_LevelPaidForIsKeptThroughAHopAndAfterAnImport() public {
+        _aliceAtLevelSix();
+        MiningSites second = _replace();
+        assertEq(second.siteLevel(alice), 6);
+        MiningSites third = _replaceWith(3);
+        assertEq(third.maxLevel(), 8);
+        assertEq(third.siteLevel(alice), 6, "lost through the middle hop");
+        _claim(third, alice, 10e18);
+        vm.prank(owner);
+        third.addLevel(1_000e18, 10_000);
+        assertEq(third.maxLevel(), 9);
+        assertEq(third.siteLevel(alice), 6, "lost after the import");
+        _upgrade(third, alice); // the next one she buys is 7
+        assertEq(third.siteLevel(alice), 7);
+    }
+
+    /// Three hops: carol (only ever on the first, at level 6) reads 6 through two contracts whose top is 5.
+    function test_ALevelSurvivesThreeHops() public {
+        _aliceAtLevelSix();
+        MiningSites second = _replace();
+        MiningSites third = _replace();
+        MiningSites fourth = _replaceWith(1);
+        assertEq(second.maxLevel(), 5);
+        assertEq(third.maxLevel(), 5);
+        assertEq(fourth.maxLevel(), 6);
+        assertEq(fourth.siteLevel(alice), 6);
+        assertEq(fourth.rateBps(alice), 10_000);
+        _claim(fourth, alice, 10e18);
+        assertEq(fourth.siteLevel(alice), 6);
     }
 
     /// The per-day counters restart at a replacement (documented); the vault's 35,000 a day still holds across it.
@@ -1915,5 +2017,162 @@ contract ReplacementTest is Test {
 contract ProxyMaker {
     function make(address implementation, bytes calldata data) external returns (address) {
         return address(new ERC1967Proxy(implementation, data));
+    }
+}
+
+/// Second re-check 52b534f9 #1, the auditor's proof as submitted.
+/// A vault of the stranger's own making: it answers everything MiningSites.initialize asks of `vault_`.
+contract FakeVault {
+    address public owner;
+    address public token;
+    address public distributor;
+
+    constructor(address owner_, address token_, address distributor_) {
+        owner = owner_;
+        token = token_;
+        distributor = distributor_;
+    }
+
+    function pendingDistributor() external pure returns (address) {
+        return address(0);
+    }
+
+    function DAILY_LIMIT() external pure returns (uint256) {
+        return 35_000e18;
+    }
+}
+
+/// The implementation the stranger upgrades the hijacked proxy to: it answers acceptDistributor's three reads with
+/// the real vault's values and asks the real vault to mint.
+contract EvilDistributor {
+    address public immutable owner;
+    address public immutable vault;
+    address public immutable predecessor;
+
+    constructor(address owner_, address vault_, address predecessor_) {
+        owner = owner_;
+        vault = vault_;
+        predecessor = predecessor_;
+    }
+
+    function proxiableUUID() external pure returns (bytes32) {
+        return 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+    }
+
+    function drain(address to, uint256 amount) external {
+        MineVault(vault).release(to, amount);
+    }
+}
+
+/// Re-check 8c7ba957 #1, the state its fix's NatSpec covers ("whatever state it is left in"): a replacement proxy on
+/// chain, uninitialised, proposed by the owner, which the vault's owner means to initialise itself. The guard in
+/// MiningSites.initialize compares msg.sender with the owner of the `vault_` the caller passes, so a stranger passes a
+/// vault of its own and is let through; as the proxy's owner it then upgrades it to code that answers the vault's
+/// three checks with the right values, and the vault accepts it and mints to the stranger.
+contract FakeVaultHijackTest is Test {
+    address owner = makeAddr("owner");
+    address treasury = makeAddr("treasury");
+    address attacker = makeAddr("attacker");
+
+    MineToken token;
+    MiningSites impl;
+    MineVault vault;
+
+    function setUp() public {
+        token = new MineToken(address(this), address(0), 0);
+        impl = new MiningSites();
+        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
+        vault = new MineVault(token, owner, predicted);
+        address sites = address(
+            new ERC1967Proxy(
+                address(impl),
+                abi.encodeCall(
+                    MiningSites.initialize,
+                    (IERC20(address(token)), vault, owner, treasury, owner, 1, 1_500e18, 35_000e18)
+                )
+            )
+        );
+        assertEq(sites, predicted);
+        token.setMinter(address(vault));
+        token.renounceOwnership();
+    }
+
+    function test_StrangerInitialisesTheLateProxyWithItsOwnVault() public {
+        // The owner deploys the replacement proxy uninitialised and proposes it, meaning to initialise it itself.
+        address replacement = address(new ERC1967Proxy(address(impl), ""));
+        vm.prank(owner);
+        vault.proposeDistributor(replacement);
+
+        // A stranger gets there first, with a vault of its own that names the stranger as owner.
+        FakeVault fake = new FakeVault(attacker, address(token), replacement);
+        vm.prank(attacker);
+        (bool hijacked,) = replacement.call(
+            abi.encodeCall(
+                MiningSites.initialize,
+                (IERC20(address(token)), MineVault(address(fake)), attacker, attacker, attacker, 1, 3_500e18, 35_000e18)
+            )
+        );
+
+        if (hijacked) {
+            // The stranger owns the proxy now: it upgrades it to code that answers the vault's checks correctly.
+            EvilDistributor evil = new EvilDistributor(owner, address(vault), vault.distributor());
+            vm.prank(attacker);
+            UUPSUpgradeable(replacement).upgradeToAndCall(address(evil), "");
+
+            // The owner's own initialise reverts, but its acceptDistributor two days later goes through.
+            vm.warp(vm.getBlockTimestamp() + 2 days);
+            vm.prank(owner);
+            (bool accepted,) = address(vault).call(abi.encodeCall(MineVault.acceptDistributor, ()));
+            if (accepted) {
+                vm.prank(attacker);
+                EvilDistributor(replacement).drain(attacker, 35_000e18);
+            }
+        }
+
+        // What the fix claims: nobody but the vault's owner sets a proxy up, so one a stranger set up is never
+        // accepted and never mints.
+        assertEq(token.balanceOf(attacker), 0, "the vault minted $MINE to the stranger");
+        assertTrue(vault.distributor() != replacement, "the vault accepted a distributor a stranger set up");
+        assertFalse(hijacked, "a stranger initialised the late proxy by passing a vault of its own");
+    }
+}
+
+/// Second re-check 52b534f9 #1, the economics specialist's variant (written from the report's description): the
+/// stranger needs no fake at all, just a real MineVault of its own naming the late proxy its distributor.
+contract StrangerInitializesWithOwnVaultTest is Test {
+    address owner = makeAddr("owner");
+    address treasury = makeAddr("treasury");
+    address attacker = makeAddr("attacker");
+
+    MineToken token;
+    MiningSites impl;
+    MineVault vault;
+
+    function setUp() public {
+        token = new MineToken(address(this), address(0), 0);
+        impl = new MiningSites();
+        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
+        vault = new MineVault(token, owner, predicted);
+        new ERC1967Proxy(
+            address(impl),
+            abi.encodeCall(MiningSites.initialize, (IERC20(address(token)), vault, owner, treasury, owner, 1, 1_500e18, 35_000e18))
+        );
+        token.setMinter(address(vault));
+        token.renounceOwnership();
+    }
+
+    function test_StrangerInitializesTheProposedProxyWithItsOwnVault() public {
+        address replacement = address(new ERC1967Proxy(address(impl), ""));
+        vm.prank(owner);
+        vault.proposeDistributor(replacement);
+        // The stranger's own vault (for the same token; it never minted anything) names the proxy its distributor.
+        vm.prank(attacker);
+        MineVault own = new MineVault(token, attacker, replacement);
+        vm.prank(attacker);
+        (bool initialised,) = replacement.call(
+            abi.encodeCall(MiningSites.initialize, (IERC20(address(token)), own, attacker, attacker, attacker, 1, 3_500e18, 35_000e18))
+        );
+        assertFalse(initialised, "a stranger initialised the proxy the owner proposed");
+        assertEq(MiningSites(replacement).owner(), address(0));
     }
 }
