@@ -1845,6 +1845,54 @@ function switchZone(k, spot = landing(k), toks = null) {
   bots.landed();
   drawZoneTag();
 }
+// ---------------------------------------------------------------- the way to safety
+// The HUD's compass points to the nearest safe place on the planet you're on, with how far it is: home's town (nobody
+// digs or builds there, and no monsters come) or a zone's landing pad (no fighting, mining or building). Inside it, it
+// says so. Clicking it takes you there at once (/spawn). While you're far away, a beam of light stands over it.
+const SAFE_BEAM_FROM = 40; // blocks: the beam shows past this
+const safeBeam = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 96, 10, 1, true),
+  new THREE.MeshBasicMaterial({ color: 0x8ee07a, transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
+safeBeam.visible = false;
+safeBeam.userData.at = new THREE.Vector3();
+scene.add(safeBeam);
+let safeShown = "";
+/// The safe place on planet k: where it is (its middle), how its ground lies, its name and what it keeps you from.
+function safePlace(k) {
+  if (k === "home" || !ZONES[k]) return { x: TOWN.x, y: TOWN.y, z: TOWN.z, name: "Town", keeps: "no monsters, no digging or building" };
+  const p = zoneOf(k).pad;
+  // (Only Red Mesa lets players fight; on the others the pad keeps the monsters off.)
+  const keeps = ZONES[k].pvp ? "no fighting, mining or building" : "no monsters, mining or building";
+  return { x: p.x + 0.5, y: p.y, z: p.z + 0.5, name: `${ZONES[k].name}'s landing pad`, keeps };
+}
+/// Turns the compass to the safe place (from where you look), and stands the beam over it while you're far away.
+function drawSafeNav() {
+  const S = safePlace(zone), P = player.pos;
+  const dx = wrapDelta(S.x - P.x), dz = wrapDelta(S.z - P.z), dist = Math.hypot(dx, dz);
+  const inside = protectedIn(zone, Math.floor(P.x), Math.floor(P.z));
+  // (Your view looks along -z turned by yaw, as the bots' walking does: the way to it, then how far that is from yours.)
+  let rel = Math.atan2(-dx, -dz) - player.yaw;
+  rel = Math.atan2(Math.sin(rel), Math.cos(rel));
+  const deg = Math.round((-rel * 180) / Math.PI / 5) * 5;
+  const key = inside ? `in:${zone}` : `${zone}:${deg}:${Math.round(dist)}`;
+  if (key !== safeShown) {
+    safeShown = key;
+    const el = $("safeNav");
+    el.classList.toggle("inside", inside);
+    $("safeArrow").style.transform = inside ? "" : `rotate(${deg}deg)`;
+    $("safeText").innerHTML = inside
+      ? `<b>Safe here</b> <span class="safe-hint">(${S.name}: ${S.keeps})</span>`
+      : `<b>${S.name}</b> ${Math.round(dist).toLocaleString("en-US")} blocks <span class="safe-hint">· click to go</span>`;
+    el.title = inside ? `You're in the safe zone: ${S.keeps}.` : `The safe zone: ${S.name} (${S.keeps}). Follow the arrow, or click to go there now (/spawn).`;
+  }
+  safeBeam.visible = !inside && dist > SAFE_BEAM_FROM && !trip;
+  if (safeBeam.visible) safeBeam.userData.at.set(S.x, S.y + 48, S.z);
+}
+$("safeNav").addEventListener("click", () => {
+  if (trip) return;
+  runCommand("/spawn", commandGame);
+  safeShown = "";
+});
+
 function drawZoneTag() {
   const Z = ZONES[zone];
   $("zoneTag").innerHTML = `<b>${Z.name}</b>${Z.label === "Home" ? "" : `<span>${Z.label}</span>`}<span class="rule ${Z.pvp ? "pvp" : ""}">${Z.pvp ? "PvP on (not on the pad)" : "No PvP"}</span>`;
@@ -2096,6 +2144,7 @@ function frame() {
     updateDebris(dt);
     const where = `${Math.floor(player.pos.x)}, ${Math.floor(player.pos.y)}, ${Math.floor(player.pos.z)}${isNight(Date.now() + serverOffset) ? " · night" : ""}`;
     if (where !== whereShown) $("where").textContent = whereShown = where; // (only when it changes: a write costs a layout)
+    drawSafeNav();
   } else {
     // The title screen: the whole planet, turning slowly in space (the world loads round the spawn meanwhile).
     globe.render(renderer, dt);
@@ -2141,6 +2190,7 @@ function drawOnPlanet(dt) {
   for (const o of [outline, crack]) if (o.visible) placeOnPlanet(o, o.userData.at, 0);
   for (const m of debris) placeOnPlanet(m, m.userData.p, 0);
   if (officeSign?.visible) placeOnPlanet(officeSign, officeSign.userData.at, 0);
+  if (safeBeam.visible) placeOnPlanet(safeBeam, safeBeam.userData.at, 0);
 }
 const globe = createGlobe();
 world.map(512, 256).then(({ data, w, h }) => data && globe.setMap(data, w, h));
@@ -2166,5 +2216,7 @@ if (local) {
     // Autopilot bots, for testing: the bots (bots.list holds each one's state), the activity mark, the tickets, the
     // rocket's buying (n tickets at once) and redeploying.
     bots, activity, get tickets() { return tickets; }, buyTicket, needsTicket,
+    // The way to safety: the compass (run it by hand after moving or turning), the safe place, the beam.
+    drawSafeNav, safePlace, safeBeam,
   };
 }

@@ -50,6 +50,10 @@
       </div>
       <div class="card small zone-tag" id="zoneTag" title="The planet you're on"></div>
       <div class="card small mono" id="where"></div>
+      <!-- The way to the nearest safe place (main.js drawSafeNav): click to go there at once (/spawn). -->
+      <button class="card small safe-nav" id="safeNav" type="button"><span class="safe-arrow" id="safeArrow" aria-hidden="true">
+        <svg viewBox="0 0 20 20" width="18" height="18"><path d="M10 1.5 17 17 10 13 3 17z" fill="#8ee07a" stroke="#0b1013" stroke-width="1.6" stroke-linejoin="round"/></svg>
+      </span><span id="safeText"></span></button>
     </div>
     <div id="bossBar" class="boss-bar" hidden>
       <b id="bossName"></b>
