@@ -18,20 +18,23 @@ export const FREE_WHILE_TESTING = false;
 
 /// What's for sale: [item, how many, price in $MINE]. Starter gear (stone, padded, torches, food) costs less than an
 /// hour's mining for a new player; each tier up costs more, so the best full kit (Crystal pick and sword, the War
-/// Hammer and Crystal armor: 21,025 $MINE) is about $50 at a $50K market cap. Gear wears out, so it's bought again.
+/// Hammer and Crystal armor: 10,512.5 $MINE) is about $25 at a $50K market cap. Gear wears out, so it's bought again.
+/// (Halved on 2026-10-16. A price may end in .5: priceWei pays it exactly.)
 const armorSet = (tier, prices) => [0, 1, 2, 3].map((s) => [100 + tier * 4 + s, 1, prices[s]]);
 export const CATALOG = {
-  Tools: [[STONE_PICK, 1, 12], [IRON_PICK, 1, 70], [DIAMOND_PICK, 1, 450], [CRYSTAL_PICK, 1, 3150], [TORCH, 16, 5]],
-  Weapons: [[STONE_SWORD, 1, 10], [IRON_SWORD, 1, 60], [DIAMOND_SWORD, 1, 375], [CRYSTAL_SWORD, 1, 2625], [WAR_HAMMER, 1, 3950]],
+  Tools: [[STONE_PICK, 1, 6], [IRON_PICK, 1, 35], [DIAMOND_PICK, 1, 225], [CRYSTAL_PICK, 1, 1575], [TORCH, 16, 2.5]],
+  Weapons: [[STONE_SWORD, 1, 5], [IRON_SWORD, 1, 30], [DIAMOND_SWORD, 1, 187.5], [CRYSTAL_SWORD, 1, 1312.5], [WAR_HAMMER, 1, 1975]],
   Armor: [
-    ...armorSet(0, [8, 15, 12, 8]), ...armorSet(1, [53, 105, 88, 53]),
-    ...armorSet(2, [300, 600, 480, 300]), ...armorSet(3, [2100, 3950, 3150, 2100]),
+    ...armorSet(0, [4, 7.5, 6, 4]), ...armorSet(1, [26.5, 52.5, 44, 26.5]),
+    ...armorSet(2, [150, 300, 240, 150]), ...armorSet(3, [1050, 1975, 1575, 1050]),
   ],
-  Supplies: [[APPLE, 5, 5], [MUSHROOM_STEW, 1, 8]],
+  Supplies: [[APPLE, 5, 2.5], [MUSHROOM_STEW, 1, 4]],
 };
 
 const SHOP_KIND = 0; // MinePayments' kind for the shop
 const WEI = 10n ** 18n;
+/// A price in $MINE (it may end in .5) as wei, exactly.
+const priceWei = (price) => (BigInt(Math.round(price * 100)) * WEI) / 100n;
 // localStorage: the hashes of payments already delivered (never delivered again); orders paid (or being paid) and not
 // delivered yet; and, per wallet, paid items that didn't fit.
 const PAID = "mwc:shop:paid", ORDERS = "mwc:shop:orders", OWED = "mwc:shop:owed:";
@@ -92,7 +95,7 @@ export function createShop(game) {
             <button class="link-btn" data-collect>Collect</button>` : ""}`;
     grid.innerHTML = CATALOG[tab].map(([id, n, price], i) => {
       const owned = game.inv.count(id) + (ARMOR[id] && game.inv.worn(ARMOR[id].slot) === id ? 1 : 0);
-      const why = !sell ? "" : !acct ? "Log in to buy" : balance !== null && balance < BigInt(price) * WEI ? "Not enough $MINE" : "";
+      const why = !sell ? "" : !acct ? "Log in to buy" : balance !== null && balance < priceWei(price) ? "Not enough $MINE" : "";
       const button = free()
         ? `<button class="btn" data-buy="${i}">Get (free)</button>`
         : `<button class="btn gold" data-buy="${i}" ${!sell || busy || why ? "disabled" : ""} title="${why}">Buy</button>`;
@@ -168,7 +171,7 @@ export function createShop(game) {
     render();
     try {
       keepOrder(order);
-      const r = await c.pay(SHOP_KIND, BigInt(price) * WEI, {
+      const r = await c.pay(SHOP_KIND, priceWei(price), {
         ref: order.ref,
         step: (text) => say(text),
         onHash: (hash) => { order.hash = hash; keepOrder(order); },
@@ -198,7 +201,7 @@ export function createShop(game) {
         if (!same(o.account, acct) || (busy && !o.hash)) continue;
         const old = Date.now() - o.at > ORDER_DAYS * 86_400_000;
         if (!o.hash) { if (Date.now() - o.at > 600_000) dropOrder(o); continue; }
-        const ok = await c.paidIn(o.hash, SHOP_KIND, BigInt(o.price) * WEI, o.ref);
+        const ok = await c.paidIn(o.hash, SHOP_KIND, priceWei(o.price), o.ref);
         if (ok === true) deliver(o, o.hash);
         else if (ok === false || old) dropOrder(o);
       }

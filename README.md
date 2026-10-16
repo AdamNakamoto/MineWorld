@@ -83,8 +83,8 @@ The Smithy's shop (**H**, or Garrick the armorer at the Smithy's door; `web/shop
 Crystal pickaxe, the fastest), weapons (up to the Crystal sword and the slow, heavy war hammer) and armor: helmet,
 chestplate, leggings and boots in Padded, Iron, Diamond and Crystal. Armor takes a share of monsters' hits (a full
 Diamond set, 20 points, takes two thirds), shows as a row over the hearts and on your miner for everyone to see; click
-a piece in the inventory to wear it. Prices are in $MINE (from 5 for torches or apples and 8 for padded boots to 3,950
-for the war hammer; the best full kit is 21,025), paid on-chain: **Buy** approves exactly the price for MinePayments and
+a piece in the inventory to wear it. Prices are in $MINE (from 2.5 for torches or apples and 4 for padded boots to 1,975
+for the war hammer; the best full kit is 10,512.5; halved on 2026-10-16), paid on-chain: **Buy** approves exactly the price for MinePayments and
 pays it (the "shop" kind: 75% burned, 25% to the project treasury), and once the receipt shows that payment the items go
 into the inventory. Inventories live in the browser, so the game checks the receipt itself and remembers every payment
 that delivered, so one payment never adds items twice; an order cut short after paying (a reload) is delivered the next
