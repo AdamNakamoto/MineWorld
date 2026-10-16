@@ -126,6 +126,8 @@ export async function connectChain() {
     // CrafterLevels and MinePayments (proxies): DEGEN levels, and the game's shop and tickets.
     levels: dep.contracts.levels && abis.levels ? { address: dep.contracts.levels, abi: withErrors(abis.levels) } : null,
     payments: dep.contracts.payments && abis.payments ? { address: dep.contracts.payments, abi: withErrors(abis.payments) } : null,
+    // MineVault: the mining half of $MINE, released only as players convert.
+    vault: dep.contracts.vault && abis.vault ? { address: dep.contracts.vault, abi: withErrors(abis.vault) } : null,
   };
   const T = dep.contracts.hook ? {
     hook: { address: dep.contracts.hook, abi: withErrors(abis.hook) },
@@ -463,6 +465,8 @@ export async function connectChain() {
     claimable: (total) => read(C.sites, "claimable", [account, total]),
     /// $MINE still in the mining vault (wei): what's left to mine of its 10,500,000.
     vaultBalance: () => read(C.sites, "vaultBalance"),
+    /// $MINE the vault has released to mining sites in all (wei: every conversion so far), or null without the vault.
+    vaultReleased: () => (C.vault ? read(C.vault, "released") : Promise.resolve(null)),
     mintCrafters: (n, price) => send(C.crafters, "mint", [BigInt(n)], price * BigInt(n)),
     /// The I'M DEGEN reveal, done the honest way, at once: with `secret` (the owner), publish it (reveal), then, as soon
     /// as the next block is over, seal() (anyone can), retrying until the seed is set. If a window passed with nobody

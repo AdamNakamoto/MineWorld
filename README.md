@@ -16,7 +16,9 @@ a Cloudflare Worker for the shared world, Foundry contracts reusing Courier's au
 
 ## Layout
 
-- `web/`: the site (no build step; three.js and viem load from esm.sh). Set the hosting root to `web`.
+- `web/`: the site (no build step; three.js and viem load from esm.sh). Set the hosting root to `web`. `web/docs.html` is
+  the players' game guide (https://mineworldcraft.fun/docs), linked from the title screen and the menu with OpenSea and
+  the audit report: keep its numbers in step with the code when rules or prices change.
 - `multiplayer/`: the world server, a Cloudflare Worker with one Durable Object.
 - `contracts/`: Foundry project (`git submodule update --init --recursive`).
 - `dev.sh`: a local chain, the contracts and the site.

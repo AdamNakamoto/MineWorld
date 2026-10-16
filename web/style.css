@@ -56,6 +56,13 @@ kbd { font-family: var(--px); font-size: 11px; padding: 0 4px; border: 2px solid
 .tag b { color: var(--gold); }
 .online-title { font-size: 16px; font-weight: 700; color: var(--good); margin: 0; text-shadow: 2px 2px 0 #111; }
 .sites-title { color: var(--gold); margin-top: -8px; }
+.earned-title { color: #9fd8ff; margin-top: -8px; }
+/* The guide, OpenSea and the audit: under the title's buttons, and in the menu. */
+.title-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 2px; }
+.title-links a { font-family: var(--px); font-size: 14px; color: var(--ink); text-decoration: none; padding: 5px 11px; background: rgba(12, 16, 20, 0.7);
+  border: 2px solid var(--frame); box-shadow: inset 2px 2px 0 rgba(255, 255, 255, 0.08); text-shadow: 1px 1px 0 #000; }
+.title-links a:hover { color: var(--gold); border-color: #3a2f0e; }
+.menu-links { margin: 10px 0 2px; }
 .fine { font-size: 13px; color: var(--muted); margin-top: 18px; }
 
 /* ---------------------------------------------------------------- the ticker: $MINE left to mine today, scrolling */

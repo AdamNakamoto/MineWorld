@@ -979,7 +979,7 @@ let sitesOpen = null; // mining sites open, as the room last said (the title scr
 let countAt = 0; // when the room was last asked (loadCount)
 // The top ticker (drawTicker): everyone's earnings today as the room last said ([units, UTC day]), and the $MINE left in
 // the mining vault (whole $MINE, read from the chain).
-let worldMined = null, vaultLeft = null, tickerShown = null;
+let worldMined = null, vaultLeft = null, siteEarned = null, tickerShown = null; // (siteEarned: $MINE paid out by mining sites, whole)
 async function signIn() {
   if (!net?.online) throw new Error("The world server is offline right now, so earnings can't be counted. Try again soon.");
   if (!chain?.account) await chain?.login();
@@ -989,7 +989,17 @@ async function signIn() {
 connectChain().catch((e) => { console.warn("chain unavailable", e); return null; }).then((c) => {
   chain = c;
   // The ticker's "left in the mining vault": read now and every 10 minutes (it only falls as players convert).
-  const readVault = () => c?.vaultBalance().then((wei) => { vaultLeft = Number(wei / 10n ** 18n); drawTicker(); }).catch(() => {});
+  const readVault = () => {
+    c?.vaultBalance().then((wei) => { vaultLeft = Number(wei / 10n ** 18n); drawTicker(); }).catch(() => {});
+    // ("$MINE earned by mining sites in total": everything the vault has paid out through conversions)
+    c?.vaultReleased().then((wei) => {
+      if (wei === null) return;
+      siteEarned = Number(wei / 10n ** 18n);
+      $("earnedTitle").hidden = false;
+      $("earnedTitle").textContent = `◆ ${siteEarned.toLocaleString("en-US")} $MINE earned by mining sites in total`;
+      drawTicker();
+    }).catch(() => {});
+  };
   readVault();
   setInterval(readVault, 10 * 60_000);
   panel = createPanel({
@@ -1334,6 +1344,7 @@ function drawTicker() {
     ? [`⛏ <b>${n(left / UNIT)}</b> of ${n(WORLD_DAILY_CAP)} $MINE left to mine today`, `${n(mined / UNIT)} mined so far today`]
     : [`⛏ All <b>${n(WORLD_DAILY_CAP)}</b> $MINE for today are mined`];
   items.push(`Resets in <b>${h}h ${m}m</b> (00:00 UTC)`);
+  if (siteEarned !== null) items.push(`<b>${n(siteEarned)}</b> $MINE earned by mining sites in total`);
   if (vaultLeft !== null) items.push(`<b>${n(vaultLeft)}</b> $MINE left in the mining vault`);
   if (sitesOpen !== null) items.push(`${n(sitesOpen)} mining site${sitesOpen === 1 ? "" : "s"} open`);
   const text = items.join(" &nbsp;&nbsp;·&nbsp;&nbsp; ");

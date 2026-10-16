@@ -1,0 +1,942 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MineWorldCraft guide</title>
+  <meta name="description" content="How MineWorldCraft works: playing, mining and earning $MINE, mining sites, I'M DEGEN, the Smithy, the rocket zones, the $MINE token and its contracts.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;600;700;800&family=Pixelify+Sans:wght@500;600&family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b1026; --ink: #f2f4f2; --muted: #c9d3d6; --gold: #f5c832; --good: #8ee07a; --bad: #ff7a6a; --link: #9fd8ff;
+      --card: #18222a; --card-hi: #2c3d48; --card-lo: #0c1216; --frame: #0b1013; --line: #2c3a42;
+      --px: "Pixelify Sans", "Silkscreen", ui-monospace, monospace; --title: "Silkscreen", "Pixelify Sans", ui-monospace, monospace;
+      --ui: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 16px; }
+    body { margin: 0; color: var(--ink); font: 600 17px/1.55 var(--ui); -webkit-font-smoothing: antialiased;
+      background: radial-gradient(ellipse at 50% -10%, #23305e 0, var(--bg) 520px) fixed, var(--bg); }
+    a { color: var(--link); }
+    b, strong { font-weight: 800; }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 28px 16px 64px; }
+    .card { background: var(--card); border: 3px solid var(--frame); box-shadow: inset 3px 3px 0 var(--card-hi), inset -3px -3px 0 var(--card-lo), 0 6px 0 rgba(0, 0, 0, 0.35); }
+    header { text-align: center; padding: 10px 0 6px; }
+    header .badge { width: 112px; height: 112px; image-rendering: pixelated; display: block; margin: 0 auto 10px; }
+    .logo { margin: 0; font: 700 clamp(34px, 8vw, 72px)/0.95 var(--title); letter-spacing: 2px; color: #e8e8e8;
+      text-shadow: 4px 4px 0 #3a3a3a, 7px 7px 0 #141414; display: flex; flex-wrap: wrap; justify-content: center; gap: 0 12px; }
+    .logo span:nth-child(2) { color: var(--gold); text-shadow: 4px 4px 0 #8a6a10, 7px 7px 0 #2a2008; }
+    .tag { margin: 16px 0 0; font: 600 21px/1.3 var(--px); color: var(--ink); }
+    .tag b { color: var(--gold); }
+    .links { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin: 20px 0 4px; }
+    .btn { padding: 8px 15px; font: 600 15px/1.2 var(--px); color: var(--ink); text-decoration: none; background: #34454f;
+      border: 2px solid var(--frame); box-shadow: inset 2px 2px 0 #6f8794, inset -2px -3px 0 #1b252b; text-shadow: 1px 1px 0 #10161a; }
+    .btn:hover { background: #45606e; }
+    .btn.play { background: #c99a1e; color: #fff8dc; box-shadow: inset 2px 2px 0 #ffe27a, inset -2px -3px 0 #7a5a0a; }
+    .btn.play:hover { background: #dcae2c; }
+    nav.toc { margin: 24px 0 8px; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: center; font: 600 15px/1.4 var(--px); }
+    nav.toc a { color: var(--ink); text-decoration: none; border-bottom: 2px solid transparent; }
+    nav.toc a:hover { color: var(--gold); border-bottom-color: var(--gold); }
+    section { margin: 22px 0; padding: 20px 22px 22px; }
+    h2 { margin: 0 0 10px; font: 600 26px/1.15 var(--px); letter-spacing: 0.5px; color: #fff; text-shadow: 2px 2px 0 #000; }
+    h2 small { display: block; margin-top: 6px; font: 600 16px/1.35 var(--ui); letter-spacing: 0; color: var(--muted); text-shadow: none; }
+    h3 { margin: 18px 0 6px; font: 600 18px/1.25 var(--px); color: var(--gold); }
+    p, ul, ol { margin: 8px 0; }
+    ul, ol { padding-left: 24px; }
+    li { margin: 4px 0; }
+    kbd { font: 600 14px/1 var(--px); padding: 2px 6px; border: 2px solid #9fb2bc; background: rgba(0, 0, 0, 0.3); color: #e8f0f2; white-space: nowrap; }
+    .scroll { overflow-x: auto; margin: 10px 0 6px; }
+    table { width: 100%; border-collapse: collapse; font-size: 16px; background: rgba(0, 0, 0, 0.25); border: 2px solid var(--line); }
+    th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { font: 600 14px/1.25 var(--px); color: var(--gold); background: rgba(0, 0, 0, 0.3); }
+    tr:last-child td { border-bottom: 0; }
+    td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .mono { font: 600 14px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+    .note { margin-top: 12px; padding: 10px 14px; background: rgba(245, 200, 50, 0.08); border: 2px dashed #6a5a12; color: var(--ink); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-top: 10px; }
+    .tile { padding: 12px 14px; background: rgba(0, 0, 0, 0.28); border: 2px solid var(--line); }
+    .tile b { font: 600 16px/1.25 var(--px); color: var(--gold); }
+    footer { margin-top: 32px; text-align: center; color: var(--muted); font-size: 15px; }
+    footer p { margin: 4px 0; }
+    .top { position: fixed; right: 14px; bottom: 14px; padding: 6px 10px; font: 600 14px var(--px); }
+    @media (max-width: 560px) {
+      body { font-size: 16px; }
+      section { padding: 16px 14px 18px; }
+      h2 { font-size: 20px; }
+      table { font-size: 15px; }
+      .top { display: none; }
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <img class="badge" src="brand/logo-400.png" alt="" width="112" height="112">
+    <h1 class="logo" aria-label="MineWorldCraft"><span>MINE</span><span>WORLD</span><span>CRAFT</span></h1>
+    <p class="tag">The miner's handbook. Mine, fight, build, earn <b>$MINE</b>.</p>
+    <div class="links">
+      <a class="btn play" href="./">Play</a>
+      <a class="btn" href="https://opensea.io/collection/im-degen" target="_blank" rel="noopener">OpenSea ↗</a>
+      <a class="btn" href="https://explorer.imd.fun/jobs/0792975e-220d-4fe2-a11c-d611efec47bd" target="_blank" rel="noopener">Audit report ↗</a>
+      <a class="btn" href="https://github.com/AdamNakamoto/MineWorld" target="_blank" rel="noopener">Source code ↗</a>
+    </div>
+  </header>
+
+  <nav class="toc card" aria-label="Contents">
+    <a href="#play">Playing</a>
+    <a href="#start">First steps</a>
+    <a href="#earn">Earning</a>
+    <a href="#sites">Mining sites</a>
+    <a href="#degen">I'M DEGEN</a>
+    <a href="#gear">The Smithy</a>
+    <a href="#zones">Rocket &amp; zones</a>
+    <a href="#ko">Knock-outs</a>
+    <a href="#token">$MINE</a>
+    <a href="#safety">Contracts &amp; safety</a>
+  </nav>
+
+  <section class="card" id="welcome">
+<h2>Welcome to MineWorldCraft<small>A shared planet of blocks that you play in your browser</small></h2>
+<p>MineWorldCraft is a block game that runs in your web browser at <a href="https://mineworldcraft.fun" target="_blank" rel="noopener">mineworldcraft.fun ↗</a>. It works on a computer or a phone. There's nothing to install, and playing is free.</p>
+<p>Everyone shares one small, round planet, 512 blocks around. Walk in a straight line and you come back to where you started. You mine, craft tools, build, fight monsters, talk to the villagers in town, and fly a rocket to three more planets: Deepvein, Cinderfall and Red Mesa.</p>
+<p>The game's token is <b>$MINE</b>. It lives on Robinhood Chain, a blockchain network. You only need a crypto wallet to earn $MINE or to spend it (in the Shop, on rocket tickets and on revives).</p>
+
+<h3>Guest or signed in</h3>
+<div class="grid">
+<div class="tile"><b>Guest</b><br>Press <b>Play</b> and you're in. You can mine, build, craft, fight, chat and use voice chat on the home planet. Other players see you as "Guest-" and a number. Guests earn nothing, can't fly the rocket and can't pick a name.</div>
+<div class="tile"><b>Signed in</b><br>Log in with a browser wallet, such as MetaMask, Robinhood Wallet or Rabby. On a phone, open the game in your wallet app's own browser. Then press <b>Sign in to earn</b>: it's one free signature, not a transaction. From then on the world server counts what you earn, and you can pick a name, buy rocket tickets and pay to revive where you fell. (The Shop only needs a logged-in wallet with $MINE in it.)</div>
+</div>
+<div class="note">Your bag lives in this browser: one bag for guests, and one for each wallet you log in with. Items are for playing with. They are never on-chain.</div>
+
+<h3>What earns $MINE</h3>
+<p>Once you're signed in, you earn $MINE for real play. Breaking the planet's own blocks pays: dirt and sand a tiny amount, stone and logs a little more, and ore the most. The rarer the ore, the more it pays. Beating monsters pays too. Blocks that players placed pay nothing when they're broken again, and neither do leaves or plants. Nothing pays for just holding or waiting.</p>
+<p>Everything you earn on Deepvein pays double. Beating Ashgrim, the boss on Cinderfall, shares 150 $MINE among the signed-in players who hit it, by the damage each one did. The world server keeps the count: up to 300 $MINE per wallet per UTC day (wearing an I'M DEGEN can raise that), and 35,000 for all players together.</p>
+
+<h3>Turning earnings into $MINE</h3>
+<p>To get your earnings as $MINE in your wallet, you need a mining site. It costs 0.005 ETH, once per wallet, and it stays with that wallet. When you press <b>Convert to $MINE</b>, your site converts everything you haven't converted yet: 50% of it at level 1, and up to 100% at level 5 once you upgrade. The share your site doesn't convert isn't saved for later. It stays in the mining vault.</p>
+<p>Each wallet can receive up to 1,500 $MINE a day this way, and all players together 35,000. Whatever a day's limits don't cover waits for the next day.</p>
+<p>A ticker across the top of the screen shows how much of today's 35,000 $MINE is left to mine, how much was mined so far today, when the day resets (00:00 UTC), how much $MINE is left in the mining vault (the $MINE set aside for players), and how many mining sites are open. The title screen also shows how many people are mining right now.</p>
+
+<h3>Quick start</h3>
+<ul>
+<li><b>1.</b> Press <b>Play</b> on the title screen.</li>
+<li><b>2.</b> Press <kbd>M</kbd>, or the <b>Mining Site</b> button, to open the Mining Site panel.</li>
+<li><b>3.</b> Press <b>Log in</b> and pick your wallet. The game asks it to switch to Robinhood Chain, and to add the network first if it's missing.</li>
+<li><b>4.</b> Press <b>Sign in to earn</b> and sign the message. It costs nothing.</li>
+<li><b>5.</b> Press <b>Open my mining site</b> (0.005 ETH, once). Your wallet needs that much ETH on Robinhood Chain, plus a little for the network fee. You can earn without a site, but you need one to convert.</li>
+<li><b>6.</b> Walk out of town, or type <b>/wild</b> in chat, and start mining. Beat monsters when night falls.</li>
+<li><b>7.</b> Come back to the panel and press <b>Convert to $MINE</b>.</li>
+</ul>
+<p>The <b>⛏ Mining Site &amp; $MINE</b> button on the title screen opens the same panel before you press Play. New to the game itself? Start with <a href="#start">First steps</a>.</p>
+<p>MineWorldCraft is an original game. It isn't affiliated with Mojang or Microsoft.</p>
+</section>
+
+  <section class="card" id="play">
+<h2>Playing<small>Controls, the screen, chat, commands, names and voice</small></h2>
+<p>On a computer, click the game to grab the mouse, then move the mouse to look around. <kbd>Esc</kbd> lets go of the mouse and opens the menu. On a phone, a stick and three round buttons appear on the screen.</p>
+<div class="scroll"><table>
+<tr><th>To</th><th>Keyboard &amp; mouse</th><th>Phone</th></tr>
+<tr><td>Look around</td><td>Move the mouse</td><td>Drag on the screen, away from the stick and buttons</td></tr>
+<tr><td>Walk</td><td><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> or the arrow keys</td><td>The stick, bottom left</td></tr>
+<tr><td>Jump, or swim up in water</td><td><kbd>Space</kbd></td><td><b>⤒</b> (walking into a wall or a step jumps for you)</td></tr>
+<tr><td>Sprint</td><td>Left <kbd>Ctrl</kbd>, or tap <kbd>W</kbd> twice quickly</td><td>Push the stick all the way</td></tr>
+<tr><td>Sneak (you won't walk off an edge)</td><td><kbd>Shift</kbd></td><td>Not on phones</td></tr>
+<tr><td>Mine, attack, talk to a villager, open a loot chest</td><td>Hold the left mouse button</td><td>Hold <b>⛏</b></td></tr>
+<tr><td>Place a block, or eat</td><td>Right click (hold it to eat)</td><td><b>▣</b> (hold it to eat)</td></tr>
+<tr><td>Pick a hotbar slot</td><td><kbd>1</kbd> to <kbd>9</kbd>, or the mouse wheel</td><td>Tap a slot</td></tr>
+<tr><td>Inventory and crafting</td><td><kbd>E</kbd> or <b>Inventory</b></td><td><b>Inventory</b></td></tr>
+<tr><td>Mining Site panel</td><td><kbd>M</kbd> or <b>Mining Site</b></td><td><b>Mining Site</b></td></tr>
+<tr><td>The Smithy's shop</td><td><kbd>H</kbd>, <b>Shop</b>, or click Garrick at the Smithy's door</td><td><b>Shop</b>, or tap <b>⛏</b> on Garrick</td></tr>
+<tr><td>Chat</td><td><kbd>T</kbd> or <kbd>Enter</kbd>, or <b>Chat</b></td><td><b>Chat</b></td></tr>
+<tr><td>Switch view: first person, behind you, facing you</td><td><kbd>V</kbd> or <b>View</b></td><td><b>View</b></td></tr>
+<tr><td>Voice chat on or off</td><td><kbd>B</kbd> or <b>Voice chat</b></td><td><b>Voice chat</b></td></tr>
+<tr><td>Fly the rocket</td><td><kbd>F</kbd> while standing on its pad, or click the rocket</td><td>Look at the rocket and tap <b>⛏</b></td></tr>
+<tr><td>Open the menu</td><td><kbd>Esc</kbd> or <b>≡</b></td><td><b>≡</b></td></tr>
+<tr><td>Close a panel</td><td><kbd>Esc</kbd> or <b>✕</b></td><td><b>✕</b></td></tr>
+</table></div>
+<div class="note">Careful with <kbd>Ctrl</kbd> + <kbd>W</kbd>: browsers close the tab. If you press it while sprinting with left <kbd>Ctrl</kbd>, the game asks the browser to check with you before the tab closes.</div>
+<p>When you start on a computer, a help line lists the main keys for 25 seconds. The menu lists all the controls and commands too.</p>
+
+<h3>The screen</h3>
+<ul>
+<li><b>Top left:</b> the menu button <b>≡</b> and <b>Voice chat</b>. Below them: the $MINE you earned today (and in all, once you're signed in), the planet you're on and whether players can fight there, and your position as x, y, z. At night, "night" shows after your position.</li>
+<li><b>Top right:</b> how many players are online, and the <b>Mining Site</b>, <b>Inventory</b>, <b>Shop</b>, <b>Chat</b> and <b>View</b> buttons.</li>
+<li><b>Bottom:</b> your hearts (health) and your food bar side by side, your armor above them when you wear some, and the hotbar: the first 9 slots of your bag.</li>
+<li><b>Across the very top:</b> the ticker, with the $MINE left to mine today.</li>
+</ul>
+
+<h3>The menu</h3>
+<p>The menu has <b>Back to the game</b>, <b>Your name</b>, <b>Voice chat</b>, <b>Settings</b>, and the lists of controls and commands. In Settings you'll find <b>View distance</b> (3 to 15; it starts at 10 on a computer and 5 on a phone), <b>Mouse speed</b> (on a phone it sets how fast dragging turns you), <b>Sound effects</b> and <b>View bobbing</b>. This browser remembers your settings.</p>
+
+<h3>Chat</h3>
+<ul>
+<li>Press <kbd>T</kbd> or <kbd>Enter</kbd>, type, and press <kbd>Enter</kbd> to send. <kbd>Esc</kbd> closes the chat box.</li>
+<li>Everyone sees your message, on every planet.</li>
+<li>A message can be up to 140 characters, and you can send one every 2 seconds.</li>
+<li>Any language and emoji are fine. Links and wallet addresses are not allowed.</li>
+<li>Yellow lines come from the game: who joined, left or flew off, and the answers to your commands.</li>
+<li>Click a player's name in chat to mute them. That hides their chat and silences their voice. Click it again to unmute. This browser remembers who you muted.</li>
+</ul>
+
+<h3>Chat commands</h3>
+<p>Type these in the chat box.</p>
+<div class="scroll"><table>
+<tr><th>Command</th><th>On the home planet</th><th>On another planet</th></tr>
+<tr><td><b>/wild</b></td><td>Takes you to a safe random spot on dry ground, well outside town: at least 88 blocks from the town's centre.</td><td>Takes you to a safe spot on that planet, at least 44 blocks from the landing pad (and away from Cinderfall's arena).</td></tr>
+<tr><td><b>/spawn</b></td><td>Takes you back to the town square.</td><td>Takes you back to that planet's landing pad.</td></tr>
+<tr><td><b>/sethome</b></td><td>Saves the spot where you stand as your home.</td><td>Saves the spot and the planet it's on.</td></tr>
+<tr><td><b>/home</b></td><td>Takes you back to your home, if you set it on this planet.</td><td>Works only on the planet where you set your home. Anywhere else, it tells you to take the rocket there first.</td></tr>
+<tr><td><b>/help</b></td><td>Lists the commands.</td><td>The same.</td></tr>
+</table></div>
+<div class="note">You can use /wild once every 30 seconds, on any planet. Commands run in your own game, so other players don't see them. Your home is kept in this browser, one for each wallet and one for guests. After a teleport, earning can pause for up to 10 seconds.</div>
+
+<h3>Your name</h3>
+<p>Guests show as "Guest-" and a number. Signed-in players show as a short form of their wallet address until they pick a name. To pick one, sign in to earn first (in the Mining Site panel). Then open the menu, type your name under <b>Your name</b> and press <b>Save</b>. It shows on your name tag and in chat.</p>
+<ul>
+<li>Use 3 to 15 letters (A to Z), numbers or _. No spaces.</li>
+<li>A name can't start with 0x.</li>
+<li>Names that sound like the game or its staff are reserved, such as admin, mod, official, support, team, system, bot and dev. So is any name that starts with admin, official, moderator, support, staff, mineworld or guest. Underscores don't get around this.</li>
+<li>Rude words are blocked, even when they're spelled with numbers.</li>
+<li>First come, first served, whatever the capital letters. If a name is taken, pick another.</li>
+<li>You can change your name once a day.</li>
+<li>An offensive name can be removed by hand. Its owner then shows as their wallet address again.</li>
+</ul>
+
+<h3>Voice chat</h3>
+<ul>
+<li>Press <kbd>B</kbd>, the <b>Voice chat</b> button, or <b>Turn on voice chat</b> in the menu. Your browser asks to use your microphone.</li>
+<li>Voice chat stays off until you turn it on. While it's on, the button says <b>Voice on</b>.</li>
+<li>You hear, and are heard by, players with voice on within about 32 blocks of you, on the same planet. Voices get quieter with distance and stop past about 40 blocks.</li>
+<li>Sound goes straight between players' browsers. The world server only helps them connect.</li>
+<li>To mute someone, click their name in chat.</li>
+</ul>
+</section>
+
+  <section class="card" id="start">
+<h2>First steps<small>From the town square to your first iron pickaxe</small></h2>
+
+<h3>The town</h3>
+<p>You start in the town square, next to the fountain, with empty hands. The town is protected: nobody can mine or build within 64 blocks of the fountain, and no monsters come within 80 blocks of it. If you try to mine or build in town, a box pops up with two buttons: <b>Go exploring (/wild)</b> and <b>Stay at spawn</b>.</p>
+<p>Places to know: the <b>Mining Sites</b> office just north of the fountain, the <b>Smithy</b>, where Garrick the armorer stands at the door and runs the shop, and the rocket on its launch pad in the north-east of town. There's also a bakery, a library, a trading post, a tavern, a barn, a town hall, a clock tower, a watchtower, houses, a flower garden, a pond and an orchard.</p>
+<p>To leave, follow any of the four main roads past the town gates (52 blocks out) and keep going a little further. Or type <b>/wild</b> in chat to jump to a safe spot outside town.</p>
+
+<h3>Your first tools</h3>
+<ul>
+<li><b>1.</b> Find a tree outside town. Hold the left mouse button on its trunk. A log takes about 3 seconds to break by hand. Leaves sometimes drop a stick (about 1 in 8).</li>
+<li><b>2.</b> Press <kbd>E</kbd>. Under your bag, the <b>Crafting</b> list shows every recipe. The ones you can't make yet are greyed out. Click a recipe to make it.</li>
+<li><b>3.</b> Turn 1 log into 4 planks, then 2 planks into 4 sticks.</li>
+<li><b>4.</b> Make a wooden pickaxe (3 planks and 2 sticks). Make sure it's in your hotbar, the top row of your bag, and pick it with <kbd>1</kbd> to <kbd>9</kbd>.</li>
+<li><b>5.</b> Dig down to stone. Stone breaks into cobblestone. Make a stone pickaxe (3 cobblestone and 2 sticks) and a stone sword (2 cobblestone and 1 stick).</li>
+<li><b>6.</b> Find coal for torches, then iron ore for an iron pickaxe (3 iron and 2 sticks).</li>
+</ul>
+<p>Ore drops its item as soon as you break it, so there's no furnace. Crafting needs no table or grid either: the list is all there is. In your bag, click two slots to swap them. The top row is your hotbar. Your bag holds 36 slots. When it's full, what you break is lost, and so is any crafted item that doesn't fit, so make room first.</p>
+<p>To build, hold a block and right click where you want it. You can place blocks in air, in water or over a plant, but not in town. Blocks you place pay nothing when they're broken again. Glass drops nothing when you break it.</p>
+
+<h3>Crafting list</h3>
+<div class="scroll"><table>
+<tr><th>You make</th><th>From</th></tr>
+<tr><td>4 planks</td><td>1 log, or 1 dark log</td></tr>
+<tr><td>4 sticks</td><td>2 planks</td></tr>
+<tr><td>4 torches</td><td>1 coal + 1 stick</td></tr>
+<tr><td>Wooden pickaxe</td><td>3 planks + 2 sticks</td></tr>
+<tr><td>Stone pickaxe</td><td>3 cobblestone + 2 sticks</td></tr>
+<tr><td>Iron pickaxe</td><td>3 iron + 2 sticks</td></tr>
+<tr><td>Diamond pickaxe</td><td>3 diamonds + 2 sticks</td></tr>
+<tr><td>Wooden sword</td><td>2 planks + 1 stick</td></tr>
+<tr><td>Stone sword</td><td>2 cobblestone + 1 stick</td></tr>
+<tr><td>Iron sword</td><td>2 iron + 1 stick</td></tr>
+<tr><td>Diamond sword</td><td>2 diamonds + 1 stick</td></tr>
+<tr><td>4 stone bricks</td><td>4 cobblestone</td></tr>
+<tr><td>2 glass</td><td>2 sand + 1 coal</td></tr>
+<tr><td>1 sandstone</td><td>4 sand</td></tr>
+<tr><td>2 crystal lamps</td><td>1 $MINE crystal + 1 glass</td></tr>
+<tr><td>4 roof tiles</td><td>2 stone bricks + 2 dirt</td></tr>
+<tr><td>1 mushroom stew</td><td>1 red mushroom + 1 brown mushroom + 1 plank</td></tr>
+</table></div>
+<ul>
+<li><b>Repair:</b> when your bag holds two copies of the same tool, weapon or armor piece and one is worn, a <b>Repair</b> button shows at the top of the list. It combines the two into one with the uses left of both, plus 5% of a new one's uses (never more than a new one).</li>
+<li>A <b>$MINE crystal</b> is an item in your bag, not the token. Breaking the ore is what pays $MINE.</li>
+<li>The crystal pickaxe, the crystal sword and the war hammer have no recipe. They come from the Shop. The top hitter who beats Ashgrim on Cinderfall also has a small chance of a crystal sword.</li>
+</ul>
+
+<h3>Pickaxes</h3>
+<p>Each pickaxe gets the drop from everything the one before it can, and the better ones break blocks faster. Without the right pickaxe, a block takes far longer to break and drops nothing. A sword, or anything else that isn't a pickaxe, breaks blocks as slowly as your bare hand.</p>
+<div class="scroll"><table>
+<tr><th>Pickaxe</th><th class="num">Speed</th><th>Gets the drop from</th><th class="num">Breaks stone in</th><th class="num">Uses</th><th>Where from</th></tr>
+<tr><td>Bare hand</td><td class="num">1</td><td>Dirt, grass, sand, gravel, logs, planks and plants</td><td class="num">7.5 s (no drop)</td><td class="num">—</td><td>—</td></tr>
+<tr><td>Wooden pickaxe</td><td class="num">2</td><td>Also stone, cobblestone, coal ore, sandstone, stone bricks and roof tiles</td><td class="num">about 1.1 s</td><td class="num">59</td><td>Crafting</td></tr>
+<tr><td>Stone pickaxe</td><td class="num">4</td><td>Also iron ore</td><td class="num">about 0.6 s</td><td class="num">131</td><td>Crafting or the Shop</td></tr>
+<tr><td>Iron pickaxe</td><td class="num">6</td><td>Also gold ore, diamond ore and $MINE crystal ore</td><td class="num">about 0.4 s</td><td class="num">250</td><td>Crafting or the Shop</td></tr>
+<tr><td>Diamond pickaxe</td><td class="num">8</td><td>Everything, faster</td><td class="num">about 0.3 s</td><td class="num">1,561</td><td>Crafting or the Shop</td></tr>
+<tr><td>Crystal pickaxe</td><td class="num">10</td><td>Everything, fastest</td><td class="num">about 0.2 s</td><td class="num">2,031</td><td>The Shop only</td></tr>
+</table></div>
+<p>Tools wear out. A pickaxe uses 1 use for each block it breaks (blocks that break instantly cost nothing) and 2 for each hit. A sword uses 1 for each hit and 2 for each block. A bar under the icon shows what's left, and at zero the tool breaks.</p>
+
+<h3>Where the ore is</h3>
+<p>The card at the top left shows your position as three numbers: x, y, z. The middle one, <b>y</b>, is your height. At spawn it reads 256, 59, 263. Sea level is y 48, and unbreakable bedrock lines the bottom of the world at y 0. Under the top few blocks of grass, dirt or sand is stone, and the ore is in the stone. The deeper you dig, the rarer the ore you can find.</p>
+<div class="scroll"><table>
+<tr><th>Ore</th><th class="num">Found below</th><th>How common</th><th>Pickaxe needed</th><th>Drops</th><th class="num">Pays</th></tr>
+<tr><td>Coal ore</td><td class="num">y 110</td><td>Common</td><td>Wooden</td><td>Coal</td><td class="num">0.3</td></tr>
+<tr><td>Iron ore</td><td class="num">y 64</td><td>Fairly common</td><td>Stone</td><td>Iron</td><td class="num">0.8</td></tr>
+<tr><td>Gold ore</td><td class="num">y 32</td><td>Uncommon</td><td>Iron</td><td>Gold</td><td class="num">2</td></tr>
+<tr><td>$MINE crystal ore (glows purple)</td><td class="num">y 24</td><td>The rarest</td><td>Iron</td><td>$MINE crystal</td><td class="num">15</td></tr>
+<tr><td>Diamond ore</td><td class="num">y 16</td><td>Rare</td><td>Iron</td><td>Diamond</td><td class="num">6</td></tr>
+</table></div>
+<div class="note">Pays: $MINE per block for a signed-in player on the home planet, before boosts. Stone and logs pay 0.05 each, and dirt, grass, sand and gravel 0.01. These numbers are for the home planet; the other planets have rock of their own.</div>
+<p>Caves wind through the rock, and big caverns open up below y 40. They're a quick way to find ore, and deep down they're also where monsters come by day. Bring torches and a sword.</p>
+
+<h3>Food and hunger</h3>
+<p>Two sets of icons sit side by side just above your hotbar: hearts on the left for health, and bread on the right for food. Each set has 10 icons, and each icon is worth 2 points, so a full set is 20. You start full.</p>
+<ul>
+<li><b>Healing:</b> while your food is at 18 or more (9 icons), you heal half a heart every 4 seconds. Healing uses up some food.</li>
+<li><b>Starving:</b> at 0 food you lose half a heart every 4 seconds, down to half a heart. Hunger alone never knocks you out.</li>
+<li><b>Sprinting</b> needs at least 7 food (3½ icons). You also can't sprint while sneaking, eating or in water.</li>
+<li>The food icons shake when you're down to 3 icons or fewer.</li>
+</ul>
+<p>Everything you do uses a little food. One food point (half an icon) lasts for about:</p>
+<ul>
+<li>400 blocks of walking, or 40 blocks of sprinting</li>
+<li>80 jumps, or 20 sprint-jumps</li>
+<li>160 blocks broken</li>
+<li>40 swings at monsters</li>
+</ul>
+<p>Healing half a heart costs ¾ of a food point.</p>
+<div class="scroll"><table>
+<tr><th>Food</th><th class="num">Fills</th><th>Where to get it</th></tr>
+<tr><td>Apple</td><td class="num">4 (2 icons)</td><td>Leaves of oak and dark trees sometimes drop one (1 in 20). The Shop sells 5 for 5 $MINE.</td></tr>
+<tr><td>Berries</td><td class="num">2 (1 icon)</td><td>A berry bush gives 1 to 3. Bushes grow in meadows, plains, forests and, most of all, taiga (pine forest).</td></tr>
+<tr><td>Mushroom stew</td><td class="num">8 (4 icons)</td><td>Craft it from 1 red mushroom, 1 brown mushroom and 1 plank. Mushrooms grow in forests and, most of all, dark forests; brown ones in taiga too. The Shop sells one for 8 $MINE.</td></tr>
+</table></div>
+<p>To eat, hold the food and hold right click (on a phone, hold <b>▣</b>) for 1.6 seconds. You walk slower while you eat, and you can't eat when your food bar is full.</p>
+
+<h3>Health and falls</h3>
+<ul>
+<li>Falling more than 3 blocks hurts: half a heart for each block past 3. Landing in water is safe.</li>
+<li>In water you sink slowly. Hold <kbd>Space</kbd> (or <b>⤒</b>) to swim up.</li>
+<li>If your hearts run out, you're knocked out. Everything you carry, armor too, drops in a loot chest where you fell, and anyone on that planet can open it for 5 minutes. On the home planet, press <b>Respawn at spawn</b> (free) or, if you're signed in, <b>Revive here</b> for 420 $MINE to get up where you fell. Either way you're back with full health and food.</li>
+<li>Knocked out on another planet, you go back to the home planet, and your chest stays where you fell.</li>
+</ul>
+
+<h3>Monsters</h3>
+<p>A day lasts 20 minutes, and it's the same time of day for everyone. Night takes up almost 9 minutes of it. Monsters come for you at night, and at any hour once you're underground, below y 44, in a cave or a tunnel. They never come within 80 blocks of the fountain. On the home planet you face at most 3 at a time, a new one at most about every 20 seconds, appearing 10 to 16 blocks away. They chase you when you're within 24 blocks, and they wander off after 4 minutes, or once you're 64 blocks away.</p>
+<div class="scroll"><table>
+<tr><th>Monster</th><th class="num">Health</th><th>Bite</th><th class="num">Hits with a stone sword</th><th>Where and when</th><th class="num">Pays</th></tr>
+<tr><td>Mudling: a squat green blob</td><td class="num">18</td><td>1 heart</td><td class="num">4</td><td>At night, or underground</td><td class="num">0.6</td></tr>
+<tr><td>Cave crawler: a low purple critter with red eyes, the fastest</td><td class="num">14</td><td>1 heart</td><td class="num">3</td><td>At night, or underground</td><td class="num">0.8</td></tr>
+<tr><td>Bone rattler: a walking skeleton</td><td class="num">20</td><td>1½ hearts</td><td class="num">4</td><td>At night, or underground</td><td class="num">1</td></tr>
+<tr><td>Rock golem: a slow stone giant with orange eyes</td><td class="num">50</td><td>3 hearts</td><td class="num">10</td><td>Only underground, below y 30</td><td class="num">2.5</td></tr>
+</table></div>
+<ul>
+<li>Monsters drop no items. If you're signed in, each one you beat pays the $MINE shown (home planet, before boosts).</li>
+<li>Your fist hits for 1 and a pickaxe for 2. Swords hit for 4 (wooden), 5 (stone), 6 (iron) and 7 (diamond). From the Shop, the crystal sword hits for 8 and the war hammer for 9, but the hammer swings slower. You can swing about twice a second.</li>
+<li>Armor from the Shop takes part of every hit, and more armor takes a bigger part: a full Diamond set takes two thirds. Click a piece of armor in your bag to put it on. Armor wears out too.</li>
+<li>Walking is faster than any monster, so on open ground you can get away.</li>
+<li>On Deepvein, monsters come day and night, up to 5 at a time and as often as every 10 seconds, with half again the health and bite.</li>
+</ul>
+
+<h3>Villagers</h3>
+<p>Fifteen villagers live in town on the home planet. They walk the roads from sunrise to sunset and go home at night, except Garrick, who stays at the Smithy's door day and night. Click a villager (on a phone, look at them and tap <b>⛏</b>) to talk. Click again for their next line. They know the game.</p>
+<div class="scroll"><table>
+<tr><th>Villager</th><th>Works at</th><th>Ask them about</th></tr>
+<tr><td>Olwen, the clerk</td><td>Mining Sites</td><td>Opening a mining site, signing in, and turning what you dig into $MINE</td></tr>
+<tr><td>Bram, the baker</td><td>Bakery</td><td>Apples, berries, mushroom stew, and how eating heals you</td></tr>
+<tr><td>Hilda, the smith</td><td>Smithy</td><td>Which pickaxe mines what, and why a sword beats a fist</td></tr>
+<tr><td>Corwin, the trader</td><td>Trading Post</td><td>The trade box in the Mining Site panel ($MINE for ETH and IMD) and its 4% fee</td></tr>
+<tr><td>Mabel, the librarian</td><td>Library</td><td>The round planet, and why the rarest ores sit deep</td></tr>
+<tr><td>Ezra, the innkeeper</td><td>Tavern</td><td>/sethome and /home, voice chat and text chat</td></tr>
+<tr><td>Tamsin, the guard</td><td>The gates</td><td>The protected town, /wild, and when monsters come out</td></tr>
+<tr><td>Juniper, the gardener</td><td>The garden</td><td>Berry bushes, and why flowers and grass tufts don't pay</td></tr>
+<tr><td>Rook, the miner</td><td>The gates</td><td>Which blocks pay more, and why placed blocks pay nothing</td></tr>
+<tr><td>Wren, the DEGEN fan</td><td>The plaza</td><td>The I'M DEGEN look, seeing yourself with <kbd>V</kbd>, and DEGEN boosts</td></tr>
+<tr><td>Odo, the elder</td><td>Town Hall</td><td>Picking a name, the risks on Deepvein and Red Mesa, and loot chests</td></tr>
+<tr><td>Hazel, the fisher</td><td>The pond</td><td>Deep water, and the 20-minute day</td></tr>
+<tr><td>Pip, the kid</td><td>The plaza</td><td>The giant trees of the dark forest, far from town, and monsters at night</td></tr>
+<tr><td>Garrick, the armorer</td><td>The Smithy's door</td><td>Click him to open the shop</td></tr>
+<tr><td>Quill, the mapmaker</td><td>The orchard</td><td>The planet's size, reading your position, and the rocket</td></tr>
+</table></div>
+</section>
+
+  <section class="card" id="earn">
+<h2>Earning $MINE<small>What pays, how much, and the daily limits</small></h2>
+<p>You earn $MINE by playing. You break natural blocks, defeat monsters and help beat Cinderfall's boss, and the world server counts what you earn on a ledger for your wallet. To turn those earnings into $MINE tokens, you need a <a href="#sites">mining site</a>.</p>
+
+<h3>Sign in first</h3>
+<p>Guests can play, but guests earn nothing. To start earning:</p>
+<ul>
+<li>Press <kbd>M</kbd> (or the <b>Mining Site</b> button on screen) to open the Mining Site panel. On the title screen, press <b>⛏ Mining Site &amp; $MINE</b> instead.</li>
+<li>Press <b>Log in</b> and connect your wallet. The game switches your wallet to Robinhood Chain, and adds the chain first if your wallet doesn't have it.</li>
+<li>Press <b>Sign in to earn</b> and sign the message. It's one free signature: it sends no transaction and costs no gas.</li>
+</ul>
+<p>From then on, the world server counts your earnings, and your total for today shows on screen. A wallet earns in one place at a time: if you sign in somewhere else, your earnings count there instead. Being knocked out never costs you earnings. You drop what you carry, but the ledger keeps everything it has counted.</p>
+
+<h3>Blocks</h3>
+<p>Only natural blocks pay. These are the blocks the world was made with. A block that someone placed pays nothing when it's broken again. Leaves and plants (tall grass, flowers, ferns, mushrooms, berry bushes) pay nothing.</p>
+<div class="scroll"><table>
+<tr><th>Block</th><th class="num">$MINE each</th></tr>
+<tr><td>$MINE crystal ore</td><td class="num">15</td></tr>
+<tr><td>Diamond ore</td><td class="num">6</td></tr>
+<tr><td>Gold ore</td><td class="num">2</td></tr>
+<tr><td>Iron ore</td><td class="num">0.8</td></tr>
+<tr><td>Coal ore</td><td class="num">0.3</td></tr>
+<tr><td>Ember rock</td><td class="num">0.1</td></tr>
+<tr><td>Stone, Sandstone, Log, Dark log</td><td class="num">0.05</td></tr>
+<tr><td>Basalt, Red clay, Pale clay, Deep rock</td><td class="num">0.05</td></tr>
+<tr><td>Grass, Dirt, Sand, Gravel, Snowy grass, Cactus</td><td class="num">0.01</td></tr>
+<tr><td>Ash, Red sand</td><td class="num">0.01</td></tr>
+</table></div>
+<p>What you mine with doesn't change the pay. A better pickaxe breaks blocks faster (and some blocks only drop an item with the right pickaxe), but the $MINE is the same.</p>
+<p>Ash, Basalt and Ember rock come from Cinderfall. Red sand, Red clay and Pale clay come from Red Mesa. Deep rock comes from Deepvein. The Mining Site panel's <b>What earns $MINE</b> box shows the same list in the game.</p>
+
+<h3>Monsters</h3>
+<div class="scroll"><table>
+<tr><th>Monster</th><th>When it comes</th><th class="num">$MINE each</th></tr>
+<tr><td>Mudling</td><td>At night, or underground at any time</td><td class="num">0.6</td></tr>
+<tr><td>Cave crawler</td><td>At night, or underground at any time</td><td class="num">0.8</td></tr>
+<tr><td>Bone rattler</td><td>At night, or underground at any time</td><td class="num">1</td></tr>
+<tr><td>Rock golem</td><td>Deep underground only</td><td class="num">2.5</td></tr>
+</table></div>
+<p>In Deepvein, monsters come day and night, and there are more of them and they're tougher. No monsters wander near the town or a zone's landing pad.</p>
+<p><b>Ashgrim, the Cinder Colossus</b>, Cinderfall's boss, pays a pool of 150 $MINE when it's beaten. The signed-in players who hit it share the pool by the damage each one did. Each share counts toward that player's daily cap like any other earning. Everyone who did at least 5% of the damage also gets some loot. Ashgrim comes back 10 minutes after it's beaten.</p>
+
+<h3>Deepvein pays 2x</h3>
+<p>In Deepvein, everything you earn pays double, blocks and monsters alike. Your daily cap stays the same there, so you reach it twice as fast. Deepvein grows back every Monday at 00:00 UTC, so its blocks are natural again and pay again. Cinderfall and Red Mesa pay the normal rates.</p>
+<p>A trip out to Deepvein needs a 2,100 $MINE rocket ticket. A ticket is good for one trip out, with no time limit, and the way home is always free.</p>
+
+<h3>Daily caps</h3>
+<div class="scroll"><table>
+<tr><th>Who</th><th class="num">Most earned a day</th></tr>
+<tr><td>Your wallet, before boosts</td><td class="num">300 $MINE</td></tr>
+<tr><td>Everyone together, boosts or not</td><td class="num">35,000 $MINE</td></tr>
+</table></div>
+<p>Both caps reset at 00:00 UTC. Once a cap is reached, nothing pays until the reset (blocks, monsters and boss shares alike), and nothing is saved up for later. The game tells you when you reach your own cap, and when everyone's 35,000 is used up. The ticker at the top of the screen shows how much of today's 35,000 is left to mine.</p>
+<p>These caps are on what you earn in the world. Converting your earnings to $MINE has its own daily limits (see <a href="#sites">Mining sites</a>).</p>
+
+<h3>Boosts raise your cap</h3>
+<p>The I'M DEGEN you wear boosts your mining while you play. To wear one, tap it under <b>I'M DEGEN</b> in the Mining Site panel. Its rarity and its level add up:</p>
+<ul>
+<li><b>Daily cap:</b> from +10% (a Common at level 1) to +150% (a Legendary at level 5). That's 330 to 750 $MINE a day.</li>
+<li><b>$MINE:</b> every block, monster and boss share pays from +5% to +70% more.</li>
+<li><b>Speed:</b> blocks break from +5% to +70% faster.</li>
+</ul>
+<p>Boosts count only while you're signed in and wearing the DEGEN, and the world server checks on chain that it's yours. Nothing pays for just holding an NFT. Across all slots, boosts top out at +150% speed, +150% $MINE and +300% daily cap. For now only the DEGEN slot is live; the other slots (Skin, Companion, Aura, Vehicle) show <b>Coming soon</b>. Everyone's 35,000 a day holds, whatever anyone's boost.</p>
+
+<h3>The world server checks every earning</h3>
+<div class="grid">
+<div class="tile"><b>Real blocks</b><br>The server builds the same world from the same seed, so it knows what every block was. It pays only for a natural block that is really there and has an open side.</div>
+<div class="tile"><b>Reach</b><br>The block must be within reach of where the server last saw you, and you can't be standing inside a solid block.</div>
+<div class="tile"><b>Breaking speed</b><br>No block can break faster than the best pickaxe allows. Your speed boost is counted in.</div>
+<div class="tile"><b>Movement</b><br>If you move faster than anyone can, you earn nothing for 10 seconds. The same 10-second pause follows connecting, signing in, a jump like <b>/wild</b>, and a rocket flight.</div>
+<div class="tile"><b>Monsters</b><br>The server spawns every monster. Hits can't come faster than a sword swings, or harder than the best weapon hits.</div>
+<div class="tile"><b>Protected places</b><br>Nobody can break or place blocks in the town (64 blocks round the fountain), within 20 blocks of a zone's landing pad, or in Cinderfall's arena and on the path to it. Open chat (<kbd>T</kbd> or <kbd>Enter</kbd>) and type <b>/wild</b> for a safe spot far from spawn (in a zone, far from its pad). You can use it every 30 seconds.</div>
+</div>
+</section>
+
+  <section class="card" id="sites">
+<h2>Mining sites<small>Turn your earnings into $MINE</small></h2>
+<p>Your earnings live on the world server's ledger. They become $MINE tokens only when you convert them at your own mining site. You can play and earn without a site, but you need one to convert. The ledger keeps your lifetime total, so earnings from before you open a site convert later too.</p>
+
+<h3>Open your site</h3>
+<ul>
+<li>Open the Mining Site panel (<kbd>M</kbd>) and press <b>Log in</b>.</li>
+<li>Press <b>Open my mining site</b>. It costs 0.005 ETH, once, plus a little gas. The ETH goes straight to the project treasury.</li>
+<li>Each wallet can open one site. It's yours for good, and it can't be moved to another wallet.</li>
+<li>A new site is level 1, so it converts 50% of what you earn.</li>
+</ul>
+
+<h3>Convert to $MINE</h3>
+<p>Press <b>Convert to $MINE</b> in the <b>Your earnings</b> box. You need to be signed in to earn (see <a href="#earn">Earning $MINE</a>) and have earnings you haven't converted yet. The world server signs a voucher for your lifetime earnings, and your wallet sends it to the MiningSites contract (one transaction, gas only). The contract converts everything you haven't converted yet, at your site's rate at that moment. Then the mining vault mints the $MINE straight to your wallet. Before you press the button, the panel shows what <b>You'll receive now</b>.</p>
+<div class="note">The part your rate doesn't convert is never minted. At level 1, converting 1,000 earned $MINE pays you 500 $MINE. The other 500 stays in the vault for good: you can't claim it later, even after an upgrade.</div>
+
+<h3>Levels</h3>
+<div class="scroll"><table>
+<tr><th class="num">Level</th><th class="num">Converts</th><th class="num">Cost to reach it</th><th class="num">1,000 earned pays</th></tr>
+<tr><td class="num">1</td><td class="num">50%</td><td class="num">0.005 ETH (opening the site)</td><td class="num">500 $MINE</td></tr>
+<tr><td class="num">2</td><td class="num">60%</td><td class="num">4,620 $MINE</td><td class="num">600 $MINE</td></tr>
+<tr><td class="num">3</td><td class="num">70%</td><td class="num">18,942 $MINE</td><td class="num">700 $MINE</td></tr>
+<tr><td class="num">4</td><td class="num">85%</td><td class="num">77,662 $MINE</td><td class="num">850 $MINE</td></tr>
+<tr><td class="num">5</td><td class="num">100%</td><td class="num">318,415 $MINE</td><td class="num">1,000 $MINE</td></tr>
+</table></div>
+<p>All four upgrades together cost 419,639 $MINE. To upgrade, press <b>Upgrade to level N</b> in the <b>Mining site</b> box. Your wallet usually asks you twice: first to approve exactly the cost, then to pay it. (If you already approved exactly that amount, it skips the first step.) 75% of the cost is burned for good, and 25% goes to the project treasury.</p>
+<p>Each upgrade sends the cost and the rate the panel showed you. If the price went up or the rate went down in the meantime, the upgrade fails instead of charging you more.</p>
+
+<h3>Upgrades count for earnings not converted yet</h3>
+<p>A conversion uses your site's rate at the moment you convert, on everything you haven't converted yet. So after an upgrade, your next conversion pays the new rate on your whole unconverted balance, including earnings from before the upgrade. The panel's <b>Earned, not converted yet</b> line shows that balance.</p>
+
+<h3>Daily limits on converting</h3>
+<div class="scroll"><table>
+<tr><th>Who</th><th class="num">Most $MINE received a day</th></tr>
+<tr><td>Your wallet</td><td class="num">1,500</td></tr>
+<tr><td>Everyone together</td><td class="num">35,000</td></tr>
+</table></div>
+<p>Both limits reset at 00:00 UTC. 35,000 is also the most the mining vault can mint in a day. If a limit holds a conversion back, you get what fits. Only the earnings that payment covers count as converted, and the rest waits for a later day. The panel shows <b>Your conversions today</b> and <b>Everyone's conversions today</b>.</p>
+<p>The owner can pause converting (for example, if the server's signing key were ever exposed). While it's paused, your earnings stay on the ledger, and sites can still be opened and upgraded.</p>
+
+<h3>The trade box</h3>
+<p>The <b>Trade $MINE</b> box at the bottom of the Mining Site panel buys and sells $MINE:</p>
+<ul>
+<li>Choose <b>Buy</b> or <b>Sell</b>, then <b>ETH</b> or <b>IMD</b>: what you pay with when you buy, or what you receive when you sell.</li>
+<li>Enter an amount, or tap <b>Balance</b> to use all of it. When you buy with ETH, it keeps 0.0005 ETH back for gas.</li>
+<li>Pick a slippage: <b>0.5%</b>, <b>1%</b> (the default) or <b>3%</b>. That's how far the price may move against you before the trade stops. <b>At least</b> shows the least you'll get.</li>
+<li>Check <b>You get</b> and <b>Price impact</b>, then press <b>Buy $MINE</b> or <b>Sell $MINE</b>.</li>
+</ul>
+<p>Quotes already include the 4% trading fee. A trade with ETH also passes through the IMD/ETH pool, which takes its own 1% fee, and quotes include that too. Buying with IMD may first ask you to approve the IMD. Selling may ask you to approve the $MINE, or to sign a permit (a free signature) instead. The pool started with $MINE only, so a sell fills only from IMD that buyers have put in; if there isn't enough, the box says so.</p>
+<div class="note">Every on-chain step is a transaction on Robinhood Chain: opening a site, converting, upgrading, DEGEN levels, trading, the shop, tickets and revives. Keep a little ETH on Robinhood Chain to pay for gas. Signing in to earn is free.</div>
+</section>
+
+  <section class="card" id="degen">
+<h2>I'M DEGEN<small>3,333 on-chain frog skins that you wear as your miner</small></h2>
+<p>I'M DEGEN is the game's NFT collection: 3,333 frogs. Each one is a full 64x64 Minecraft-style skin, outer layer included (hat, jacket, sleeves and trousers). The contract paints every skin and draws its picture from it on-chain, so no image server is needed. The DEGEN you wear is your miner in the world, the same skin pixel for pixel. It also boosts your mining.</p>
+<div class="grid">
+<div class="tile"><b>Supply</b><br>3,333. All of them are minted and the sale is closed.</div>
+<div class="tile"><b>No two alike</b><br>Every DEGEN has its own mix of face (eyes, mouth, cheeks) and top.</div>
+<div class="tile"><b>Where to get one</b><br><a href="https://opensea.io/collection/im-degen" target="_blank" rel="noopener">OpenSea ↗</a></div>
+<div class="tile"><b>Royalty</b><br>5% creator royalty on resales, paid to the project treasury.</div>
+</div>
+
+<h3>Traits</h3>
+<ul>
+<li><b>Background</b>: 10 colours, from Sky to Night.</li>
+<li><b>Skin</b>: 9. Leaf, Lime, Moss, Mint and Forest; Ice, Purple and Stone (Rare); Gold (Legendary).</li>
+<li><b>Eyes</b> (6), <b>Mouth</b> (5) and <b>Cheeks</b> (Blush or None).</li>
+<li><b>Top</b>: 58. Hoodies, tees, jackets, tracksuits, suits, overalls, miner's vests, sweaters and flannels; Royal Robes, Space Suits and Knight Armour Iron (Rare); Knight Armour Gold (Legendary).</li>
+<li><b>Bottoms</b> (12) and <b>Shoes</b> (8). These traits are left out when the top brings its own, like a suit's trousers or a space suit's boots.</li>
+<li><b>Headwear</b>: 22 kinds, or none. Caps, beanies, hard hats, headphones, goggles, a straw hat or a hoodie's hood; Wizard Hat and Viking Helmet (Rare); Crown Gold and Crown Jewelled (Legendary).</li>
+<li><b>Accessory</b>: 9 kinds, or none. A gold chain, glasses, shades, scarves, backpacks, wristbands or a tool belt.</li>
+<li><b>Rarity</b> and <b>Level</b> also show as traits on marketplaces.</li>
+</ul>
+
+<h3>Rarity</h3>
+<p>Rarity follows what you can see. A DEGEN gets the highest rarity among its traits.</p>
+<div class="scroll"><table>
+<tr><th>Rarity</th><th class="num">How many</th><th>What makes it</th></tr>
+<tr><td>Legendary</td><td class="num">191 (5.7%)</td><td>A Gold skin, a crown (Crown Gold or Crown Jewelled) or Knight Armour Gold</td></tr>
+<tr><td>Rare</td><td class="num">830 (24.9%)</td><td>An Ice, Purple or Stone skin, a Royal Robe, a Space Suit, Knight Armour Iron, a Wizard Hat or a Viking Helmet</td></tr>
+<tr><td>Common</td><td class="num">2,312 (69.4%)</td><td>Everything else</td></tr>
+</table></div>
+
+<h3>How to wear one</h3>
+<ul>
+<li>Keep the DEGEN in the wallet you play with.</li>
+<li>Press <kbd>M</kbd> (or the <b>Mining Site</b> button) to open the Mining Site panel. Press <b>Log in</b>, then <b>Sign in to earn</b> (one free signature).</li>
+<li>In the <b>I'M DEGEN</b> box, under <b>Yours</b>, tap the DEGEN you want to wear. Tap <b>Rookie</b> to take it off again.</li>
+<li>The world server checks on-chain that the DEGEN is in the wallet you signed in with. After that, other players see it and your boost starts. The <b>Boosts</b> box shows what you get.</li>
+</ul>
+<p>Before you sign in, only you see the DEGEN on your miner, and it gives no boost. The game remembers which one you wear and puts it back on when you sign in again.</p>
+<p>You wear one DEGEN at a time. While you earn, the world server checks your wallet again every 10 minutes. A DEGEN that has left your wallet stops boosting you, and other players stop seeing it.</p>
+
+<h3>Boosts</h3>
+<p>A worn DEGEN gives you three boosts. Its rarity sets the base, and each level adds more.</p>
+<ul>
+<li><b>Speed</b>: you break blocks faster.</li>
+<li><b>$MINE</b>: every block, monster and boss share pays more.</li>
+<li><b>Daily cap</b>: you can earn more than the normal 300 $MINE per UTC day.</li>
+</ul>
+<p>Each cell shows speed / $MINE / daily cap, in percent.</p>
+<div class="scroll"><table>
+<tr><th>Rarity</th><th class="num">Level 1</th><th class="num">Level 2</th><th class="num">Level 3</th><th class="num">Level 4</th><th class="num">Level 5</th></tr>
+<tr><td>Common</td><td class="num">+5 / +5 / +10</td><td class="num">+10 / +10 / +20</td><td class="num">+20 / +20 / +40</td><td class="num">+35 / +35 / +70</td><td class="num">+55 / +55 / +110</td></tr>
+<tr><td>Rare</td><td class="num">+10 / +10 / +25</td><td class="num">+15 / +15 / +35</td><td class="num">+25 / +25 / +55</td><td class="num">+40 / +40 / +85</td><td class="num">+60 / +60 / +125</td></tr>
+<tr><td>Legendary</td><td class="num">+20 / +20 / +50</td><td class="num">+25 / +25 / +60</td><td class="num">+35 / +35 / +80</td><td class="num">+50 / +50 / +110</td><td class="num">+70 / +70 / +150</td></tr>
+</table></div>
+<p>Your daily cap in $MINE with each DEGEN (300 without one):</p>
+<div class="scroll"><table>
+<tr><th>Rarity</th><th class="num">Level 1</th><th class="num">Level 2</th><th class="num">Level 3</th><th class="num">Level 4</th><th class="num">Level 5</th></tr>
+<tr><td>Common</td><td class="num">330</td><td class="num">360</td><td class="num">420</td><td class="num">510</td><td class="num">630</td></tr>
+<tr><td>Rare</td><td class="num">375</td><td class="num">405</td><td class="num">465</td><td class="num">555</td><td class="num">675</td></tr>
+<tr><td>Legendary</td><td class="num">450</td><td class="num">480</td><td class="num">540</td><td class="num">630</td><td class="num">750</td></tr>
+</table></div>
+<div class="note">Boosts only add to what you do. Holding a DEGEN earns nothing by itself. Guests earn nothing, so they get no boost. The limit of 35,000 $MINE a day for all players together still holds.</div>
+<p>Boosts raise what the game counts as your earnings. To get $MINE in your wallet, you still convert those earnings in the Mining Site panel, at your mining site's rate.</p>
+
+<h3>Levels</h3>
+<p>Every DEGEN starts at level 1. Its holder can raise it one level at a time, up to level 5. Press <b>Level up</b> in the <b>Levels</b> list of the Mining Site panel. Your wallet asks you to approve exactly the cost, then to pay. 75% of each payment is burned for good, and 25% goes to the project treasury. If it's the DEGEN you wear, your boost updates a moment later.</p>
+<div class="scroll"><table>
+<tr><th>Level up to</th><th class="num">Cost ($MINE)</th><th class="num">Total from level 1</th></tr>
+<tr><td>Level 2</td><td class="num">2,310</td><td class="num">2,310</td></tr>
+<tr><td>Level 3</td><td class="num">9,471</td><td class="num">11,781</td></tr>
+<tr><td>Level 4</td><td class="num">38,831</td><td class="num">50,612</td></tr>
+<tr><td>Level 5</td><td class="num">159,207</td><td class="num">209,819</td></tr>
+</table></div>
+<p>A level belongs to the NFT, not to you. When a DEGEN is sold or given away, its level goes with it. Marketplaces show it as the "Level" trait.</p>
+
+<h3>Buying and selling</h3>
+<p>The mint is over, so you get a DEGEN from another player now, for example on <a href="https://opensea.io/collection/im-degen" target="_blank" rel="noopener">OpenSea ↗</a>. Resales pay a 5% creator royalty to the project treasury. The contract sends every transfer through OpenSea's creator-fee registry: marketplaces it hasn't approved can't move a DEGEN, and that is how the royalty is enforced. You can still send a DEGEN yourself from one of your wallets to another.</p>
+
+<h3>The reveal</h3>
+<p>DEGENs were minted sealed, so nobody could see a look while minting. After the sale closed, the team published a secret it had locked into the contract before the mint. Each look comes from that secret mixed with the hash of a chain block that did not exist yet. Anyone could lock the result in, and every look appeared for everyone at the same moment.</p>
+<p>If nobody locks the result in during its short window (256 blocks, about 26 seconds), only the contract owner can move on to a new block, in public, at most three times. Each move picks a block that doesn't exist yet, so nobody knows the new looks in advance.</p>
+<p>At launch all three moves were used: the lock-in transactions sent from the team's wallet didn't go through in time, so each window passed. The fourth window was locked in by a separate wallet 1.4 seconds after it opened. The contract shows it (<span class="mono">entropyMoves</span> is 3).</p>
+
+<h3>Other boost slots</h3>
+<p>The <b>Boosts</b> box also lists four other slots: Skin, Companion, Aura and Vehicle. They say <b>Coming soon</b> and do nothing today. The game's rule is one NFT per slot, and all slots together add up to at most +150% speed, +150% $MINE and +300% daily cap.</p>
+
+<h3>Contracts</h3>
+<ul>
+<li>I'M DEGEN: <span class="mono">0x263b3c4A9f711E0e28201d5897dA4CDea3831D15</span> <a href="https://robinhoodchain.blockscout.com/address/0x263b3c4A9f711E0e28201d5897dA4CDea3831D15" target="_blank" rel="noopener">Blockscout ↗</a></li>
+<li>CrafterArt (draws the skins): <span class="mono">0xA34749e822fF36E2e9aE6A6A158F468cA1E3AED3</span> <a href="https://robinhoodchain.blockscout.com/address/0xA34749e822fF36E2e9aE6A6A158F468cA1E3AED3" target="_blank" rel="noopener">Blockscout ↗</a></li>
+<li>CrafterLevels (levels): <span class="mono">0xd7781dcBC1C4D80A4309F39D8350f8105C218Dd6</span> <a href="https://robinhoodchain.blockscout.com/address/0xd7781dcBC1C4D80A4309F39D8350f8105C218Dd6" target="_blank" rel="noopener">Blockscout ↗</a></li>
+</ul>
+</section>
+
+  <section class="card" id="gear">
+<h2>The Smithy: tools, weapons and armor<small>Gear for mining and fighting, paid in $MINE</small></h2>
+<p>Press <kbd>H</kbd> (or the <b>Shop</b> button) to open the Smithy's shop from anywhere. In town you can also click Garrick, the armorer who stands at the Smithy's door. The shop has four tabs: <b>Tools</b>, <b>Weapons</b>, <b>Armor</b> and <b>Supplies</b>.</p>
+
+<h3>How buying works</h3>
+<ul>
+<li>Log in with your wallet first (Mining Site panel, <kbd>M</kbd>).</li>
+<li>Press <b>Buy</b>. Your wallet asks you to approve exactly the price, then to pay.</li>
+<li>75% of every purchase is burned for good. The other 25% goes to the project treasury.</li>
+<li>Once the payment shows on-chain, the item goes into your inventory. Armor goes straight on if you have nothing in that slot.</li>
+<li>Make room first: the shop won't take a payment for an item that doesn't fit.</li>
+<li>If the page reloads after you pay, the shop delivers your order the next time you open it with the same wallet logged in. If it no longer fits then, it waits in the shop: make room and press <b>Collect</b>.</li>
+<li>Short of $MINE? Buy some in the trade box of the Mining Site panel.</li>
+</ul>
+
+<h3>Tools</h3>
+<div class="scroll"><table>
+<tr><th>Item</th><th class="num">Price ($MINE)</th><th>What it does</th></tr>
+<tr><td>Stone pickaxe</td><td class="num">12</td><td>Mining speed 4. Mines stone, coal and iron.</td></tr>
+<tr><td>Iron pickaxe</td><td class="num">70</td><td>Mining speed 6. Mines all ores, including gold, diamonds and $MINE crystal ore.</td></tr>
+<tr><td>Diamond pickaxe</td><td class="num">450</td><td>Mining speed 8. Mines all ores.</td></tr>
+<tr><td>Crystal pickaxe</td><td class="num">3,150</td><td>Mining speed 10, the fastest. Mines all ores.</td></tr>
+<tr><td>16 torches</td><td class="num">5</td><td>Light for caves.</td></tr>
+</table></div>
+<p>A tool only works in your hand: pick it on the hotbar with <kbd>1</kbd>–<kbd>9</kbd> or the mouse wheel. A pickaxe that is too weak for a block breaks it slowly, and no item drops. A natural block still pays its $MINE. Stone and coal need at least a wooden pickaxe, iron ore needs stone, and gold, diamond and $MINE crystal ore need iron or better.</p>
+
+<h3>Weapons</h3>
+<div class="scroll"><table>
+<tr><th>Item</th><th class="num">Price ($MINE)</th><th class="num">Damage per hit</th></tr>
+<tr><td>Stone sword</td><td class="num">10</td><td class="num">5</td></tr>
+<tr><td>Iron sword</td><td class="num">60</td><td class="num">6</td></tr>
+<tr><td>Diamond sword</td><td class="num">375</td><td class="num">7</td></tr>
+<tr><td>Crystal sword</td><td class="num">2,625</td><td class="num">8</td></tr>
+<tr><td>War hammer</td><td class="num">3,950</td><td class="num">9 (slow swing)</td></tr>
+</table></div>
+<p>Without a weapon, your fist hits for 1 and a pickaxe for 2.</p>
+
+<h3>Armor</h3>
+<p>Four sets, each with a helmet, chestplate, leggings and boots. Prices in $MINE:</p>
+<div class="scroll"><table>
+<tr><th>Set</th><th class="num">Helmet</th><th class="num">Chestplate</th><th class="num">Leggings</th><th class="num">Boots</th><th class="num">Full set</th></tr>
+<tr><td>Padded</td><td class="num">8</td><td class="num">15</td><td class="num">12</td><td class="num">8</td><td class="num">43</td></tr>
+<tr><td>Iron</td><td class="num">53</td><td class="num">105</td><td class="num">88</td><td class="num">53</td><td class="num">299</td></tr>
+<tr><td>Diamond</td><td class="num">300</td><td class="num">600</td><td class="num">480</td><td class="num">300</td><td class="num">1,680</td></tr>
+<tr><td>Crystal</td><td class="num">2,100</td><td class="num">3,950</td><td class="num">3,150</td><td class="num">2,100</td><td class="num">11,300</td></tr>
+</table></div>
+
+<h3>Supplies</h3>
+<div class="scroll"><table>
+<tr><th>Item</th><th class="num">Price ($MINE)</th><th>What it does</th></tr>
+<tr><td>5 apples</td><td class="num">5</td><td>Each one gives back 4 hunger points (out of 20).</td></tr>
+<tr><td>Mushroom stew</td><td class="num">8</td><td>Gives back 8 hunger points.</td></tr>
+</table></div>
+<p>To eat, hold the right mouse button with the food in your hand. You can't eat while your food bar is full. You can also craft mushroom stew from a red mushroom, a brown mushroom and a plank.</p>
+<p>The best full kit (Crystal pickaxe, Crystal sword, War hammer and all four Crystal armor pieces) costs 21,025 $MINE.</p>
+
+<h3>Armor protection</h3>
+<p>Each piece adds armor points. Your armor takes a share of every hit from monsters, the boss and other players: your points ÷ (your points + 10). It does not help against falls or the void.</p>
+<div class="scroll"><table>
+<tr><th>Set</th><th class="num">Helmet</th><th class="num">Chestplate</th><th class="num">Leggings</th><th class="num">Boots</th><th class="num">Full set</th><th class="num">Share of each hit</th></tr>
+<tr><td>Padded</td><td class="num">1</td><td class="num">2</td><td class="num">2</td><td class="num">1</td><td class="num">6</td><td class="num">38%</td></tr>
+<tr><td>Iron</td><td class="num">2</td><td class="num">6</td><td class="num">5</td><td class="num">2</td><td class="num">15</td><td class="num">60%</td></tr>
+<tr><td>Diamond</td><td class="num">3</td><td class="num">8</td><td class="num">6</td><td class="num">3</td><td class="num">20</td><td class="num">67%</td></tr>
+<tr><td>Crystal</td><td class="num">4</td><td class="num">9</td><td class="num">7</td><td class="num">4</td><td class="num">24</td><td class="num">71%</td></tr>
+</table></div>
+<p>You can mix pieces from different sets, and their points add up. Press <kbd>E</kbd> to open your inventory, then click a piece to wear it. Click a worn piece to take it off (you need a free slot in your bag). The bottom of the shop shows your total.</p>
+
+<h3>Durability</h3>
+<p>Tools, weapons and armor wear out. Point at an item in your inventory to see its uses left. Once an item has been used, a bar under its icon shows how much is left. When the uses run out, the item breaks and is gone.</p>
+<ul>
+<li>A pickaxe wears 1 for each block it breaks and 2 for each hit. Plants that break at a touch, like flowers and grass tufts, cost nothing.</li>
+<li>A sword or the War hammer wears 1 for each hit and 2 for each block.</li>
+<li>When you take a hit, each armor piece you wear loses a quarter of the hit's damage, rounded down (at least 1).</li>
+</ul>
+<div class="scroll"><table>
+<tr><th>Tier</th><th class="num">Pickaxe uses</th><th class="num">Sword uses</th></tr>
+<tr><td>Wooden (crafted only)</td><td class="num">59</td><td class="num">59</td></tr>
+<tr><td>Stone</td><td class="num">131</td><td class="num">131</td></tr>
+<tr><td>Iron</td><td class="num">250</td><td class="num">250</td></tr>
+<tr><td>Diamond</td><td class="num">1,561</td><td class="num">1,561</td></tr>
+<tr><td>Crystal</td><td class="num">2,031</td><td class="num">2,031</td></tr>
+<tr><td>War hammer</td><td class="num">–</td><td class="num">1,200</td></tr>
+</table></div>
+<p>Armor uses:</p>
+<div class="scroll"><table>
+<tr><th>Armor set</th><th class="num">Helmet</th><th class="num">Chestplate</th><th class="num">Leggings</th><th class="num">Boots</th></tr>
+<tr><td>Padded</td><td class="num">55</td><td class="num">80</td><td class="num">75</td><td class="num">65</td></tr>
+<tr><td>Iron</td><td class="num">165</td><td class="num">240</td><td class="num">225</td><td class="num">195</td></tr>
+<tr><td>Diamond</td><td class="num">363</td><td class="num">528</td><td class="num">495</td><td class="num">429</td></tr>
+<tr><td>Crystal</td><td class="num">407</td><td class="num">592</td><td class="num">555</td><td class="num">481</td></tr>
+</table></div>
+
+<h3>Combining two worn items</h3>
+<p>Have two of the same item, with at least one of them worn? Open your inventory (<kbd>E</kbd>). At the top of the <b>Crafting</b> list, a <b>Repair</b> button for that item combines the two most worn copies into one. The new item gets the uses left of both, plus 5% of a new one's, but never more than a new one has. Take armor off first: only items in your bag count.</p>
+<p>You can also craft wooden, stone, iron and diamond pickaxes and swords in your inventory from what you mine. Crystal tools, the War hammer and armor can't be crafted. You buy them at the Smithy (the top hitter on the Cinderfall boss sometimes wins a Crystal sword).</p>
+
+<div class="note">Your inventory lives in this browser, saved for each wallet (a guest has a separate one). Items are not NFTs and are never on-chain. On another device or browser, or after you clear this site's data, you start with an empty inventory.</div>
+</section>
+
+  <section class="card" id="zones">
+<h2>The rocket and the zones<small>Fly to three other planets, each with its own rules</small></h2>
+<p>The home planet isn't the only world. A rocket flies to three zones. Each zone is its own round planet, the same size as home, with its own land, sky and rules.</p>
+
+<h3>Find the rocket</h3>
+<p>On the home planet, the rocket stands on the launch pad in the north-east of town. The pad sits on open grass, and a short brick path runs south from it to the lane. In every zone, the rocket waits on the landing pad in the middle of the planet. That's where you land.</p>
+
+<h3>Fly</h3>
+<ul>
+<li>Stand on the pad and press <kbd>F</kbd>, or walk up close and click the rocket. On a touch screen, aim at the rocket and tap <b>⛏</b>.</li>
+<li>The <b>🚀 Where to?</b> card opens. It lists every planet with its ticket price and its PvP rule, and marks the one you're on with <b>You're here</b>. Click another planet to fly.</li>
+<li>The rocket lifts off, you see the planet you're flying to turning in space, and you land on its pad.</li>
+<li>The world server remembers which zone your wallet is on. If you reload or lose your connection, you land back on that zone's pad as soon as you're signed in again. The game usually signs you back in by itself.</li>
+</ul>
+
+<h3>Tickets</h3>
+<ul>
+<li>Each trip out costs one ticket. A trip out is home to a zone, or one zone to another.</li>
+<li>A ticket is for one zone. A Deepvein ticket only flies you to Deepvein.</li>
+<li>The ticket is used when you take off. After that there's no time limit, so you can stay in the zone as long as you like. A ticket you haven't used yet doesn't run out either.</li>
+<li>The way home is always free. From home, your next trip out needs a new ticket.</li>
+<li>You pay for tickets in $MINE, and all of it goes to the treasury. None of it is burned.</li>
+<li>Guests can't fly out. The world server keeps tickets for your wallet, so you need to sign in first.</li>
+</ul>
+<p><b>Buying a ticket:</b> open the rocket card. If you aren't signed in yet, press <b>Sign in to buy a ticket</b> (your wallet asks you to log in first if you haven't). Signing in is one free signature, not a transaction. Then press <b>Buy ticket: 2,100 $MINE</b> (<b>210 $MINE</b> for Red Mesa) under the zone's name. Your wallet usually asks you twice: step 1 approves exactly the ticket price, and step 2 pays it. The world server checks the payment on the chain, and then the zone shows <b>🎫 You have 1 ticket</b>. Click the zone to fly.</p>
+<p>Short on $MINE? The card tells you so, and the buy button stays off. You can buy more in the trade box of the Mining Site panel (<kbd>M</kbd>). See <a href="#token">$MINE</a> for how trading works.</p>
+<div class="note">If your connection drops right after you pay, you don't lose the ticket. The game remembers the payment in that browser and sends it to the world server again the next time you sign in. The server accepts a payment for up to 3 hours after you make it, and each payment buys one ticket, once.</div>
+
+<div class="scroll"><table>
+<tr><th>Zone</th><th class="num">Ticket</th><th>PvP</th><th>What's special</th></tr>
+<tr><td><b>Home planet</b></td><td class="num">Free (the way home)</td><td>No</td><td>The town, the shops and the villagers. This is the only place where you can revive on the spot after a knock-out (420 $MINE, for signed-in players).</td></tr>
+<tr><td><b>Deepvein</b> (2x Mine Zone)</td><td class="num">2,100 $MINE</td><td>No</td><td>Everything you earn here pays double. Rare ores are three times as common. Monsters are tougher and come day and night. The whole zone grows back every Monday.</td></tr>
+<tr><td><b>Cinderfall</b> (Boss Zone)</td><td class="num">2,100 $MINE</td><td>No</td><td>A world of ash and fire. The boss Ashgrim waits in the arena north of the pad. Beat it together and share 150 $MINE.</td></tr>
+<tr><td><b>Red Mesa</b> (PvP Zone)</td><td class="num">210 $MINE</td><td>Yes, but never on the pad</td><td>Mesas and canyons where players can fight each other. Mining and monsters work as they do at home.</td></tr>
+</table></div>
+
+<h3>Rules in every zone</h3>
+<ul>
+<li>The landing pad is safe. Nobody can mine, build or fight within 20 blocks of its middle, and no monsters roam near it.</li>
+<li>In Cinderfall, the arena and the stone-brick path to it are protected too. Nobody can mine or build there.</li>
+<li>The zone tag on your screen shows the planet's name and its rule: <b>No PvP</b>, or <b>PvP on (not on the pad)</b> in Red Mesa.</li>
+<li><b>/spawn</b> takes you back to the zone's landing pad. <b>/wild</b> takes you to a random safe spot far from the pad, in the same zone (once every 30 seconds). <b>/sethome</b> and <b>/home</b> work in zones too, but <b>/home</b> only works on the planet where you set it.</li>
+<li>If you're knocked out in a zone, you're sent straight back to the home planet's town, where <b>Respawn at spawn</b> gets you up for free. Everything you carried, your worn armor too, stays behind in a loot chest where you fell. The chest lasts 5 minutes, and anyone in that zone can open it by walking up to it and clicking it. You can't revive in a zone, and flying back costs a new ticket. See <a href="#ko">Knock-outs and revives</a>.</li>
+</ul>
+
+<h3>Deepvein, the 2x Mine Zone</h3>
+<ul>
+<li><b>Double pay:</b> every natural block you break and every monster you beat here pays 2x.</li>
+<li><b>Same caps:</b> your daily cap doesn't double. It stays at 300 $MINE per wallet per UTC day before boosts, and 35,000 for all players together.</li>
+<li><b>Richer rock:</b> diamond ore, gold ore and $MINE crystal ore are three times as common, iron ore twice and coal ore 1.5x. Diamond, $MINE crystal, gold and iron ore also show up closer to the surface. Deep rock fills the lower layers and shows in dark patches on the surface. It takes 1.5x as long to break as stone.</li>
+<li><b>Tougher monsters:</b> monsters come day and night, not only at night or underground. Up to 5 can come at once for each player instead of 3, about every 10 seconds instead of every 20, with 1.5x health and 1.5x damage.</li>
+<li><b>Weekly regrowth:</b> every Monday at 00:00 UTC, Deepvein grows back as new. Every block anyone mined or placed that week is reset, so don't build anything here that you want to keep.</li>
+</ul>
+
+<h3>Cinderfall and Ashgrim, the Cinder Colossus</h3>
+<p>A stone-brick path runs straight north from the pad to the arena. Inside waits Ashgrim, a giant of cooled lava about 9 blocks tall. It fights everyone in or near the arena at once. It has <b>1,500 HP</b>, and its health bar shows at the top of your screen when you're near the arena.</p>
+<div class="grid">
+<div class="tile"><b>Slam</b><br>It raises both fists, and a red ring appears on the ground around it. Get out of the ring before the fists land. If you're still inside, you take 8 damage (4 hearts) before armor.</div>
+<div class="tile"><b>Molten rock</b><br>It throws a rock at a player's spot, and an orange ring marks where it will land. Step off the mark. A hit deals 6 damage (3 hearts) before armor.</div>
+<div class="tile"><b>Summons</b><br>Once it drops below 60% health, it roars and calls up to 3 monsters beside it. It does this at most once every 30 seconds.</div>
+</div>
+<ul>
+<li><b>The pool:</b> when Ashgrim falls, the signed-in players who hit it share 150 $MINE, split by how much damage each one did. Your share gets your earn boost and counts toward your daily cap. If nobody who hit it was signed in, no $MINE is paid.</li>
+<li><b>Loot:</b> everyone who did at least 5% of the damage gets 2 Diamonds, 4 Gold, 6 Iron and 1 $MINE crystal.</li>
+<li><b>Top hitter:</b> the player who did the most damage (at least 5%) also gets 3 $MINE crystals and 3 more Diamonds, plus a 15% chance of a Crystal sword.</li>
+<li><b>Respawn:</b> Ashgrim returns 10 minutes after it falls.</li>
+<li><b>It heals:</b> if nobody fights it for 90 seconds, it heals to full and forgets the fight. Damage done before that no longer counts.</li>
+</ul>
+<div class="note">The world server checks every hit on Ashgrim. You must be close to it, and you can't hit faster than a sword swings. To get a share of the $MINE, sign in to earn in the Mining Site panel (<kbd>M</kbd>) before the fight.</div>
+
+<h3>Red Mesa, the PvP Zone</h3>
+<ul>
+<li>This is the only place where players can hurt each other. Anywhere else, other players can't hit you.</li>
+<li>Never on the pad: nobody can fight within 20 blocks of the landing pad's middle.</li>
+<li>To attack, aim at a player and left-click (on a touch screen, tap <b>⛏</b>), just as you would a monster. The world server checks every hit: you must be close, and you can't hit faster than a weapon swings.</li>
+<li>Armor counts. It takes its share of every hit, and each piece you wear loses some durability.</li>
+<li>A beaten player drops everything they carry, their whole inventory plus the armor they wear, in a loot chest where they fell. Then they're sent home. The chest stays in Red Mesa for 5 minutes, and the first player to open it takes everything. Everyone in Red Mesa sees who beat whom.</li>
+</ul>
+<div class="note">Only bring into Red Mesa what you're ready to lose.</div>
+</section>
+
+  <section class="card" id="ko">
+<h2>Knock-outs and revives<small>What you drop, and how to get it back</small></h2>
+<p>When your health reaches zero, you are knocked out. A fall, monsters, the boss in Cinderfall or falling out of the world can do it. So can other players, but only in Red Mesa, and never on its landing pad. Hunger alone never knocks you out: an empty food bar hurts you only down to half a heart.</p>
+
+<h3>Your loot chest</h3>
+<ul>
+<li>Everything you carry, plus the armor you wear, drops in a loot chest where you fell. Tools and armor keep their wear.</li>
+<li>The chest stays for 5 minutes. Its label says whose loot it is. Point at it to see the time left.</li>
+<li>Anyone on that planet can open it, you included. Walk up close (a few blocks away), point at it and click. The first player to open it takes everything.</li>
+<li>Make room first: anything that doesn't fit in your bag is lost.</li>
+<li>You have at most one open chest. If you are knocked out again while carrying something, your new chest replaces the old one, and anything still in the old one is gone.</li>
+<li>After several knock-outs in a row, the world server makes no chest for a short while, and you keep what you carry.</li>
+</ul>
+<div class="note">A knock-out never touches your $MINE earnings, your wallet or your NFTs. Only the items you carry drop.</div>
+
+<h3>Knocked out on the home planet</h3>
+<p>The <b>Knocked out!</b> screen gives you two choices:</p>
+<div class="scroll"><table>
+<tr><th>Button</th><th class="num">Cost</th><th>What happens</th></tr>
+<tr><td>Respawn at spawn</td><td class="num">Free</td><td>You get up in the town square with full health and food. Your chest waits where you fell.</td></tr>
+<tr><td>Revive here: 420 $MINE</td><td class="num">420 $MINE</td><td>You get up on the spot where you fell, with full health and food, in time to open your own chest if nobody has opened it yet.</td></tr>
+</table></div>
+<ul>
+<li>You pay for a revive from your wallet: approve exactly 420 $MINE, then pay. All of it goes to the project treasury, and none is burned. The world server checks the payment, then stands you up.</li>
+<li>Only signed-in players can revive, and they pay from the wallet they signed in with. Guests respawn at spawn.</li>
+<li>If a paid revive doesn't go through (say your connection drops), the button shows <b>Revive here (already paid)</b>. That payment covers your next revive within about 3 hours.</li>
+</ul>
+
+<h3>Knocked out in a zone</h3>
+<p>Deepvein, Cinderfall and Red Mesa have no revive. The world server sends you straight home, and <b>Respawn at spawn</b> puts you in the town square.</p>
+<ul>
+<li>Your chest stays in the zone where you fell, for 5 minutes. Anyone there can open it.</li>
+<li>To go back, you need a new rocket ticket, one per trip out, unless you already have one: Deepvein 2,100, Cinderfall 2,100 and Red Mesa 210 $MINE.</li>
+<li>In Red Mesa, if another player's hit knocked you out, the knock-out screen and the chat name them.</li>
+</ul>
+<div class="note">Heading to a zone? Take only what you need. If you are knocked out there, you have 5 minutes to fly back and reach your chest before it's gone, and someone else may open it first.</div>
+</section>
+
+  <section class="card" id="token">
+<h2>$MINE<small>The token: where it comes from and where it goes</small></h2>
+<p>$MINE is the game's token on Robinhood Chain (an ERC-20 with the symbol MINE). There will only ever be 21,000,000 $MINE. Half went into a trading pool at launch, and players mine the other half.</p>
+
+<div class="grid">
+<div class="tile"><b>Supply: 21,000,000</b><br>This is a hard cap. Every mint counts against it, so burned $MINE is gone for good.</div>
+<div class="tile"><b>50% locked liquidity</b><br>10,500,000 $MINE went into the one $MINE/IMD pool (Uniswap v4) at launch. The pool's hook owns that liquidity and has no way to remove it.</div>
+<div class="tile"><b>50% mining vault</b><br>10,500,000 $MINE are minted only when players convert their earnings at a mining site. The vault mints at most 35,000 a day, so mining it all takes at least 300 days.</div>
+<div class="tile"><b>4% trading fee</b><br>Every trade in the pool pays 4% of its IMD side to the fee wallet. The token itself has no transfer tax.</div>
+</div>
+<p>The vault lasts even longer than 300 days, because the earnings a site's rate doesn't convert are never minted. The scrolling ticker at the top of the screen shows the $MINE mining sites have earned in total (everything conversions have minted so far) and how much is left in the mining vault; the title screen shows that total too. You can also read both on chain on the MineVault contract: <b>released</b> (minted so far) and <b>remaining</b> (left to mine).</p>
+
+<h3>Where spent $MINE goes</h3>
+<div class="scroll"><table>
+<tr><th>Paid for</th><th class="num">Price ($MINE)</th><th class="num">Burned</th><th class="num">To treasury</th></tr>
+<tr><td>The Smithy's shop (<kbd>H</kbd>)</td><td class="num">5 to 3,950</td><td class="num">75%</td><td class="num">25%</td></tr>
+<tr><td>Mining site upgrades</td><td class="num">4,620 to 318,415</td><td class="num">75%</td><td class="num">25%</td></tr>
+<tr><td>DEGEN levels</td><td class="num">2,310 to 159,207</td><td class="num">75%</td><td class="num">25%</td></tr>
+<tr><td>Rocket tickets: Deepvein or Cinderfall</td><td class="num">2,100</td><td class="num">0%</td><td class="num">100%</td></tr>
+<tr><td>Rocket tickets: Red Mesa</td><td class="num">210</td><td class="num">0%</td><td class="num">100%</td></tr>
+<tr><td>Revive on the spot (home planet only)</td><td class="num">420</td><td class="num">0%</td><td class="num">100%</td></tr>
+</table></div>
+<p>Every payment comes straight from your wallet, and the game approves exactly the price, never more. The contracts never hold your $MINE: the burned part is burned from your wallet, and the rest goes straight to the treasury.</p>
+
+<h3>Trading</h3>
+<p>The trade box in the Mining Site panel buys and sells $MINE with ETH or IMD. IMD is the token $MINE is paired with in its pool. A trade with ETH also passes through the IMD/ETH pool, which takes its own 1% fee. Quotes include every fee. The pool started with $MINE only, so sellers are paid from the IMD that buyers have put in. The 4% fees wait in the pool until someone collects them. Anyone can collect them, and they always go to the fee wallet.</p>
+
+<h3>No yield farming</h3>
+<p>Nothing pays for holding or waiting. $MINE comes only from what you do in the world, and NFT boosts only add to what you do while you play.</p>
+
+<h3>Fixed forever</h3>
+<ul>
+<li><b>The token:</b> the 21,000,000 cap. Its ownership is renounced, and it has no proxy, no pause, no blocklist and no transfer tax. Its only minter is the mining vault, set once.</li>
+<li><b>The mining vault:</b> at most 35,000 $MINE a day and 10,500,000 in all. It can't be upgraded. Its owner can replace the rules contract (MiningSites) only in the open, two days after proposing the new one.</li>
+<li><b>The pool:</b> the locked launch liquidity and the 4% fee. The hook's ownership is renounced: only the current fee wallet can change where the fees go.</li>
+<li><b>I'M DEGEN:</b> the art, the rarities and the 5% royalty rate.</li>
+</ul>
+
+<h3>What the owner can tune</h3>
+<p>Three contracts are upgradeable proxies (UUPS), owned by the project wallet. Every site, level and total is kept across upgrades.</p>
+<ul>
+<li><b>MiningSites:</b> the site price (never zero), the upgrade costs (at most 1,000,000 $MINE a level), the rates (10% to 100%, never lower for a higher level), the burn share, and more levels (up to 20; levels are never removed). Also the daily limits (at most 3,500 a wallet and 35,000 for everyone), the voucher key, and pausing conversions.</li>
+<li><b>CrafterLevels:</b> DEGEN level costs (at most 2,000,000 $MINE a level), the burn share, and more levels (up to 20).</li>
+<li><b>MinePayments:</b> each payment kind's burn share (0% to 100%), and new kinds of payment (up to 32 in all).</li>
+<li><b>All three:</b> where the treasury is, and the code itself.</li>
+<li><b>The game itself:</b> earning rates, the daily earn caps, and shop, ticket and revive prices live in the game's code. An update to the site and world server can change them. The <a href="https://github.com/AdamNakamoto/MineWorld" target="_blank" rel="noopener">source is public on GitHub ↗</a>.</li>
+</ul>
+<div class="note">Whatever code runs in those contracts, nobody, the owner included, can mint more than the vault allows: at most 35,000 $MINE a day. Ownership moves in two steps and can't be renounced. It can be handed to a multisig or a timelock.</div>
+
+<h3>Audits</h3>
+<p>IMD Swarm reviewed the contracts in a <a href="https://explorer.imd.fun/jobs/0792975e-220d-4fe2-a11c-d611efec47bd" target="_blank" rel="noopener">full audit ↗</a> and three re-checks. The <a href="https://github.com/AdamNakamoto/MineWorld/blob/main/AUDIT.md" target="_blank" rel="noopener">audit brief ↗</a> lists what each round found and how it was fixed. The fixes for the last round's findings, and the I'M DEGEN art redesign with its on-chain renderer (CrafterArt), came later and were not re-checked by IMD.</p>
+
+<h3>Addresses</h3>
+<div class="scroll"><table>
+<tr><th>Contract</th><th>Address</th><th>Explorer</th></tr>
+<tr><td>$MINE token</td><td><span class="mono">0x1583948760169672C2AF7198026F1AEDE048657F</span></td><td><a href="https://robinhoodchain.blockscout.com/address/0x1583948760169672C2AF7198026F1AEDE048657F" target="_blank" rel="noopener">View ↗</a></td></tr>
+<tr><td>MineVault (mining vault)</td><td><span class="mono">0x24Af25E0732D7452D9223F99e858BB1c4d26dbdB</span></td><td><a href="https://robinhoodchain.blockscout.com/address/0x24Af25E0732D7452D9223F99e858BB1c4d26dbdB" target="_blank" rel="noopener">View ↗</a></td></tr>
+<tr><td>MiningSites</td><td><span class="mono">0x2B3Ed234eF4A048984cC833Ac52373CC3E27004b</span></td><td><a href="https://robinhoodchain.blockscout.com/address/0x2B3Ed234eF4A048984cC833Ac52373CC3E27004b" target="_blank" rel="noopener">View ↗</a></td></tr>
+<tr><td>MinePayments</td><td><span class="mono">0xb2353D76F03DDE9D65752bc2E6AD369d84a678F7</span></td><td><a href="https://robinhoodchain.blockscout.com/address/0xb2353D76F03DDE9D65752bc2E6AD369d84a678F7" target="_blank" rel="noopener">View ↗</a></td></tr>
+<tr><td>CrafterLevels</td><td><span class="mono">0xd7781dcBC1C4D80A4309F39D8350f8105C218Dd6</span></td><td><a href="https://robinhoodchain.blockscout.com/address/0xd7781dcBC1C4D80A4309F39D8350f8105C218Dd6" target="_blank" rel="noopener">View ↗</a></td></tr>
+<tr><td>MineHook (the pool)</td><td><span class="mono">0x96b3d4b013B680A076ed0DfD1d2ace04C8b4e8cC</span></td><td><a href="https://robinhoodchain.blockscout.com/address/0x96b3d4b013B680A076ed0DfD1d2ace04C8b4e8cC" target="_blank" rel="noopener">View ↗</a></td></tr>
+<tr><td>MineRouter (trades with IMD)</td><td><span class="mono">0xE6611235F550A4eEEA21Bebc01BBDc16767f72E4</span></td><td><a href="https://robinhoodchain.blockscout.com/address/0xE6611235F550A4eEEA21Bebc01BBDc16767f72E4" target="_blank" rel="noopener">View ↗</a></td></tr>
+<tr><td>MineEthRouter (trades with ETH)</td><td><span class="mono">0xF2A70a95bF406E2dC967396cF06d07f70f1f9eA6</span></td><td><a href="https://robinhoodchain.blockscout.com/address/0xF2A70a95bF406E2dC967396cF06d07f70f1f9eA6" target="_blank" rel="noopener">View ↗</a></td></tr>
+<tr><td>IMD</td><td><span class="mono">0x5F7Bb59365ce557C26dbcAa4EE9d39A4b95B7127</span></td><td><a href="https://robinhoodchain.blockscout.com/address/0x5F7Bb59365ce557C26dbcAa4EE9d39A4b95B7127" target="_blank" rel="noopener">View ↗</a></td></tr>
+<tr><td>Owner, treasury and fee wallet</td><td><span class="mono">0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD</span></td><td><a href="https://robinhoodchain.blockscout.com/address/0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD" target="_blank" rel="noopener">View ↗</a></td></tr>
+</table></div>
+</section>
+
+  <section class="card" id="safety">
+<h2>Contracts and safety<small>What runs on chain, who controls what, and how to stay safe</small></h2>
+<p>MineWorldCraft runs on Robinhood Chain (chain id 4663). These are its live contracts. Click any address to open it on Blockscout, the chain's explorer.</p>
+
+<div class="scroll"><table>
+<tr><th>Contract</th><th>What it does</th><th>Address</th></tr>
+<tr><td><b>$MINE token</b></td><td>The game's coin. It can never pass 21,000,000. It has no owner, no transfer tax, no pause and no blocklist. Only MineVault can mint it.</td><td><a href="https://robinhoodchain.blockscout.com/address/0x1583948760169672C2AF7198026F1AEDE048657F" target="_blank" rel="noopener"><span class="mono">0x1583948760169672C2AF7198026F1AEDE048657F</span> ↗</a></td></tr>
+<tr><td><b>MineVault</b></td><td>Mints the mining half of $MINE (up to 10,500,000) to players when they convert their earnings. It mints at most 35,000 per UTC day.</td><td><a href="https://robinhoodchain.blockscout.com/address/0x24Af25E0732D7452D9223F99e858BB1c4d26dbdB" target="_blank" rel="noopener"><span class="mono">0x24Af25E0732D7452D9223F99e858BB1c4d26dbdB</span> ↗</a></td></tr>
+<tr><td><b>MiningSites</b></td><td>Opens mining sites (0.005 ETH) and upgrades them. It converts your earnings to $MINE at your site's rate, using a voucher the world server signs.</td><td><a href="https://robinhoodchain.blockscout.com/address/0x2B3Ed234eF4A048984cC833Ac52373CC3E27004b" target="_blank" rel="noopener"><span class="mono">0x2B3Ed234eF4A048984cC833Ac52373CC3E27004b</span> ↗</a></td></tr>
+<tr><td><b>MinePayments</b></td><td>Takes $MINE payments for the Smithy's shop (75% burned, the rest to the treasury), and for rocket tickets and revives (all to the treasury).</td><td><a href="https://robinhoodchain.blockscout.com/address/0xb2353D76F03DDE9D65752bc2E6AD369d84a678F7" target="_blank" rel="noopener"><span class="mono">0xb2353D76F03DDE9D65752bc2E6AD369d84a678F7</span> ↗</a></td></tr>
+<tr><td><b>CrafterLevels</b></td><td>Keeps each I'M DEGEN's level and takes the level-up payments (75% burned, the rest to the treasury).</td><td><a href="https://robinhoodchain.blockscout.com/address/0xd7781dcBC1C4D80A4309F39D8350f8105C218Dd6" target="_blank" rel="noopener"><span class="mono">0xd7781dcBC1C4D80A4309F39D8350f8105C218Dd6</span> ↗</a></td></tr>
+<tr><td><b>MineHook</b></td><td>The pool hook. It opened the $MINE/IMD pool, owns the pool's locked liquidity and takes the 4% trading fee.</td><td><a href="https://robinhoodchain.blockscout.com/address/0x96b3d4b013B680A076ed0DfD1d2ace04C8b4e8cC" target="_blank" rel="noopener"><span class="mono">0x96b3d4b013B680A076ed0DfD1d2ace04C8b4e8cC</span> ↗</a></td></tr>
+<tr><td><b>MineRouter</b></td><td>Buys and sells $MINE for IMD. The trade box in the Mining Site panel uses it.</td><td><a href="https://robinhoodchain.blockscout.com/address/0xE6611235F550A4eEEA21Bebc01BBDc16767f72E4" target="_blank" rel="noopener"><span class="mono">0xE6611235F550A4eEEA21Bebc01BBDc16767f72E4</span> ↗</a></td></tr>
+<tr><td><b>MineEthRouter</b></td><td>Buys and sells $MINE for ETH in one step. It swaps through IMD, so the same 4% fee applies. The trade box uses it too.</td><td><a href="https://robinhoodchain.blockscout.com/address/0xF2A70a95bF406E2dC967396cF06d07f70f1f9eA6" target="_blank" rel="noopener"><span class="mono">0xF2A70a95bF406E2dC967396cF06d07f70f1f9eA6</span> ↗</a></td></tr>
+<tr><td><b>I'M DEGEN</b></td><td>The 3,333 frog characters (NFTs). All 3,333 are minted and revealed. <a href="https://opensea.io/collection/im-degen" target="_blank" rel="noopener">See the collection on OpenSea ↗</a></td><td><a href="https://robinhoodchain.blockscout.com/address/0x263b3c4A9f711E0e28201d5897dA4CDea3831D15" target="_blank" rel="noopener"><span class="mono">0x263b3c4A9f711E0e28201d5897dA4CDea3831D15</span> ↗</a></td></tr>
+<tr><td><b>CrafterArt</b></td><td>Draws every DEGEN's picture on chain. It has no owner and no settings.</td><td><a href="https://robinhoodchain.blockscout.com/address/0xA34749e822fF36E2e9aE6A6A158F468cA1E3AED3" target="_blank" rel="noopener"><span class="mono">0xA34749e822fF36E2e9aE6A6A158F468cA1E3AED3</span> ↗</a></td></tr>
+</table></div>
+<p>MiningSites, MinePayments and CrafterLevels are upgradeable contracts, also called proxies. Their address never changes, but the code behind it can be upgraded. Today that code lives at <a href="https://robinhoodchain.blockscout.com/address/0x185a49240D3B2EC7BAC1b00b6df9B74a5F4674F6" target="_blank" rel="noopener"><span class="mono">0x185a49240D3B2EC7BAC1b00b6df9B74a5F4674F6</span> ↗</a>, <a href="https://robinhoodchain.blockscout.com/address/0xF85dBF53fad7C4aAe9c0702AcB9415d8D76F3a76" target="_blank" rel="noopener"><span class="mono">0xF85dBF53fad7C4aAe9c0702AcB9415d8D76F3a76</span> ↗</a> and <a href="https://robinhoodchain.blockscout.com/address/0x5a18C2864976697c40A7EACB0D989Cfc3ac8FE4A" target="_blank" rel="noopener"><span class="mono">0x5a18C2864976697c40A7EACB0D989Cfc3ac8FE4A</span> ↗</a>, in the same order.</p>
+<p>All 13 contracts, the ten above plus these three, are source-verified on <a href="https://sourcify.dev/" target="_blank" rel="noopener">Sourcify ↗</a>, so anyone can read the exact code they run. $MINE trades against IMD (<span class="mono">0x5F7Bb59365ce557C26dbcAa4EE9d39A4b95B7127</span>), a token that MineWorldCraft doesn't run.</p>
+
+<h3>Who controls what</h3>
+<ul>
+<li><b>No owner:</b> the $MINE token and the pool hook gave up their ownership for good. Nobody can change them, and nobody but MineVault can mint $MINE. One thing is left: the fee wallet can point its own trading fees to a new address. Nobody else can.</li>
+<li><b>The owner wallet</b> <span class="mono">0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD</span> owns MineVault, the three game contracts (MiningSites, MinePayments, CrafterLevels) and I'M DEGEN. The same wallet is also the treasury and the fee wallet. It's a regular wallet with one key, not a multisig.</li>
+<li>The owner can change the game contracts' settings within limits written in their code. That covers the site price, the site rates (each 10% to 100%), upgrade and level costs, burn shares, the treasury, the world server's signing key and the claim caps (at most 3,500 $MINE per wallet a day and 35,000 for everyone; today 1,500 and 35,000). It can also pause conversions to $MINE.</li>
+<li>The owner can upgrade the code of those three contracts, and an upgrade can change their limits too. Setting changes and upgrades take effect at once, with no waiting period.</li>
+<li>Whatever the owner does, MineVault never mints more than 35,000 $MINE a day or 10,500,000 in all.</li>
+<li>The owner can swap out MiningSites, the contract that asks the vault to mint, but only in public and after a two-day wait.</li>
+<li>These contracts can't give up their owner, and that's on purpose. The game's rules need to stay manageable, and I'M DEGEN needs an owner so its OpenSea page and links stay editable.</li>
+<li>The world server decides what you earned and signs your vouchers. The daily caps in MiningSites limit what vouchers can pay out.</li>
+</ul>
+
+<h3>What can never change</h3>
+<div class="grid">
+<div class="tile"><b>Supply cap</b><br>$MINE can never pass 21,000,000. Every mint counts toward it, and burned $MINE is gone for good.</div>
+<div class="tile"><b>Vault limits</b><br>MineVault mints at most 35,000 $MINE per UTC day and 10,500,000 in all. It isn't upgradeable.</div>
+<div class="tile"><b>Locked liquidity</b><br>The liquidity added to the pool at launch (10,500,000 $MINE) is owned by the hook, and the hook has no way to remove it.</div>
+<div class="tile"><b>4% fee</b><br>Every swap pays 4% of its IMD side to the fee wallet. The rate is fixed in the hook's code.</div>
+<div class="tile"><b>DEGEN art</b><br>Each DEGEN's picture and looks are fixed. CrafterArt draws them, and it has no owner and no settings. I'M DEGEN can't switch to a different renderer. The owner can only add extra traits, like the Level, through an add-on contract.</div>
+<div class="tile"><b>Royalty rate</b><br>The I'M DEGEN royalty is fixed at 5%. It goes to the treasury (the owner can move the treasury, not change the rate).</div>
+</div>
+
+<h3>Audits</h3>
+<p>IMD Swarm reviewed the contracts in four rounds: one full audit, then three re-checks of the fixes. Every finding was fixed or answered. A few info notes were answered without a code change: by documenting the behavior, by accepting it, or by adding a public tool. AUDIT.md explains each one.</p>
+<div class="scroll"><table>
+<tr><th>Round</th><th>What it found</th><th>Report</th></tr>
+<tr><td><b>Full audit</b></td><td>2 medium, 3 low, 3 info. Medium: the owner could steer which DEGEN looks came out by picking the reveal block. Medium: a replacement MiningSites could be taken over during its two-day wait. The lows covered NFT metadata safety, a treasury that refuses ETH, and a price limit on upgrades. The infos covered how strictly royalties are enforced, the fee wallet's power after the hook's renounce, and a price setting on the hook.</td><td><a href="https://explorer.imd.fun/jobs/0792975e-220d-4fe2-a11c-d611efec47bd" target="_blank" rel="noopener">0792975e ↗</a></td></tr>
+<tr><td><b>Re-check</b></td><td>2 medium, 4 low. Two fixes from the first round were incomplete: the takeover, and the reveal, which didn't hold on Robinhood Chain. The reveal was redesigned: the owner's secret is published first, and the next block's hash completes it. The lows covered carrying earnings over to a replacement, a retired contract that kept selling, a minimum rate on site upgrades, and the owner alone knowing the looks after the seal.</td><td><a href="https://explorer.imd.fun/jobs/8c7ba957-1fee-4fa5-a621-9b653cc52361" target="_blank" rel="noopener">8c7ba957 ↗</a></td></tr>
+<tr><td><b>Second re-check</b></td><td>1 medium, 2 low, 1 info. Medium: a stranger could set up a contract that was deployed without its setup. Now setup can only happen at deploy. The rest: reveal re-rolls are now owner-only, at most 3 and all public; mining site levels are kept as bought through a replacement; and a status fix.</td><td><a href="https://explorer.imd.fun/jobs/52b534f9-f11d-4ef7-880f-053694cef8be" target="_blank" rel="noopener">52b534f9 ↗</a></td></tr>
+<tr><td><b>Third re-check</b></td><td>3 low, 2 info, no medium. The setup guard now covers every game contract. The free mint is limited to real wallets, so it can't be swept through throwaway contracts. A distributor with no code can still be replaced. Plus a public tool to lock in the reveal, and a safer timing margin.</td><td><a href="https://explorer.imd.fun/jobs/10d532d5-da29-4f5e-87b1-77abdca8467f" target="_blank" rel="noopener">10d532d5 ↗</a></td></tr>
+</table></div>
+<div class="note"><b>Not audited by IMD:</b> after the last round, the I'M DEGEN art was redesigned as full Minecraft-style skins. That rewrote CrafterArt, the on-chain renderer, and changed how I'M DEGEN picks traits. The revive payment kind in MinePayments was also added after IMD's last round. IMD hasn't seen these changes (AUDIT.md section 12). A pre-launch review, not by IMD, went over everything since IMD's last round. It found one low issue in the art, which was fixed before launch.</div>
+<p>Read the full <a href="https://github.com/AdamNakamoto/MineWorld/blob/main/AUDIT.md" target="_blank" rel="noopener">audit brief ↗</a> and the <a href="https://github.com/AdamNakamoto/MineWorld" target="_blank" rel="noopener">source code ↗</a> on GitHub.</p>
+
+<h3>Stay safe</h3>
+<ul>
+<li>Only play at <a href="https://mineworldcraft.fun" target="_blank" rel="noopener">mineworldcraft.fun ↗</a>. Bookmark it instead of clicking links that strangers send you.</li>
+<li>Before you approve or trade anything, check the contract address against this page. Every approval the game asks for names one of the contracts above. Your wallet should be on Robinhood Chain (chain id 4663).</li>
+<li>The game never asks for your seed phrase or private key. Anyone who asks for your seed phrase is trying to steal from you.</li>
+<li>Signing in to earn is one free signature, not a transaction. The message starts with "MineWorldCraft sign-in" and says it's free and sends no transaction.</li>
+<li>Every $MINE payment in the game (the shop, tickets, revives, site upgrades and DEGEN levels) approves exactly its price, never more. Step 1 approves the amount and step 2 pays it. Once step 2 goes through, nothing stays approved. If your wallet asks you to approve more than the price, stop.</li>
+<li>When you sell $MINE in the trade box, your wallet may ask you to sign a permit instead of approving. It's free, and it lets the router take exactly the amount you sell, for 10 minutes. A free signature can still let a contract spend your tokens, so always read what you sign.</li>
+</ul>
+</section>
+
+  <footer>
+    <p>An original block world on Robinhood Chain. Not affiliated with Mojang or Microsoft.</p>
+    <p>Nothing here is financial advice. $MINE comes only from playing; nothing pays for holding.</p>
+  </footer>
+</div>
+<a class="btn top" href="#">↑ Top</a>
+</body>
+</html>

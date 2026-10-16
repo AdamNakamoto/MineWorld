@@ -73,7 +73,7 @@ export const VILLAGERS = [
   { name: "Wren", job: "DEGEN fan", home: "West House", work: "plaza",
     look: { degen: { background: 0, skin: 3, eyes: 0, mouth: 1, cheeks: 1, top: 6, bottoms: 8, shoes: 2, headwear: 2, accessory: 0 } },
     lines: [
-    "See my look? It's an I'M DEGEN. You can mint one in the Mining Site panel and wear it.",
+    "See my look? It's an I'M DEGEN. All 3,333 are minted: get one from another player on OpenSea, then wear it from the Mining Site panel.",
     "Press V to see yourself from outside. Your DEGEN is your miner, from its eyes to its shoes!",
     "Wearing a DEGEN makes you a better miner too: faster blocks, more $MINE, a higher daily cap. Rarer and higher-level ones more.",
   ] },
@@ -101,7 +101,7 @@ export const VILLAGERS = [
   { name: "Garrick", job: "Armorer", stay: [14, -21, Math.PI], shop: true,
     look: { tone: "deep", hair: ["short", "grey"], beard: true, top: "Overalls Grey", shoes: "Work Boots", accessory: "Tool Belt" },
     lines: [
-    "Tools, weapons and armor: have a look! Everything's free while the game is being tested.",
+    "Tools, weapons and armor: have a look! Prices are in $MINE, and three quarters of what you pay is burned.",
   ] },
   { name: "Quill", job: "Mapmaker", home: "Barn", work: "orchard",
     look: { tone: "brown", hair: ["long", "white"], top: "Flannel Blue", bottoms: "Cargo Khaki", headwear: "Goggles", accessory: "Backpack Brown" },
