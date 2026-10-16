@@ -3,11 +3,14 @@
 // and applies it when it credits $MINE and checks how fast blocks break). Every tunable number is here.
 //
 // Boosts only reward active play: they make blocks break faster, make each block, monster and boss share pay more,
-// and raise how much a wallet can earn in a day. Nothing pays for holding or waiting: an NFT in a wallet earns nothing
-// by itself. The stats, in whole percent:
+// and raise how much a player can earn in a day. Nothing pays for holding or waiting: an NFT in a wallet earns nothing
+// by itself. A DEGEN deployed as an autopilot bot (bots-rules.js) mines only while its player is in the game and
+// active, with its own DEGEN's boost alone (itemBoost, never the player's), up to a daily cap of its own (dailyCap with
+// that boost's cap). The stats, in whole percent:
 //   speed  blocks break this much faster (the world server allows it in its break-rate check);
 //   earn   every block, monster and boss share pays this much more $MINE (the server adds it when it credits);
-//   cap    the wallet's daily cap (rewards.js DAILY_EARN_CAP, times the zone's capMul in zones.js) is this much higher;
+//   cap    the player's daily cap (rewards.js DAILY_EARN_CAP, times the zone's capMul in zones.js) is this much higher
+//          (and a bot's own cap, from its DEGEN's);
 //   move   walking (and, once there are vehicles, driving) is this much faster. Only the game uses it: the server's
 //          speed check (40 blocks a second) allows far more than the fastest boosted walk.
 // A player uses one item per slot (a Crafter, a skin, a companion, an aura, a vehicle); the slots' boosts add up, and
@@ -128,7 +131,8 @@ export function boostOf(items) {
 }
 export const NO_BOOST = boostOf({});
 
-/// A wallet's daily cap in ledger units (rewards.js UNIT) with a cap boost of `capPct`, while it earns in `zone`.
+/// A player's daily cap (or one bot's, from its own DEGEN's cap boost) in ledger units (rewards.js UNIT) with a cap
+/// boost of `capPct`, while it earns in `zone`.
 export const dailyCap = (capPct, zone) => Math.round((DAILY_EARN_CAP * UNIT * (100 + capPct) * (zoneOf(zone).capMul ?? 1)) / 100);
 /// What something worth `units` pays with an earn boost of `earnPct` (whole units: the ledger's are).
 export const withEarn = (units, earnPct) => Math.round((units * (100 + earnPct)) / 100);

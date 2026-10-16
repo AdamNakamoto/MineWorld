@@ -97,6 +97,7 @@ body.ticking { --tick: 28px; }
 .earn b { color: var(--gold); font-weight: 800; font-variant-numeric: tabular-nums; }
 .earn .small { margin-top: 3px; }
 .earn .boost-line { color: var(--good); }
+.earn .bot-line { color: #9fd8ff; }
 .coin { display: inline-block; width: 14px; height: 14px; background: var(--gold); box-shadow: inset -3px -3px #b8902a, inset 3px 3px #fff2a0; margin-right: 6px; vertical-align: -1px; }
 .coin.pop { animation: pop 0.35s; }
 @keyframes pop { 50% { transform: scale(1.6); } }
@@ -234,6 +235,24 @@ h3 .status.closed { background: #6a2a2a; }
 .cr-text .boost { color: var(--good); font-size: 13px; }
 .crafter-row .card-status { margin: 4px 0 0; }
 .max-level { color: var(--gold); font-size: 14px; white-space: nowrap; }
+/* The Autopilot box: your bots, one row each (as the levels' rows), the pickaxes to hand them, and those waiting. */
+.bot-rows { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.bot-row { display: flex; align-items: center; gap: 10px; background: rgba(0, 0, 0, 0.28); border: 2px solid #2c3a42; padding: 6px 8px; flex-wrap: wrap; }
+.bot-row.out { border-color: #3d6f8f; }
+.bot-row > img { width: 40px; height: 40px; image-rendering: pixelated; flex: none; }
+.bot-row .cr-text .state { color: #9fd8ff; font-size: 13px; }
+.bot-row .cr-text .tier.t1 { color: #8fc8ff; }
+.bot-row .cr-text .tier.t2 { color: var(--gold); }
+.bot-row .bot-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.bot-row .card-status { margin: 4px 0 0; width: 100%; }
+.bot-cap { height: 6px; margin-top: 3px; background: rgba(0, 0, 0, 0.6); border: 1px solid #0b1013; }
+.bot-cap i { display: block; height: 100%; background: linear-gradient(#ffe27a, #c99a1e); }
+.pick-list { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; margin-top: 4px; }
+.pick-btn { display: flex; align-items: center; gap: 6px; background: rgba(0, 0, 0, 0.3); border: 2px solid #2c3a42; padding: 4px 8px; cursor: pointer; color: var(--ink);
+  font-family: var(--ui); font-size: 13px; }
+.pick-btn:hover:not(:disabled) { border-color: var(--gold); }
+.pick-btn:disabled { opacity: 0.45; cursor: default; }
+.pick-btn img { width: 24px; height: 24px; image-rendering: pixelated; }
 .seg { display: flex; gap: 4px; margin: 6px 0; align-items: center; }
 .seg button { flex: 1; font-family: var(--px); font-size: 13px; padding: 6px; background: #22303a; color: var(--ink); border: 2px solid #000; cursor: pointer; }
 .seg button.on { background: #45606e; }
@@ -276,6 +295,12 @@ h3 .status.closed { background: #6a2a2a; }
 .practice-line { color: var(--muted); font-style: italic; }
 .dest-have { color: var(--good); font-size: 14px; }
 .dest-buy { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+/* Which bots come on a trip, and how many tickets Buy pays for. */
+.dest-bots { display: flex; align-items: center; gap: 4px 12px; flex-wrap: wrap; cursor: default; }
+.bot-tick { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; cursor: pointer; }
+.dest-count { display: inline-flex; align-items: center; gap: 6px; }
+.dest-count .btn { padding: 3px 10px; }
+.dest-count b { min-width: 14px; text-align: center; font-variant-numeric: tabular-nums; }
 /* A purchase's progress, or why it didn't go through (the rocket card, the shop, the panel). */
 .card-status { font-size: 14px; line-height: 1.45; margin: 8px 0 2px; padding: 6px 8px; background: rgba(0, 0, 0, 0.3); border-left: 3px solid var(--gold); color: var(--ink); }
 .card-status.good { border-left-color: var(--good); color: var(--good); }

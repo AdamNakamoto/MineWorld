@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MineWorldCraft guide</title>
-  <meta name="description" content="How MineWorldCraft works: playing, mining and earning $MINE, mining sites, I'M DEGEN, the Smithy, the rocket zones, the $MINE token and its contracts.">
+  <meta name="description" content="How MineWorldCraft works: playing, mining and earning $MINE, mining sites, I'M DEGEN, autopilot bots, the Smithy, the rocket zones, the $MINE token and its contracts.">
   <link rel="icon" href="favicon.ico" sizes="any">
   <link rel="icon" href="favicon-32.png" type="image/png" sizes="32x32">
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -93,6 +93,7 @@
     <a href="#earn">Earning</a>
     <a href="#sites">Mining sites</a>
     <a href="#degen">I'M DEGEN</a>
+    <a href="#bots">Autopilot bots</a>
     <a href="#gear">The Smithy</a>
     <a href="#zones">Rocket &amp; zones</a>
     <a href="#ko">Knock-outs</a>
@@ -108,18 +109,18 @@
 
 <h3>Guest or signed in</h3>
 <div class="grid">
-<div class="tile"><b>Guest</b><br>Press <b>Play</b> and you're in. You can mine, build, craft, fight, chat and use voice chat on the home planet. Other players see you as "Guest-" and a number. Guests earn nothing, can't fly the rocket and can't pick a name.</div>
-<div class="tile"><b>Signed in</b><br>Log in with a browser wallet, such as MetaMask, Robinhood Wallet or Rabby. On a phone, open the game in your wallet app's own browser. Then press <b>Sign in to earn</b>: it's one free signature, not a transaction. From then on the world server counts what you earn, and you can pick a name, buy rocket tickets and pay to revive where you fell. (The Shop only needs a logged-in wallet with $MINE in it.)</div>
+<div class="tile"><b>Guest</b><br>Press <b>Play</b> and you're in. You can mine, build, craft, fight, chat and use voice chat on the home planet. Other players see you as "Guest-" and a number. Guests earn nothing, can't fly the rocket, can't send out bots and can't pick a name.</div>
+<div class="tile"><b>Signed in</b><br>Log in with a browser wallet, such as MetaMask, Robinhood Wallet or Rabby. On a phone, open the game in your wallet app's own browser. Then press <b>Sign in to earn</b>: it's one free signature, not a transaction. From then on the world server counts what you earn, and you can pick a name, send out bots, buy rocket tickets and pay to revive where you fell. (The Shop only needs a logged-in wallet with $MINE in it.)</div>
 </div>
 <div class="note">Your bag lives in this browser: one bag for guests, and one for each wallet you log in with. Items are for playing with. They are never on-chain.</div>
 
 <h3>What earns $MINE</h3>
-<p>Once you're signed in, you earn $MINE for real play. Breaking the planet's own blocks pays: dirt and sand a tiny amount, stone and logs a little more, and ore the most. The rarer the ore, the more it pays. Beating monsters pays too. Blocks that players placed pay nothing when they're broken again, and neither do leaves or plants. Nothing pays for just holding or waiting.</p>
-<p>Everything you earn on Deepvein pays double. Beating Ashgrim, the boss on Cinderfall, shares 150 $MINE among the signed-in players who hit it, by the damage each one did. The world server keeps the count: up to 300 $MINE per wallet per UTC day (wearing an I'M DEGEN can raise that), and 35,000 for all players together.</p>
+<p>Once you're signed in, you earn $MINE for real play. Breaking the planet's own blocks pays: dirt and sand a tiny amount, stone and logs a little more, and ore the most. The rarer the ore, the more it pays. Beating monsters pays too. Blocks that players placed pay nothing when they're broken again, and neither do leaves or plants. Nothing pays for just holding or waiting. If you have more I'M DEGENs, up to 4 of them can mine beside you as <a href="#bots">autopilot bots</a>, but only while you play.</p>
+<p>Everything you earn on Deepvein pays double. Beating Ashgrim, the boss on Cinderfall, shares 150 $MINE among the signed-in players who hit it, by the damage each one did. The world server keeps the count: up to 300 $MINE a UTC day for what you earn yourself (wearing an I'M DEGEN can raise that), a cap of its own for each bot, and 35,000 for all players together.</p>
 
 <h3>Turning earnings into $MINE</h3>
 <p>To get your earnings as $MINE in your wallet, you need a mining site. It costs 0.005 ETH, once per wallet, and it stays with that wallet. When you press <b>Convert to $MINE</b>, your site converts everything you haven't converted yet: 50% of it at level 1, and up to 100% at level 5 once you upgrade. The share your site doesn't convert isn't saved for later. It stays in the mining vault.</p>
-<p>Each wallet can receive up to 1,500 $MINE a day this way, and all players together 35,000. Whatever a day's limits don't cover waits for the next day.</p>
+<p>Each wallet can receive up to 1,500 $MINE a day this way, your bots' earnings included, and all players together 35,000. Whatever a day's limits don't cover waits for the next day.</p>
 <p>A ticker across the top of the screen shows how much of today's 35,000 $MINE is left to mine, how much was mined so far today, when the day resets (00:00 UTC), how much $MINE is left in the mining vault (the $MINE set aside for players), and how many mining sites are open. The title screen also shows how many people are mining right now.</p>
 
 <h3>Quick start</h3>
@@ -164,7 +165,7 @@
 
 <h3>The screen</h3>
 <ul>
-<li><b>Top left:</b> the menu button <b>≡</b> and <b>Voice chat</b>. Below them: the $MINE you earned today (and in all, once you're signed in), the planet you're on and whether players can fight there, and your position as x, y, z. At night, "night" shows after your position.</li>
+<li><b>Top left:</b> the menu button <b>≡</b> and <b>Voice chat</b>. Below them: the $MINE you earned today (and in all, once you're signed in), the planet you're on and whether players can fight there, and your position as x, y, z. At night, "night" shows after your position. While you have <a href="#bots">bots</a> out, a line by your earnings shows how they're doing.</li>
 <li><b>Top right:</b> how many players are online, and the <b>Mining Site</b>, <b>Inventory</b>, <b>Shop</b>, <b>Chat</b> and <b>View</b> buttons.</li>
 <li><b>Bottom:</b> your hearts (health) and your food bar side by side, your armor above them when you wear some, and the hotbar: the first 9 slots of your bag.</li>
 <li><b>Across the very top:</b> the ticker, with the $MINE left to mine today.</li>
@@ -363,7 +364,7 @@
 
   <section class="card" id="earn">
 <h2>Earning $MINE<small>What pays, how much, and the daily limits</small></h2>
-<p>You earn $MINE by playing. You break natural blocks, defeat monsters and help beat Cinderfall's boss, and the world server counts what you earn on a ledger for your wallet. To turn those earnings into $MINE tokens, you need a <a href="#sites">mining site</a>.</p>
+<p>You earn $MINE by playing. You break natural blocks, defeat monsters and help beat Cinderfall's boss, and the world server counts what you earn on a ledger for your wallet. Your <a href="#bots">autopilot bots</a> can mine beside you and add to it too. To turn those earnings into $MINE tokens, you need a <a href="#sites">mining site</a>.</p>
 
 <h3>Sign in first</h3>
 <p>Guests can play, but guests earn nothing. To start earning:</p>
@@ -372,7 +373,7 @@
 <li>Press <b>Log in</b> and connect your wallet. The game switches your wallet to Robinhood Chain, and adds the chain first if your wallet doesn't have it.</li>
 <li>Press <b>Sign in to earn</b> and sign the message. It's one free signature: it sends no transaction and costs no gas.</li>
 </ul>
-<p>From then on, the world server counts your earnings, and your total for today shows on screen. A wallet earns in one place at a time: if you sign in somewhere else, your earnings count there instead. Being knocked out never costs you earnings. You drop what you carry, but the ledger keeps everything it has counted.</p>
+<p>From then on, the world server counts your earnings, and your total for today shows on screen. A wallet earns in one place at a time: if you sign in somewhere else, your earnings count there instead, and the bots you had out are recalled. Being knocked out never costs you earnings. You drop what you carry, but the ledger keeps everything it has counted.</p>
 
 <h3>Blocks</h3>
 <p>Only natural blocks pay. These are the blocks the world was made with. A block that someone placed pays nothing when it's broken again. Leaves and plants (tall grass, flowers, ferns, mushrooms, berry bushes) pay nothing.</p>
@@ -404,16 +405,17 @@
 <p><b>Ashgrim, the Cinder Colossus</b>, Cinderfall's boss, pays a pool of 150 $MINE when it's beaten. The signed-in players who hit it share the pool by the damage each one did. Each share counts toward that player's daily cap like any other earning. Everyone who did at least 5% of the damage also gets some loot. Ashgrim comes back 10 minutes after it's beaten.</p>
 
 <h3>Deepvein pays 2x</h3>
-<p>In Deepvein, everything you earn pays double, blocks and monsters alike. Your daily cap stays the same there, so you reach it twice as fast. Deepvein grows back every Monday at 00:00 UTC, so its blocks are natural again and pay again. Cinderfall and Red Mesa pay the normal rates.</p>
-<p>A trip out to Deepvein needs a 2,100 $MINE rocket ticket. A ticket is good for one trip out, with no time limit, and the way home is always free.</p>
+<p>In Deepvein, everything you earn pays double, blocks and monsters alike, and so do your bots' blocks. Your daily cap stays the same there, and so does each bot's, so you reach them twice as fast. Deepvein grows back every Monday at 00:00 UTC, so its blocks are natural again and pay again. Cinderfall and Red Mesa pay the normal rates.</p>
+<p>A trip out to Deepvein needs a 2,100 $MINE rocket ticket, and one more for each bot you take. A ticket is good for one trip out, with no time limit, and the way home is always free.</p>
 
 <h3>Daily caps</h3>
 <div class="scroll"><table>
 <tr><th>Who</th><th class="num">Most earned a day</th></tr>
-<tr><td>Your wallet, before boosts</td><td class="num">300 $MINE</td></tr>
-<tr><td>Everyone together, boosts or not</td><td class="num">35,000 $MINE</td></tr>
+<tr><td>You, for what you earn yourself, before boosts</td><td class="num">300 $MINE</td></tr>
+<tr><td>Each autopilot bot, set by its own DEGEN and counted for that DEGEN</td><td class="num">330 to 750 $MINE</td></tr>
+<tr><td>Everyone together, boosts and bots included</td><td class="num">35,000 $MINE</td></tr>
 </table></div>
-<p>Both caps reset at 00:00 UTC. Once a cap is reached, nothing pays until the reset (blocks, monsters and boss shares alike), and nothing is saved up for later. The game tells you when you reach your own cap, and when everyone's 35,000 is used up. The ticker at the top of the screen shows how much of today's 35,000 is left to mine.</p>
+<p>All caps reset at 00:00 UTC. Once a cap is reached, nothing more pays against it until the reset (blocks, monsters and boss shares alike), and nothing is saved up for later. Your own cap counts only what you earn yourself: your bots never use it up, and they keep earning to their own caps after you reach yours. A bot at its cap stops until the reset. The game tells you when you reach your own cap, and when everyone's 35,000 is used up. The ticker at the top of the screen shows how much of today's 35,000 is left to mine.</p>
 <p>These caps are on what you earn in the world. Converting your earnings to $MINE has its own daily limits (see <a href="#sites">Mining sites</a>).</p>
 
 <h3>Boosts raise your cap</h3>
@@ -423,7 +425,7 @@
 <li><b>$MINE:</b> every block, monster and boss share pays from +5% to +70% more.</li>
 <li><b>Speed:</b> blocks break from +5% to +70% faster.</li>
 </ul>
-<p>Boosts count only while you're signed in and wearing the DEGEN, and the world server checks on chain that it's yours. Nothing pays for just holding an NFT. Across all slots, boosts top out at +150% speed, +150% $MINE and +300% daily cap. For now only the DEGEN slot is live; the other slots (Skin, Companion, Aura, Vehicle) show <b>Coming soon</b>. Everyone's 35,000 a day holds, whatever anyone's boost.</p>
+<p>Boosts count only while you're signed in and wearing the DEGEN, and the world server checks on chain that it's yours. Nothing pays for just holding an NFT: a DEGEN out as an <a href="#bots">autopilot bot</a> earns only while you play, and it uses its own boost, never the boost of the DEGEN you wear. Across all slots, boosts top out at +150% speed, +150% $MINE and +300% daily cap. For now only the DEGEN slot is live; the other slots (Skin, Companion, Aura, Vehicle) show <b>Coming soon</b>. Everyone's 35,000 a day holds, whatever anyone's boost.</p>
 
 <h3>The world server checks every earning</h3>
 <div class="grid">
@@ -433,6 +435,7 @@
 <div class="tile"><b>Movement</b><br>If you move faster than anyone can, you earn nothing for 10 seconds. The same 10-second pause follows connecting, signing in, a jump like <b>/wild</b>, and a rocket flight.</div>
 <div class="tile"><b>Monsters</b><br>The server spawns every monster. Hits can't come faster than a sword swings, or harder than the best weapon hits.</div>
 <div class="tile"><b>Protected places</b><br>Nobody can break or place blocks in the town (64 blocks round the fountain), within 20 blocks of a zone's landing pad, or in Cinderfall's arena and on the path to it. Open chat (<kbd>T</kbd> or <kbd>Enter</kbd>) and type <b>/wild</b> for a safe spot far from spawn (in a zone, far from its pad). You can use it every 30 seconds.</div>
+<div class="tile"><b>Bots too</b><br>Every block an autopilot bot breaks gets the same checks: a real natural block with an open side, within reach of where the bot stood, no faster than the best pickaxe allows with the bot's own speed boost, and close to you. Bots never break placed blocks, and never mine in protected places.</div>
 </div>
 </section>
 
@@ -474,6 +477,7 @@
 <tr><td>Everyone together</td><td class="num">35,000</td></tr>
 </table></div>
 <p>Both limits reset at 00:00 UTC. 35,000 is also the most the mining vault can mint in a day. If a limit holds a conversion back, you get what fits. Only the earnings that payment covers count as converted, and the rest waits for a later day. The panel shows <b>Your conversions today</b> and <b>Everyone's conversions today</b>.</p>
+<p>What your <a href="#bots">autopilot bots</a> earn goes into your wallet's total, so it converts like your own earnings, at your site's rate, within the same 1,500 a day. You and your bots together can earn more than that in a day. The rest stays on the ledger and converts on later days.</p>
 <p>The owner can pause converting (for example, if the server's signing key were ever exposed). While it's paused, your earnings stay on the ledger, and sites can still be opened and upgraded.</p>
 
 <h3>The trade box</h3>
@@ -527,7 +531,7 @@
 <li>The world server checks on-chain that the DEGEN is in the wallet you signed in with. After that, other players see it and your boost starts. The <b>Boosts</b> box shows what you get.</li>
 </ul>
 <p>Before you sign in, only you see the DEGEN on your miner, and it gives no boost. The game remembers which one you wear and puts it back on when you sign in again.</p>
-<p>You wear one DEGEN at a time. While you earn, the world server checks your wallet again every 10 minutes. A DEGEN that has left your wallet stops boosting you, and other players stop seeing it.</p>
+<p>You wear one DEGEN at a time. Up to 4 others can mine beside you as <a href="#bots">autopilot bots</a>. While you earn, the world server checks your wallet again every 10 minutes. A DEGEN that has left your wallet stops boosting you, and other players stop seeing it.</p>
 
 <h3>Boosts</h3>
 <p>A worn DEGEN gives you three boosts. Its rarity sets the base, and each level adds more.</p>
@@ -543,18 +547,18 @@
 <tr><td>Rare</td><td class="num">+10 / +10 / +25</td><td class="num">+15 / +15 / +35</td><td class="num">+25 / +25 / +55</td><td class="num">+40 / +40 / +85</td><td class="num">+60 / +60 / +125</td></tr>
 <tr><td>Legendary</td><td class="num">+20 / +20 / +50</td><td class="num">+25 / +25 / +60</td><td class="num">+35 / +35 / +80</td><td class="num">+50 / +50 / +110</td><td class="num">+70 / +70 / +150</td></tr>
 </table></div>
-<p>Your daily cap in $MINE with each DEGEN (300 without one):</p>
+<p>Your daily cap in $MINE with each DEGEN (300 without one). A DEGEN out as an <a href="#bots">autopilot bot</a> has the same cap, for itself:</p>
 <div class="scroll"><table>
 <tr><th>Rarity</th><th class="num">Level 1</th><th class="num">Level 2</th><th class="num">Level 3</th><th class="num">Level 4</th><th class="num">Level 5</th></tr>
 <tr><td>Common</td><td class="num">330</td><td class="num">360</td><td class="num">420</td><td class="num">510</td><td class="num">630</td></tr>
 <tr><td>Rare</td><td class="num">375</td><td class="num">405</td><td class="num">465</td><td class="num">555</td><td class="num">675</td></tr>
 <tr><td>Legendary</td><td class="num">450</td><td class="num">480</td><td class="num">540</td><td class="num">630</td><td class="num">750</td></tr>
 </table></div>
-<div class="note">Boosts only add to what you do. Holding a DEGEN earns nothing by itself. Guests earn nothing, so they get no boost. The limit of 35,000 $MINE a day for all players together still holds.</div>
+<div class="note">Boosts only add to what you do. Holding a DEGEN earns nothing by itself, and a DEGEN out as a bot mines only while you play. Guests earn nothing, so they get no boost. The limit of 35,000 $MINE a day for all players together still holds.</div>
 <p>Boosts raise what the game counts as your earnings. To get $MINE in your wallet, you still convert those earnings in the Mining Site panel, at your mining site's rate.</p>
 
 <h3>Levels</h3>
-<p>Every DEGEN starts at level 1. Its holder can raise it one level at a time, up to level 5. Press <b>Level up</b> in the <b>Levels</b> list of the Mining Site panel. Your wallet asks you to approve exactly the cost, then to pay. 75% of each payment is burned for good, and 25% goes to the project treasury. If it's the DEGEN you wear, your boost updates a moment later.</p>
+<p>Every DEGEN starts at level 1. Its holder can raise it one level at a time, up to level 5. Press <b>Level up</b> in the <b>Levels</b> list of the Mining Site panel. Your wallet asks you to approve exactly the cost, then to pay. 75% of each payment is burned for good, and 25% goes to the project treasury. If it's the DEGEN you wear, your boost updates a moment later. If it's out as a bot, the bot's cap and boost update too.</p>
 <div class="scroll"><table>
 <tr><th>Level up to</th><th class="num">Cost ($MINE)</th><th class="num">Total from level 1</th></tr>
 <tr><td>Level 2</td><td class="num">2,310</td><td class="num">2,310</td></tr>
@@ -581,6 +585,110 @@
 <li>CrafterArt (draws the skins): <span class="mono">0xA34749e822fF36E2e9aE6A6A158F468cA1E3AED3</span> <a href="https://robinhoodchain.blockscout.com/address/0xA34749e822fF36E2e9aE6A6A158F468cA1E3AED3" target="_blank" rel="noopener">Blockscout ↗</a></li>
 <li>CrafterLevels (levels): <span class="mono">0xd7781dcBC1C4D80A4309F39D8350f8105C218Dd6</span> <a href="https://robinhoodchain.blockscout.com/address/0xd7781dcBC1C4D80A4309F39D8350f8105C218Dd6" target="_blank" rel="noopener">Blockscout ↗</a></li>
 </ul>
+</section>
+
+  <section class="card" id="bots">
+<h2>Autopilot bots<small>Your other DEGENs mine beside you while you play</small></h2>
+<p>Have more than one I'M DEGEN? You wear one, and up to 4 others can come along as autopilot bots. A bot looks like its DEGEN, holds a pickaxe from your bag and mines natural blocks near you. What it earns goes to your wallet. That's you plus 4 bots: at most 5 DEGENs mining for you at once.</p>
+<p>Your own game runs your bots, so it has to be open and you have to be playing. Bots follow you, pause when you stop, and the world server checks every block they break, just as it checks yours.</p>
+
+<h3>Send out a bot</h3>
+<ul>
+<li>Sign in to earn first (Mining Site panel, <kbd>M</kbd>). Guests can't send out bots.</li>
+<li>Open the <b>Autopilot</b> box in the Mining Site panel. It lists the DEGENs in your wallet that can work as bots.</li>
+<li>Pick a DEGEN and give it a pickaxe from your bag. The world server checks on chain that the DEGEN is yours, and the bot appears next to you.</li>
+<li>New bots start on the home planet. To take them to a zone, see <a href="#bots-trips">Bots on the rocket</a>.</li>
+<li>To stop a bot, recall it in the same box. Its pickaxe comes back to your bag.</li>
+</ul>
+<p>A line by your earnings at the top left shows how your bots are doing. Other players see your bots as miners with a name tag such as "Name's bot #1234".</p>
+
+<h3>Which DEGENs can be bots</h3>
+<ul>
+<li>A DEGEN in the wallet you signed in with. The world server checks on chain when you send it out, and again every 10 minutes. A bot whose DEGEN has left your wallet is recalled.</li>
+<li>Not the DEGEN you wear.</li>
+<li>Not one you wore while earning today. The other way round too: a DEGEN that mined as a bot today can't be worn until tomorrow (00:00 UTC).</li>
+<li>Not one that's already out as a bot somewhere else. If a DEGEN you just got is still out as someone else's bot, sending it out (or wearing it) recalls their bot.</li>
+<li>At most 4 bots at once, and at most 4 different DEGENs as bots in a UTC day. You can recall a bot and send the same DEGEN out again, but a 5th different DEGEN that day is refused. Swapping in fresh DEGENs doesn't add more caps.</li>
+</ul>
+
+<h3>What a bot earns</h3>
+<p>A bot earns like a player: the same rates for natural blocks (see <a href="#earn">Earning $MINE</a>), double on Deepvein, plus its own DEGEN's $MINE boost. Bots don't fight, so they earn nothing from monsters or Ashgrim.</p>
+<ul>
+<li><b>Its own daily cap:</b> each bot has a cap of its own, set by its DEGEN's rarity and level, from 330 $MINE a UTC day (a Common at level 1) to 750 (a Legendary at level 5). It's the same table as the DEGEN <a href="#degen">daily caps</a>.</li>
+<li><b>Counted for the DEGEN:</b> a bot's day is counted for its DEGEN, not for your wallet. A DEGEN that already mined today keeps its count if it moves to another wallet.</li>
+<li><b>Your cap stays yours:</b> what your bots earn never uses up your own daily cap. When you reach yours, your bots keep earning to theirs.</li>
+<li><b>Into your wallet's total:</b> bot earnings go into your wallet's total on the ledger and convert like your own, at your mining site's rate.</li>
+<li><b>Everyone's 35,000 a day</b> holds for bots too. Once it's used up, all bots stop until 00:00 UTC.</li>
+<li><b>Its own boost only:</b> a bot uses its own DEGEN's speed and $MINE boost, never the boost of the DEGEN you wear. Level up a bot's DEGEN and its cap and boost go up a moment later.</li>
+</ul>
+<div class="note">Converting has its own limit: your wallet can receive at most 1,500 $MINE a day from your mining site, whoever earned it. You and your bots can earn more than that in a day. The rest stays on the ledger and converts on later days. The <b>Autopilot</b> box says so too.</div>
+
+<h3>Bots work only while you play</h3>
+<p>Your bots work while you're active. If 5 minutes pass without you doing one of these things, they pause:</p>
+<ul>
+<li>Breaking a natural block yourself.</li>
+<li>Placing a block.</li>
+<li>Hitting a monster, Ashgrim, or another player in Red Mesa.</li>
+<li>Sending a chat line.</li>
+<li>Walking 2 blocks or more.</li>
+</ul>
+<p>Only actions the world server accepts count. Turning on the spot, swinging at nothing, connecting, signing in and anything your bots do don't count. When you connect, your bots wait for your first action. The game pauses them 30 seconds before the 5 minutes are up, and they start again as soon as you do one of the things above. While you're knocked out, they pause until you're up again.</p>
+
+<h3 id="bots-trips">Bots on the rocket</h3>
+<p>Bots go where you go. On the rocket card, <b>Take bots</b> lists your bots: pick the ones that come along.</p>
+<ul>
+<li>A trip out costs one ticket for you and one for each bot you take. A trip to Deepvein or Cinderfall with 4 bots needs 5 tickets, 10,500 $MINE in all. To Red Mesa, 5 tickets cost 1,050 $MINE.</li>
+<li>It's all or nothing. Without a ticket for you and every bot you picked, the rocket doesn't fly.</li>
+<li>One payment can buy several tickets to a zone, up to 5. The card counts the tickets the trip needs and buys the ones you're short of in one go.</li>
+<li>Bots you leave out stay home. When you're back on the home planet, the game sends them out again, with their pickaxes.</li>
+<li>The way home is free, for you and your bots. If you're knocked out in a zone, your bots come home with you, free.</li>
+<li>New bots start on the home planet only. In a zone, you can send out again, free, a bot whose ticket you paid for on this trip, for example after a reload or a dropped connection.</li>
+</ul>
+
+<h3>Pickaxes and wear</h3>
+<ul>
+<li>Each bot holds one pickaxe from your bag, and it leaves your bag while the bot has it. You can give a bot a different pickaxe in the <b>Autopilot</b> box. The old one comes back to your bag.</li>
+<li>A bot mines only what its pickaxe gets the drop from, at that pickaxe's speed plus its DEGEN's speed boost. For gold, diamonds and $MINE crystal ore, give it an iron pickaxe or better.</li>
+<li>Its pickaxe wears like yours: 1 use for each block it breaks (blocks that break at a touch cost nothing). When the pickaxe breaks, the bot is recalled.</li>
+<li>Ores a bot digs (coal, iron, gold, diamonds and $MINE crystals) go into your bag when there's room. Other blocks still pay their $MINE, but you don't get the blocks themselves.</li>
+<li>When a bot is recalled, its pickaxe comes back to your bag with its wear. If your bag is full, it waits in the <b>Autopilot</b> box until you make room. It's never lost.</li>
+<li>Like the rest of your bag, bot pickaxes live in this browser.</li>
+</ul>
+
+<h3>Where bots mine</h3>
+<ul>
+<li><b>Natural blocks only.</b> A bot never breaks a block someone placed, so builds are safe, yours and everyone else's.</li>
+<li><b>Never in protected places:</b> not in town, not within 20 blocks of a zone's landing pad, and not in Cinderfall's arena or on its path. A bot standing in one of those places, or on a pad, doesn't mine. Bots can still stand and walk anywhere, so they follow you into town.</li>
+<li><b>Never under players.</b> A bot never breaks a block under a player's feet, or within 2 blocks of it sideways, so nobody's ground is dug out from under them.</li>
+<li><b>Close to you.</b> A bot stays within 24 blocks of you, sideways and up or down, so it digs deep only when you go deep. A bot that gets stuck or falls behind jumps back beside you.</li>
+<li><b>No x-ray.</b> Bots only go for blocks with an open side they can reach: the surface, cave walls and their own tunnels. A tunnel is a straight run of at most 6 blocks, picked without looking inside the rock.</li>
+<li><b>Checked like you.</b> The world server checks every bot break: a real natural block with an open side, within reach of where the bot stood, no faster than the best pickaxe allows with the bot's speed boost, and not too far from you. A break that fails is put back, and pays nothing.</li>
+</ul>
+
+<h3>Bots in Red Mesa</h3>
+<p>Bots never fight. They don't attack monsters or Ashgrim, and monsters leave them alone. But in Red Mesa, off the pad, other players can hit your bots. You can't hit your own.</p>
+<ul>
+<li>A bot has 20 health and no armor. After its last hit, it heals 1 point every 4 seconds.</li>
+<li>A beaten bot drops its pickaxe in a loot chest at its feet. The chest lasts 5 minutes, and anyone there can open it. Everyone in Red Mesa sees who beat whose bot, and the bot is recalled.</li>
+<li>The $MINE a bot earned stays yours, and the ores it dug are already in your bag. Only its pickaxe drops.</li>
+</ul>
+<div class="note">Only take a bot into Red Mesa with a pickaxe you're ready to lose.</div>
+
+<h3>What pauses bots</h3>
+<div class="scroll"><table>
+<tr><th>When</th><th>What happens</th></tr>
+<tr><td>5 minutes without you doing anything that counts</td><td>Your bots pause. They start again with your next action.</td></tr>
+<tr><td>You're knocked out</td><td>Your bots pause until you're up.</td></tr>
+<tr><td>You fly the rocket</td><td>Your bots stop for the trip and land with you.</td></tr>
+<tr><td>You switch to another tab or app</td><td>Your bots are hidden but stay out. They come back when you do.</td></tr>
+<tr><td>Your connection drops</td><td>Your bots wait until the world server takes them back.</td></tr>
+<tr><td>A bot reaches its daily cap</td><td>That bot stops until 00:00 UTC.</td></tr>
+<tr><td>Everyone's 35,000 is used up</td><td>All bots stop until 00:00 UTC.</td></tr>
+<tr><td>A bot's pickaxe breaks</td><td>The bot is recalled.</td></tr>
+<tr><td>The world server is very busy that day</td><td>Bots stop for the rest of the UTC day ("The world is busy today"). This keeps the world within its free daily limits.</td></tr>
+<tr><td>You sign out, leave the game, or sign in somewhere else</td><td>Your bots are recalled.</td></tr>
+<tr><td>A bot's DEGEN leaves your wallet</td><td>That bot is recalled.</td></tr>
+</table></div>
 </section>
 
   <section class="card" id="gear">
@@ -694,28 +802,28 @@
 <li>Stand on the pad and press <kbd>F</kbd>, or walk up close and click the rocket. On a touch screen, aim at the rocket and tap <b>⛏</b>.</li>
 <li>The <b>🚀 Where to?</b> card opens. It lists every planet with its ticket price and its PvP rule, and marks the one you're on with <b>You're here</b>. Click another planet to fly.</li>
 <li>The rocket lifts off, you see the planet you're flying to turning in space, and you land on its pad.</li>
-<li>The world server remembers which zone your wallet is on. If you reload or lose your connection, you land back on that zone's pad as soon as you're signed in again. The game usually signs you back in by itself.</li>
+<li>The world server remembers which zone your wallet is on. If you reload or lose your connection, you land back on that zone's pad as soon as you're signed in again. The game usually signs you back in by itself. Bots whose tickets you paid for on that trip can go out again there, free.</li>
 </ul>
 
 <h3>Tickets</h3>
 <ul>
-<li>Each trip out costs one ticket. A trip out is home to a zone, or one zone to another.</li>
+<li>Each trip out costs one ticket for you, and one more for each <a href="#bots-trips">bot</a> you take. A trip out is home to a zone, or one zone to another.</li>
 <li>A ticket is for one zone. A Deepvein ticket only flies you to Deepvein.</li>
 <li>The ticket is used when you take off. After that there's no time limit, so you can stay in the zone as long as you like. A ticket you haven't used yet doesn't run out either.</li>
-<li>The way home is always free. From home, your next trip out needs a new ticket.</li>
+<li>The way home is always free, for your bots too. From home, your next trip out needs new tickets.</li>
 <li>You pay for tickets in $MINE, and all of it goes to the treasury. None of it is burned.</li>
 <li>Guests can't fly out. The world server keeps tickets for your wallet, so you need to sign in first.</li>
 </ul>
-<p><b>Buying a ticket:</b> open the rocket card. If you aren't signed in yet, press <b>Sign in to buy a ticket</b> (your wallet asks you to log in first if you haven't). Signing in is one free signature, not a transaction. Then press <b>Buy ticket: 2,100 $MINE</b> (<b>210 $MINE</b> for Red Mesa) under the zone's name. Your wallet usually asks you twice: step 1 approves exactly the ticket price, and step 2 pays it. The world server checks the payment on the chain, and then the zone shows <b>🎫 You have 1 ticket</b>. Click the zone to fly.</p>
+<p><b>Buying tickets:</b> open the rocket card. If you aren't signed in yet, press <b>Sign in to buy a ticket</b> (your wallet asks you to log in first if you haven't). Signing in is one free signature, not a transaction. Then press the buy button under the zone's name. A ticket costs 2,100 $MINE (210 $MINE for Red Mesa). Taking bots? Pick them under <b>Take bots</b>: the card counts the tickets the trip needs, and one payment buys the ones you're short of, up to 5. Your wallet usually asks you twice: step 1 approves exactly the price, and step 2 pays it. The world server checks the payment on the chain, and then the zone shows how many tickets you have. Click the zone to fly.</p>
 <p>Short on $MINE? The card tells you so, and the buy button stays off. You can buy more in the trade box of the Mining Site panel (<kbd>M</kbd>). See <a href="#token">$MINE</a> for how trading works.</p>
-<div class="note">If your connection drops right after you pay, you don't lose the ticket. The game remembers the payment in that browser and sends it to the world server again the next time you sign in. The server accepts a payment for up to 3 hours after you make it, and each payment buys one ticket, once.</div>
+<div class="note">If your connection drops right after you pay, you don't lose the tickets. The game remembers the payment in that browser and sends it to the world server again the next time you sign in. The server accepts a payment for up to 3 hours after you make it, and a payment buys as many tickets as it covers, up to 5, once.</div>
 
 <div class="scroll"><table>
 <tr><th>Zone</th><th class="num">Ticket</th><th>PvP</th><th>What's special</th></tr>
 <tr><td><b>Home planet</b></td><td class="num">Free (the way home)</td><td>No</td><td>The town, the shops and the villagers. This is the only place where you can revive on the spot after a knock-out (420 $MINE, for signed-in players).</td></tr>
 <tr><td><b>Deepvein</b> (2x Mine Zone)</td><td class="num">2,100 $MINE</td><td>No</td><td>Everything you earn here pays double. Rare ores are three times as common. Monsters are tougher and come day and night. The whole zone grows back every Monday.</td></tr>
 <tr><td><b>Cinderfall</b> (Boss Zone)</td><td class="num">2,100 $MINE</td><td>No</td><td>A world of ash and fire. The boss Ashgrim waits in the arena north of the pad. Beat it together and share 150 $MINE.</td></tr>
-<tr><td><b>Red Mesa</b> (PvP Zone)</td><td class="num">210 $MINE</td><td>Yes, but never on the pad</td><td>Mesas and canyons where players can fight each other. Mining and monsters work as they do at home.</td></tr>
+<tr><td><b>Red Mesa</b> (PvP Zone)</td><td class="num">210 $MINE</td><td>Yes, but never on the pad</td><td>Mesas and canyons where players can fight each other. Mining and monsters work as they do at home. Players can beat other players' bots here too, and a beaten bot drops its pickaxe in a loot chest.</td></tr>
 </table></div>
 
 <h3>Rules in every zone</h3>
@@ -724,13 +832,13 @@
 <li>In Cinderfall, the arena and the stone-brick path to it are protected too. Nobody can mine or build there.</li>
 <li>The zone tag on your screen shows the planet's name and its rule: <b>No PvP</b>, or <b>PvP on (not on the pad)</b> in Red Mesa.</li>
 <li><b>/spawn</b> takes you back to the zone's landing pad. <b>/wild</b> takes you to a random safe spot far from the pad, in the same zone (once every 30 seconds). <b>/sethome</b> and <b>/home</b> work in zones too, but <b>/home</b> only works on the planet where you set it.</li>
-<li>If you're knocked out in a zone, you're sent straight back to the home planet's town, where <b>Respawn at spawn</b> gets you up for free. Everything you carried, your worn armor too, stays behind in a loot chest where you fell. The chest lasts 5 minutes, and anyone in that zone can open it by walking up to it and clicking it. You can't revive in a zone, and flying back costs a new ticket. See <a href="#ko">Knock-outs and revives</a>.</li>
+<li>If you're knocked out in a zone, you're sent straight back to the home planet's town, where <b>Respawn at spawn</b> gets you up for free. Everything you carried, your worn armor too, stays behind in a loot chest where you fell. The chest lasts 5 minutes, and anyone in that zone can open it by walking up to it and clicking it. Your bots come home with you, free. You can't revive in a zone, and flying back costs new tickets. See <a href="#ko">Knock-outs and revives</a>.</li>
 </ul>
 
 <h3>Deepvein, the 2x Mine Zone</h3>
 <ul>
 <li><b>Double pay:</b> every natural block you break and every monster you beat here pays 2x.</li>
-<li><b>Same caps:</b> your daily cap doesn't double. It stays at 300 $MINE per wallet per UTC day before boosts, and 35,000 for all players together.</li>
+<li><b>Same caps:</b> no daily cap doubles. Yours stays at 300 $MINE a UTC day before boosts, each bot keeps its own cap, and all players together still share 35,000.</li>
 <li><b>Richer rock:</b> diamond ore, gold ore and $MINE crystal ore are three times as common, iron ore twice and coal ore 1.5x. Diamond, $MINE crystal, gold and iron ore also show up closer to the surface. Deep rock fills the lower layers and shows in dark patches on the surface. It takes 1.5x as long to break as stone.</li>
 <li><b>Tougher monsters:</b> monsters come day and night, not only at night or underground. Up to 5 can come at once for each player instead of 3, about every 10 seconds instead of every 20, with 1.5x health and 1.5x damage.</li>
 <li><b>Weekly regrowth:</b> every Monday at 00:00 UTC, Deepvein grows back as new. Every block anyone mined or placed that week is reset, so don't build anything here that you want to keep.</li>
@@ -759,8 +867,9 @@
 <li>To attack, aim at a player and left-click (on a touch screen, tap <b>⛏</b>), just as you would a monster. The world server checks every hit: you must be close, and you can't hit faster than a weapon swings.</li>
 <li>Armor counts. It takes its share of every hit, and each piece you wear loses some durability.</li>
 <li>A beaten player drops everything they carry, their whole inventory plus the armor they wear, in a loot chest where they fell. Then they're sent home. The chest stays in Red Mesa for 5 minutes, and the first player to open it takes everything. Everyone in Red Mesa sees who beat whom.</li>
+<li>Bots can be hit here too, by anyone but their owner. A bot has 20 health and no armor, and a beaten bot drops its pickaxe in a loot chest at its feet. See <a href="#bots">Autopilot bots</a>.</li>
 </ul>
-<div class="note">Only bring into Red Mesa what you're ready to lose.</div>
+<div class="note">Only bring into Red Mesa what you're ready to lose, your bots' pickaxes too.</div>
 </section>
 
   <section class="card" id="ko">
@@ -795,7 +904,8 @@
 <p>Deepvein, Cinderfall and Red Mesa have no revive. The world server sends you straight home, and <b>Respawn at spawn</b> puts you in the town square.</p>
 <ul>
 <li>Your chest stays in the zone where you fell, for 5 minutes. Anyone there can open it.</li>
-<li>To go back, you need a new rocket ticket, one per trip out, unless you already have one: Deepvein 2,100, Cinderfall 2,100 and Red Mesa 210 $MINE.</li>
+<li>Your bots pause while you're down and come home with you, free.</li>
+<li>To go back, you need new rocket tickets, one for you and one for each bot you take, unless you already have them: Deepvein 2,100, Cinderfall 2,100 and Red Mesa 210 $MINE a ticket.</li>
 <li>In Red Mesa, if another player's hit knocked you out, the knock-out screen and the chat name them.</li>
 </ul>
 <div class="note">Heading to a zone? Take only what you need. If you are knocked out there, you have 5 minutes to fly back and reach your chest before it's gone, and someone else may open it first.</div>
@@ -828,8 +938,8 @@
 <h3>Trading</h3>
 <p>The trade box in the Mining Site panel buys and sells $MINE with ETH or IMD. IMD is the token $MINE is paired with in its pool. A trade with ETH also passes through the IMD/ETH pool, which takes its own 1% fee. Quotes include every fee. The pool started with $MINE only, so sellers are paid from the IMD that buyers have put in. The 4% fees wait in the pool until someone collects them. Anyone can collect them, and they always go to the fee wallet.</p>
 
-<h3>No yield farming</h3>
-<p>Nothing pays for holding or waiting. $MINE comes only from what you do in the world, and NFT boosts only add to what you do while you play.</p>
+<h3>Nothing pays for holding</h3>
+<p>Nothing pays for holding or waiting. $MINE comes only from what you do in the world, and NFT boosts only add to what you do while you play. Autopilot bots earn only while you play beside them: they pause after 5 minutes without you doing anything that counts.</p>
 
 <h3>Fixed forever</h3>
 <ul>
@@ -846,7 +956,7 @@
 <li><b>CrafterLevels:</b> DEGEN level costs (at most 2,000,000 $MINE a level), the burn share, and more levels (up to 20).</li>
 <li><b>MinePayments:</b> each payment kind's burn share (0% to 100%), and new kinds of payment (up to 32 in all).</li>
 <li><b>All three:</b> where the treasury is, and the code itself.</li>
-<li><b>The game itself:</b> earning rates, the daily earn caps, and shop, ticket and revive prices live in the game's code. An update to the site and world server can change them. The <a href="https://github.com/AdamNakamoto/MineWorld" target="_blank" rel="noopener">source is public on GitHub ↗</a>.</li>
+<li><b>The game itself:</b> earning rates, the daily earn caps, the bot rules, and shop, ticket and revive prices live in the game's code. An update to the site and world server can change them. The <a href="https://github.com/AdamNakamoto/MineWorld" target="_blank" rel="noopener">source is public on GitHub ↗</a>.</li>
 </ul>
 <div class="note">Whatever code runs in those contracts, nobody, the owner included, can mint more than the vault allows: at most 35,000 $MINE a day. Ownership moves in two steps and can't be renounced. It can be handed to a multisig or a timelock.</div>
 
@@ -936,7 +1046,7 @@
 
   <footer>
     <p>An original block world on Robinhood Chain. Not affiliated with Mojang or Microsoft.</p>
-    <p>Nothing here is financial advice. $MINE comes only from playing; nothing pays for holding.</p>
+    <p>Nothing here is financial advice. $MINE comes only from playing (bots mine only while you play); nothing pays for holding.</p>
   </footer>
 </div>
 <a class="btn top" href="#">↑ Top</a>
