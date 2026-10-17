@@ -6,25 +6,18 @@
 // maxDurability(id) it breaks. Two worn copies of the same item can be combined into one (repair), as in the classic
 // block games: the uses left of both, plus 5% of a new one's.
 //
-// The pickaxes your autopilot bots hold (bots.js, docs/AUTOPILOT.md) are kept here too, out of the bag: `bots` maps a
-// DEGEN's token id to { id, d, look (its packed traits, to dress it again after a reload), stay (left home by a
-// flight: it comes back when you're home), next (a pickaxe it's being handed instead, until the world server says
-// so) }, and `returned` holds pickaxes that came back while the bag was full (they wait in the Autopilot box, never
-// lost). The bag stays where every build reads it (mwc:inv:<wallet>: the slots; mwc:inv:<wallet>:armor: the armor, so
-// an older build, or a tab still running one, never finds an empty bag), and the bots' pickaxes are beside it
-// (mwc:inv:<wallet>:bots = { bots, returned }); all three are written together, so a pickaxe moving between the bag
-// and a bot is one write (a save made as { slots, armor, bots, returned } in the one value still loads). A bot's wear
-// changes with every block it breaks: it's kept in memory and written at most every WEAR_SAVE_MS (and at once by
-// flush(), on page hide), without redrawing anything. A pickaxe change the world server hadn't answered when the page
-// went (entry.next) is undone on loading: the server forgets a page's bots with its connection.
+// The autopilot bots that idle mining replaced (bots.js) held pickaxes from the bag, saved beside it
+// (mwc:inv:<wallet>:bots = { bots: { tokenId: { id, d, next (one it was being handed) } }, returned }, or, in that
+// feature's first builds, { slots, armor, bots, returned } in the one value). Loading such a save brings every one of
+// those pickaxes back into the bag, and any it has no room for waits in `returned` (Take back, in the Idle mining box):
+// none is lost. The bag stays where every build reads it (mwc:inv:<wallet>: the slots; mwc:inv:<wallet>:armor: the
+// armor), and only the pickaxes still waiting are written beside it, as { returned } (which the previous build reads
+// too); with none waiting, that key goes.
 
 import { RECIPES, stackSize, TOOLS, ARMOR, ARMOR_SLOTS, maxDurability, damageable } from "./blocks.js";
-import { SUPPLY } from "./degen-skin.js";
 
 export const SLOTS = 36;
 export const HOTBAR = 9;
-const WEAR_SAVE_MS = 5000; // a bot's pickaxe wear is written at most this often
-const RETURNED_MAX = 40; // pickaxes waiting in the Autopilot box, at most (more can't happen: 4 bots, each one at a time)
 
 /// A slot read back from storage, or null if it doesn't make sense.
 function clean(s) {
@@ -34,37 +27,24 @@ function clean(s) {
   return out;
 }
 const item = (id, d = 0) => (damageable(id) ? { id, n: 1, d } : { id, n: 1 });
-const isPick = (id) => TOOLS[id]?.kind === "pick";
 /// A pickaxe read back from storage ({ id, d }), or null if it isn't one (or is worn out).
-const cleanPick = (p) => (p && isPick(p.id) && Number.isInteger(p.d) && p.d >= 0 && p.d < maxDurability(p.id) ? { id: p.id, d: p.d } : null);
-/// A bot's entry read back from storage, or null.
-function cleanBot(e) {
-  const pick = cleanPick(e);
-  if (!pick) return null;
-  const out = { ...pick, look: Array.isArray(e.look) && e.look.length <= 16 && e.look.every(Number.isInteger) ? e.look : null };
-  if (e.stay) out.stay = true;
-  const next = cleanPick(e.next);
-  if (next) out.next = next;
-  return out;
-}
+const cleanPick = (p) => (p && TOOLS[p.id]?.kind === "pick" && Number.isInteger(p.d) && p.d >= 0 && p.d < maxDurability(p.id) ? { id: p.id, d: p.d } : null);
 
 export function createInventory() {
   let slots = Array(SLOTS).fill(null);
   let armor = { head: null, chest: null, legs: null, feet: null }; // { id, d } or null
-  let bots = {}; // token id -> { id, d, look, stay?, next? }: the pickaxes the autopilot bots hold
-  let returned = []; // [{ id, d }]: pickaxes back from bots while the bag was full
+  let returned = []; // [{ id, d }]: pickaxes back from the old autopilot bots that the bag had no room for
   let key = "mwc:inv:guest";
   let onChange = () => {};
-  let wearTimer = 0; // a write of the bots' wear, waiting
 
-  /// Writes everything (no redraw): the slots and the armor where every build reads them, the bots' pickaxes beside.
+  /// Writes everything (no redraw): the slots and the armor where every build reads them, and beside them the
+  /// pickaxes still waiting (none: that key goes).
   function write() {
-    clearTimeout(wearTimer);
-    wearTimer = 0;
     try {
       localStorage.setItem(key, JSON.stringify(slots));
       localStorage.setItem(`${key}:armor`, JSON.stringify(armor));
-      localStorage.setItem(`${key}:bots`, JSON.stringify({ bots, returned }));
+      if (returned.length) localStorage.setItem(`${key}:bots`, JSON.stringify({ returned }));
+      else localStorage.removeItem(`${key}:bots`);
     } catch {}
   }
   const save = () => {
@@ -75,13 +55,14 @@ export function createInventory() {
   function read(k) {
     try { return JSON.parse(localStorage.getItem(k)); } catch { return null; }
   }
+  /// Loads the bag of `who` (a wallet, or null: the guest's). Returns how many pickaxes the old autopilot bots held
+  /// came back with it (into the bag, or waiting in `returned`).
   function load(who) {
-    if (wearTimer) write(); // (the last wallet's bots' wear first)
     key = `mwc:inv:${who ?? "guest"}`;
     const saved = read(key), kept = read(`${key}:bots`);
     let worn = read(`${key}:armor`);
-    // The slots (the armor and the bots' pickaxes in keys of their own), or as this feature's first builds saved it:
-    // { slots, armor, bots, returned } in the one value.
+    // The slots (the armor and the old bots' pickaxes in keys of their own), or as the autopilot's first builds saved
+    // it: { slots, armor, bots, returned } in the one value.
     const whole = saved && !Array.isArray(saved) && typeof saved === "object" ? saved : null;
     const list = whole ? whole.slots : saved;
     if (whole) worn = whole.armor;
@@ -92,14 +73,16 @@ export function createInventory() {
       const piece = typeof w === "number" ? item(w) : w && clean({ ...w, n: 1 }); // (older saves kept just the id)
       return [slot, piece && ARMOR[piece.id]?.slot === slot ? { id: piece.id, d: piece.d } : null];
     }));
-    bots = {};
-    for (const [tok, e] of Object.entries(held?.bots ?? {})) {
-      const id = Number(tok), b = cleanBot(e);
-      if (Number.isInteger(id) && id >= 1 && id <= SUPPLY && b) bots[id] = b;
-    }
-    returned = (Array.isArray(held?.returned) ? held.returned : []).map(cleanPick).filter(Boolean).slice(0, RETURNED_MAX);
-    if (dropSwaps() || whole) write(); // (the swaps the world server forgot undone; a one-value save put back as every build reads it)
+    // Every pickaxe an old bot held (and one it was being handed), then the ones already waiting: into the bag while
+    // there's room, the rest waiting.
+    const bots = held?.bots && typeof held.bots === "object" ? Object.values(held.bots) : [];
+    const lent = bots.flatMap((e) => [cleanPick(e), cleanPick(e?.next)]).filter(Boolean);
+    const waiting = (Array.isArray(held?.returned) ? held.returned : []).map(cleanPick).filter(Boolean);
+    returned = [];
+    for (const p of [...lent, ...waiting]) stow(p);
+    if (held) write(); // (put back as this build saves it: the old bots' pickaxes are never written again)
     onChange();
+    return lent.length;
   }
 
   // ---------------------------------------------------------------- armor
@@ -170,103 +153,12 @@ export function createInventory() {
     return true;
   }
 
-  // ---------------------------------------------------------------- the autopilot bots' pickaxes
-  /// Hands the pickaxe in slot i to bot `tok` (a DEGEN's token id; `look`: its packed traits): it leaves the bag.
-  /// Returns the bot's entry, or null (not a pickaxe, or that bot holds one already).
-  function lend(i, tok, look = null) {
-    const s = slots[i];
-    if (!s || !isPick(s.id) || bots[tok]) return null;
-    bots[tok] = { id: s.id, d: s.d ?? 0, look: Array.isArray(look) ? look : null };
-    slots[i] = null;
-    save();
-    return bots[tok];
-  }
-  /// Puts a pickaxe back in the bag, or with no room in `returned` (never lost). Worn out, it's gone. Returns
-  /// "bag", "returned" or null.
-  function stow(id, d) {
-    const p = cleanPick({ id, d });
-    if (!p) return null;
+  // ---------------------------------------------------------------- the old bots' pickaxes
+  /// Puts pickaxe p ({ id, d }) in the first free slot, or with no room in `returned` (never lost).
+  function stow(p) {
     const free = slots.findIndex((s) => !s);
-    if (free >= 0) { slots[free] = item(p.id, p.d); return "bag"; }
-    returned.push(p);
-    if (returned.length > RETURNED_MAX) returned.shift();
-    return "returned";
-  }
-  /// Bot `tok` is recalled: its pickaxe comes back with the wear the world server counted (`id`, `d`; its own entry's
-  /// if those don't say), and one it was being handed too. Returns where it went (stow), or null.
-  function giveBack(tok, id = null, d = null) {
-    const e = bots[tok];
-    if (!e) return null;
-    delete bots[tok];
-    const where = isPick(id) && Number.isInteger(d) ? stow(id, d) : stow(e.id, e.d);
-    if (e.next) stow(e.next.id, e.next.d);
-    save();
-    return where;
-  }
-  /// Bot `tok` is gone with its pickaxe (beaten: the pickaxe is in a loot chest; or it wore out). One it was being
-  /// handed comes back.
-  function dropBot(tok) {
-    const e = bots[tok];
-    if (!e) return;
-    delete bots[tok];
-    if (e.next) stow(e.next.id, e.next.d);
-    save();
-  }
-  /// Bot `tok` is to hold the pickaxe in slot i instead: it waits under the bot (entry.next) until the world server
-  /// answers (pickSwapped). Returns the pickaxe, or null.
-  function swapPick(tok, i) {
-    const e = bots[tok], s = slots[i];
-    if (!e || e.next || !s || !isPick(s.id)) return null;
-    e.next = { id: s.id, d: s.d ?? 0 };
-    slots[i] = null;
-    save();
-    return e.next;
-  }
-  /// The world server handed bot `tok` its new pickaxe: the old one comes back (with the wear it counted). The one
-  /// sent coming back instead means it refused (too many changes): the bot keeps the one it had.
-  function pickSwapped(tok, oldId, oldWear) {
-    const e = bots[tok];
-    if (!e?.next) return;
-    if (oldId === e.next.id && oldWear === e.next.d) {
-      stow(e.next.id, e.next.d);
-      delete e.next;
-      save();
-      return;
-    }
-    const said = isPick(oldId) && Number.isInteger(oldWear);
-    stow(said ? oldId : e.id, said ? oldWear : e.d);
-    bots[tok] = { ...e.next, look: e.look, ...(e.stay ? { stay: true } : {}) };
-    save();
-  }
-  /// Every pickaxe being handed to a bot comes back to the bag (or waits in `returned`); each bot keeps the one it had.
-  /// Returns whether there were any (nothing is written).
-  function dropSwaps() {
-    let any = false;
-    for (const e of Object.values(bots)) {
-      if (!e.next) continue;
-      stow(e.next.id, e.next.d);
-      delete e.next;
-      any = true;
-    }
-    return any;
-  }
-  /// The world server forgot every pickaxe change it hadn't answered (the connection dropped, or you signed out): they
-  /// come back to the bag, and each bot keeps the pickaxe it had.
-  function cancelSwaps() { if (dropSwaps()) save(); }
-  /// Bot `tok`'s pickaxe wore by a block: kept in memory, written within WEAR_SAVE_MS (nothing is redrawn).
-  function botWear(tok, d) {
-    const e = bots[tok];
-    if (!e) return;
-    e.d = d;
-    if (!wearTimer) wearTimer = setTimeout(write, WEAR_SAVE_MS);
-  }
-  /// Bot `tok` stays home (a flight it didn't come on) or not.
-  function setStay(tok, on) {
-    const e = bots[tok];
-    if (!e || !!e.stay === !!on) return;
-    if (on) e.stay = true;
-    else delete e.stay;
-    save();
+    if (free >= 0) slots[free] = item(p.id, p.d);
+    else returned.push(p);
   }
   /// Pickaxe `i` of `returned` back into the bag, if there's room.
   function takeBack(i) {
@@ -277,8 +169,6 @@ export function createInventory() {
     save();
     return true;
   }
-  /// Writes now whatever's waiting (the page is being hidden or closed).
-  function flush() { if (wearTimer) write(); }
 
   // ---------------------------------------------------------------- the bag
   function count(id) {
@@ -340,7 +230,6 @@ export function createInventory() {
     save();
     return 0;
   }
-  /// Uses one of the item in slot i (a placed block, an eaten apple).
   /// Throws away up to n of slot i (all of it when n is left out), for good; how many went.
   function discard(i, n = Infinity) {
     const s = slots[i];
@@ -351,6 +240,7 @@ export function createInventory() {
     save();
     return k;
   }
+  /// Uses one of the item in slot i (a placed block, an eaten apple).
   function useSlot(i) {
     const s = slots[i];
     if (!s) return;
@@ -375,17 +265,11 @@ export function createInventory() {
 
   return {
     load, count, fits, add, take, useSlot, discard, canCraft, craft, swap, toolIn, equip, unequip, armorPoints, armorTiers,
-    wearOut, wearArmor, repairs, repair, stacks, clearAll, give,
-    lend, giveBack, dropBot, swapPick, pickSwapped, cancelSwaps, botWear, setStay, takeBack, flush,
+    wearOut, wearArmor, repairs, repair, stacks, clearAll, give, takeBack,
     worn: (slot) => armor[slot]?.id ?? null,
     wornItem: (slot) => armor[slot],
     slot: (i) => slots[i],
-    /// Bot `tok`'s entry ({ id, d, look, stay, next }), or null.
-    bot: (tok) => bots[tok] ?? null,
-    /// Every bot's entry, as [tokenId, entry].
-    bots: () => Object.entries(bots).map(([tok, e]) => [Number(tok), e]),
-    /// The pickaxes in the bag, as { slot, id, d }.
-    picks: () => slots.flatMap((s, i) => (s && isPick(s.id) ? [{ slot: i, id: s.id, d: s.d ?? 0 }] : [])),
+    /// The pickaxes waiting for room in the bag ({ id, d }), in order.
     returned: () => returned.slice(),
     recipes: RECIPES,
     set onChange(f) { onChange = f; },

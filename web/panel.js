@@ -1,8 +1,8 @@
 // The Mining Site panel: log in, sign in to earn (free), open a mining site (ETH) and upgrade it ($MINE), convert
-// earnings to $MINE, trade $MINE, mint or wear an I'M DEGEN character and level it up ($MINE), send your other DEGENs
-// out as autopilot bots (bots.js), and see your NFT boosts (boosts.js). Everything about money happens here, in plain
-// words. Every $MINE payment approves exactly what it
-// costs, then pays (chain.js payMine); part of it is burned and the rest goes to the project's treasury.
+// earnings to $MINE, trade $MINE, mint or wear an I'M DEGEN character and level it up ($MINE), deploy your other
+// DEGENs for idle mining (bots.js), and see your NFT boosts (boosts.js). Everything about money happens here, in plain
+// words. Every $MINE payment approves exactly what it costs, then pays (chain.js payMine); part of it is burned and
+// the rest goes to the project's treasury.
 
 import { formatEther } from "https://esm.sh/viem@2";
 import { explain } from "./chain.js";
@@ -10,7 +10,7 @@ import { createTrade } from "./trade.js";
 import { cardSvg, sealedSvg, TOPS, HEADWEAR, rarityOf, RARITIES, ROOKIE } from "./degen-skin.js";
 import { fmtMine, unitsToWei, BLOCK_REWARDS, MOB_REWARDS, DAILY_EARN_CAP, WORLD_DAILY_CAP, ZONE_PAY } from "./rewards.js";
 import { SLOTS, SLOT_KEYS, TIERS, CRAFTER_LEVELS, MAX, NO_BOOST, issued, itemBoost, describe, dailyCap } from "./boosts.js";
-import { BOT_MAX, BOT_IDLE_MS } from "./bots-rules.js";
+import { BOT_MAX, idleRate } from "./bots-rules.js";
 import { itemName } from "./blocks.js";
 import { MOBS } from "./rules.js";
 import { short } from "./net.js";
@@ -22,11 +22,12 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 /// `game`: { chain, net, ledger() → { signedIn, wallet, today, total, cap, boost }, signIn(), toast(text, kind),
 /// wear(traits, id), leveled(tokenId, level) (a DEGEN was just leveled up), sitesOpen() (mining sites open, as the
 /// world server counts them, or null), refreshCount() (ask the world server again, at most once a minute),
-/// siteOpened() (this wallet just opened its site: the world server counts it), bots: the Autopilot box's { list()
-/// (bots.js roster), picks() / returned() (pickaxes in the bag / waiting for room: { slot or i, id, d, max, name, icon
-/// }), item(id) ({ max, name, icon }), cannot(tokenId) (why a bot can't go out now, or null), deploy(tokenId, slot,
-/// traits), recall(tokenId), changePick(tokenId, slot) (each returns why not, or null), takeBack(i) } }. The ledger's
-/// amounts are in units (rewards.js UNIT).
+/// siteOpened() (this wallet just opened its site: the world server counts it), bots: the Idle mining box's { list()
+/// (bots.js roster), today(tokenId) ([units earned today, its cap or null]), share() (the fair share idle mining last
+/// paid at, or null), cannot(tokenId) (why it can't be deployed now, or null), wearWhy(tokenId) (why it can't be worn
+/// now, or null), deploy(tokenId) (returns why not, or null), recall(tokenId), returned() (pickaxes the old autopilot
+/// bots held, waiting for room in the bag: { i, id, d, max, name, icon }), takeBack(i) } }. The ledger's amounts are in
+/// units (rewards.js UNIT).
 export function createPanel(game) {
   const el = document.getElementById("panel");
   const body = document.getElementById("panelBody");
@@ -38,8 +39,6 @@ export function createPanel(game) {
   // What the last action said, shown where it was started (`at`: "site", "crafter:<id>"...): its progress, how it
   // ended, or why it didn't go through.
   let status = null;
-  // The Autopilot box's pickaxe picker, while it's open: { tok, mode: "on" (send it out) | "pick" (another pickaxe) }.
-  let choosing = null;
   try { worn = JSON.parse(localStorage.getItem("mwc:worn")); } catch {}
 
   /// Runs an action: `fn(step)` may report each stage with step(text) and return the words to end with.
@@ -170,10 +169,8 @@ export function createPanel(game) {
       }
       case "wear": {
         const id = data.id === "none" ? null : Number(data.id);
-        if (id !== null && game.bots?.list().some((r) => r.tok === id)) {
-          game.toast(`DEGEN #${id} is out as a bot: recall it first (a DEGEN that mined as a bot today can be worn tomorrow).`, "bad");
-          return;
-        }
+        const why = id === null ? null : game.bots?.wearWhy(id);
+        if (why) return game.toast(why, "bad");
         worn = id;
         try { localStorage.setItem("mwc:worn", JSON.stringify(id)); } catch {}
         const m = snap?.crafters?.mine.find((x) => x.id === id);
@@ -186,15 +183,10 @@ export function createPanel(game) {
         return got ? `Claimed ${mine(got.amount)} IMD in trading fees to ${short(got.to)}.` : "Nothing was waiting to claim.";
       }, "admin");
       case "fund": return run("Adding play ETH", () => chain.devFund());
-      // The Autopilot box.
-      case "botchoose": choosing = { tok: Number(data.id), mode: data.mode }; return render();
-      case "botcancel": choosing = null; return render();
-      case "botgo": {
-        const tok = Number(data.id), slot = Number(data.slot), mode = choosing?.mode ?? "on";
-        const m = snap?.crafters?.mine.find((x) => x.id === tok);
-        const why = mode === "on" ? game.bots.deploy(tok, slot, m?.traits ?? null) : game.bots.changePick(tok, slot);
-        choosing = null;
-        status = { at: `bot:${tok}`, text: why ?? (mode === "on" ? `Sending DEGEN #${tok} out: it shows up beside you in a moment.` : "Handing it the new pickaxe…"), kind: why ? "bad" : "good" };
+      // The Idle mining box.
+      case "boton": {
+        const tok = Number(data.id), why = game.bots.deploy(tok);
+        status = why ? { at: `bot:${tok}`, text: why, kind: "bad" } : null;
         return render();
       }
       case "botoff": game.bots.recall(Number(data.id)); status = null; return render();
@@ -279,7 +271,7 @@ export function createPanel(game) {
         ${s.imd !== null && s.imd !== undefined ? `<div class="kv"><span>IMD</span><b>${mine(s.imd)}</b></div>` : ""}</section>` : ""}
 
       ${craftersBox(s, acct)}
-      ${autopilotBox(s, L)}
+      ${idleBox(s, L)}
       ${economyBox()}
       ${ratesBox()}`;
     tradeEl.hidden = !chain.trade;
@@ -434,77 +426,62 @@ export function createPanel(game) {
       exactly the cost, then pay): ${burn}% is burned for good and ${100 - burn}% goes to the project treasury.${chain.trade ? " Short of $MINE? The trade box is below." : ""}</p>`;
   }
 
-  /// The Autopilot box (bots.js, docs/AUTOPILOT.md): your bots, each with its state, its DEGEN's boost, its pickaxe and
-  /// the uses left, and what it earned today of its own cap, with Recall and Change pickaxe; then your other DEGENs (not
-  /// the one you wear) with Send out (picking a pickaxe from your bag); pickaxes that came back to a full bag; and the
-  /// rules (you + BOT_MAX, the idle pause, the conversion limit per wallet).
-  function autopilotBox(s, L) {
+  /// The Idle mining box (bots.js, docs/AUTOPILOT.md): your DEGENs but the one you wear (the deployed ones first, with
+  /// their state), each with its cap a day and its rate an hour (its DEGEN's cap boost raises both), what it earned
+  /// today of that cap, and Deploy or Recall; the pickaxes the old autopilot bots held that wait for room in your bag;
+  /// and the rules (online only, BOT_MAX a day, the fair share and the one now, the conversion limit per wallet).
+  function idleBox(s, L) {
     const M = s?.crafters, B = game.bots;
     if (!M || !B || !chain.account) return "";
-    const roster = B.list(), out = new Set(roster.map((r) => r.tok));
-    const free = (M.mine ?? []).filter((m) => m.traits && m.id !== worn && !out.has(m.id));
-    const picks = B.picks(), returned = B.returned();
-    const card = (traits) => pic(traits ? cardSvg(traits) : sealedSvg());
-    const chooser = (tok) => {
-      if (choosing?.tok !== tok) return "";
-      const list = picks.length
-        ? picks.map((p) => `<button class="pick-btn" data-act="botgo" data-id="${tok}" data-slot="${p.slot}"><img src="${p.icon}" alt="">${esc(p.name)} · ${p.max - p.d}/${p.max}</button>`).join("")
-        : `<span class="small muted">No pickaxe in your bag: craft one (E) or buy one at the Smithy (H).</span>`;
-      return `<div class="pick-list">${list}<button class="btn" data-act="botcancel">Cancel</button></div>`;
-    };
-    const rows = roster.map((r) => {
-      const it = B.item(r.pick.id), next = r.next ? B.item(r.next.id) : null;
-      const cap = r.cap ?? dailyCap(r.boost.cap, "home");
-      const pct = Math.min(100, (r.today / Math.max(1, cap)) * 100);
-      return `<div class="bot-row ${r.live ? "out" : ""}">
-        <img src="${card(r.traits)}" alt="">
+    const roster = B.list(), deployed = new Set(roster.map((r) => r.tok));
+    const yours = new Map((M.mine ?? []).map((m) => [m.id, m]));
+    const free = (M.mine ?? []).filter((m) => m.traits && m.id !== worn && !deployed.has(m.id));
+    // One DEGEN (`r`: its roster entry if it's deployed): its cap is the room's once it has said, else worked out from
+    // its rarity and level as the room does (boosts.js dailyCap with its own cap boost, on the home planet).
+    const row = (tok, r) => {
+      const m = yours.get(tok);
+      const tier = r?.tier ?? (m?.traits ? rarityOf(m.traits) : null), level = r?.level ?? m?.level ?? null;
+      const cap = r?.cap ?? (tier === null ? null : dailyCap(itemBoost("crafter", tier, level ?? 1).cap, "home"));
+      const today = B.today(tok)[0], why = r ? null : B.cannot(tok);
+      const pct = cap ? Math.min(100, (today / cap) * 100) : 0;
+      return `<div class="bot-row ${r?.live ? "out" : ""}">
+        <img src="${pic(m?.traits ? cardSvg(m.traits) : sealedSvg())}" alt="">
         <div class="cr-text">
-          <b>Bot #${r.tok} · <span class="tier t${r.tier}">${RARITIES[r.tier]}</span>${r.level ? ` · L${r.level}` : ""}</b>
-          <span class="state">${esc(r.state)}</span>
-          <span class="boost">${describe(r.boost) || "No boost"}</span>
-          <span class="small muted">${esc(it.name)}: ${it.max - r.pick.d} of ${it.max} uses left${next ? ` (getting the ${esc(next.name.toLowerCase())})` : ""}</span>
-          <span class="small">Today ${fmtMine(r.today)} / ${fmtMine(cap)} $MINE</span>
+          <b>#${tok}${tier === null ? "" : ` · <span class="tier t${tier}">${RARITIES[tier]}</span>`}${level === null ? "" : ` · Level ${level}`}</b>
+          ${cap === null ? "" : `<span class="boost">${fmtMine(cap)} $MINE a day · ${fmtMine(Math.round(idleRate(cap) * 3_600_000))} an hour</span>`}
+          ${r ? `<span class="state">${esc(r.state)}</span>` : ""}
+          <span class="small">Today ${fmtMine(today)}${cap === null ? "" : ` / ${fmtMine(cap)}`} $MINE</span>
           <div class="bot-cap"><i style="width:${pct}%"></i></div>
-          ${r.note ? `<span class="small muted">${esc(r.note)}</span>` : ""}
         </div>
-        <div class="bot-btns">
-          <button class="btn" data-act="botoff" data-id="${r.tok}">Recall</button>
-          ${r.live && !r.next ? `<button class="btn" data-act="botchoose" data-id="${r.tok}" data-mode="pick">Change pickaxe</button>` : ""}
-        </div>
-        ${chooser(r.tok)}${statusAt(`bot:${r.tok}`)}
+        ${r ? `<button class="btn" data-act="botoff" data-id="${tok}">Recall</button>`
+          : `<button class="btn gold" data-act="boton" data-id="${tok}" ${why ? `disabled title="${esc(why)}"` : ""}>Deploy</button>`}
+        ${statusAt(`bot:${tok}`)}
       </div>`;
-    }).join("");
-    const offers = free.map((m) => {
-      const r = rarityOf(m.traits), b = itemBoost("crafter", r, m.level ?? 1), why = B.cannot(m.id);
-      return `<div class="bot-row">
-        <img src="${card(m.traits)}" alt="">
-        <div class="cr-text">
-          <b>#${m.id} · <span class="tier t${r}">${RARITIES[r]}</span> · ${m.level === null ? "level ?" : `Level ${m.level}`}</b>
-          <span class="boost">As a bot: ${describe(b)}</span>
-          <span class="small muted">Its own cap: ${fmtMine(dailyCap(b.cap, "home"))} $MINE a day</span>
-        </div>
-        <button class="btn gold" data-act="botchoose" data-id="${m.id}" data-mode="on" ${why ? `disabled title="${esc(why)}"` : ""}>Send out</button>
-        ${chooser(m.id)}${statusAt(`bot:${m.id}`)}
-      </div>`;
-    }).join("");
-    const waiting = returned.length ? `<h3>Pickaxes back from your bots</h3><p class="note">Your bag was full when they came back: take them when there's room.</p>
+    };
+    const rows = [...roster.map((r) => row(r.tok, r)), ...free.map((m) => row(m.id, null))].join("");
+    const returned = B.returned(), live = roster.filter((r) => r.live).length, share = B.share();
+    const waiting = returned.length ? `<h3>Pickaxes back from your bots</h3><p class="note">The autopilot bots held these before idle mining, and your bag
+      was full when they came back: take them when there's room.</p>
       <div class="pick-list">${returned.map((p) => `<button class="pick-btn" data-act="bottake" data-i="${p.i}"><img src="${p.icon}" alt="">${esc(p.name)} · ${p.max - p.d}/${p.max} · Take back</button>`).join("")}</div>` : "";
-    const why = !L.signedIn ? "Sign in to earn first: bots earn for your signed-in wallet." : roster.length >= BOT_MAX ? `You have ${BOT_MAX} bots: recall one to send out another.` : B.cannot(null);
+    const why = !L.signedIn ? "Sign in to earn first: your DEGENs idle-mine for your signed-in wallet."
+      : roster.length >= BOT_MAX ? `${BOT_MAX} DEGENs deployed: recall one to deploy another.` : B.cannot(null);
     return `<section class="box">
-      <h3>Autopilot <span class="status ${roster.some((r) => r.live) ? "open" : "closed"}">${roster.filter((r) => r.live).length} / ${BOT_MAX} OUT</span></h3>
-      <p class="note">Send out up to ${BOT_MAX} of your other DEGENs as bots: they mine near you with a pickaxe from your bag, follow you, and earn like you do,
-      with their own DEGEN's boost and their own daily cap (counted per DEGEN), into your wallet's total. Ores they dig go into your bag.</p>
-      ${roster.length ? `<div class="bot-rows">${rows}</div>` : ""}
-      ${free.length ? `<h3>Your other DEGENs</h3>${why ? `<p class="note">${esc(why)}</p>` : ""}<div class="bot-rows">${offers}</div>`
-        : !roster.length ? `<p class="note">${(M.mine ?? []).length ? "Your other revealed DEGENs show here (not the one you wear)." : "Bots are your other I'M DEGENs: mint or buy one to send out."}</p>` : ""}
+      <h3>Idle mining <span class="status ${live ? "open" : "closed"}">${live} / ${BOT_MAX} DEPLOYED</span></h3>
+      <p class="note">You mine with the DEGEN you wear; deploy up to ${BOT_MAX} of your others to mine for you by time. While you're online, each earns
+      its own daily cap (${DAILY_EARN_CAP.toLocaleString("en-US")} $MINE, more with its cap boost) spread over 24 hours, into your wallet's total. Nothing
+      walks, digs or wears out.</p>
+      ${rows ? `${why && free.length ? `<p class="note">${esc(why)}</p>` : ""}<div class="bot-rows">${rows}</div>`
+        : `<p class="note">${(M.mine ?? []).length ? "Your other revealed DEGENs show here (not the one you wear)." : "Idle miners are your other I'M DEGENs: mint or buy one to deploy it."}</p>`}
       ${waiting}
-      <p class="note">You + ${BOT_MAX}: at most ${BOT_MAX} bots at once, and at most ${BOT_MAX} different DEGENs can mine as your bots in a day (UTC):
-      swapping in fresh ones doesn't add caps. The DEGEN you wear (or wore while earning today) can't go out, and one that mined as a bot today
-      can't be worn until tomorrow.</p>
-      <p class="note">Bots work only while you play: they pause ${Math.round(BOT_IDLE_MS / 60_000)} minutes after your last move, break, place, hit or
-      chat line, and while you're knocked out or flying. A trip out takes a ticket for each bot you take (the rocket's card); in Red Mesa other
-      players can beat a bot, and its pickaxe drops in a loot chest.</p>
-      ${s.walletCap !== undefined ? `<p class="note">Converting is limited to ${mine(s.walletCap)} $MINE a day per wallet: what your bots earn above it waits for later days.</p>` : ""}
+      <p class="note">Online only: deployed DEGENs earn while your game is open, connected and signed in, on any planet, idle or in another tab.
+      Logged off, the tab closed or the phone asleep, they earn nothing, and that time isn't made up later.</p>
+      <p class="note">At most ${BOT_MAX} at once, and ${BOT_MAX} different DEGENs a day (UTC): swapping in fresh ones doesn't add caps. The DEGEN you wear
+      (or wore while earning today) can't be deployed, and one that idle-mined today can't be worn until tomorrow.</p>
+      <p class="note">A fair share: everyone's ${WORLD_DAILY_CAP.toLocaleString("en-US")} $MINE a day is shared, so on a busy day every deployed DEGEN's
+      rate slows by the same share and it lasts until 00:00 UTC (what players mine themselves counts too).${share === null ? ""
+        : share < 1 ? ` Right now: ${Math.floor(share * 100)}% of the full rate.` : " Right now: the full rate."}</p>
+      ${s.walletCap !== undefined ? `<p class="note">Converting is limited to ${mine(s.walletCap)} $MINE a day per wallet: what you and your DEGENs earn
+      above it waits for later days.</p>` : ""}
     </section>`;
   }
 
@@ -543,8 +520,8 @@ export function createPanel(game) {
       <div class="kv"><span>Liquidity</span><b>50% (10,500,000), locked forever in the $MINE/IMD pool</b></div>
       <div class="kv"><span>Mining vault</span><b>50% (10,500,000), minted only as players convert, at most ${WORLD_DAILY_CAP.toLocaleString("en-US")} a day</b></div>
       <div class="kv"><span>Trading fee</span><b>4% per trade</b></div>
-      <p class="note">No yield farming: nothing pays for holding or waiting. $MINE comes only from what you do in the world (your autopilot
-      bots earn only while you play, and pause after ${Math.round(BOT_IDLE_MS / 60_000)} minutes idle).</p></section>`;
+      <p class="note">No yield farming: holding an NFT pays nothing. $MINE comes only from the world: what you mine yourself, and what your
+      deployed DEGENs idle-mine while you're online (offline, nothing).</p></section>`;
   }
 
   function ratesBox() {
@@ -552,7 +529,7 @@ export function createPanel(game) {
     const mobs = Object.entries(MOB_REWARDS).map(([k, v]) => `<div class="kv"><span>${esc(MOBS[k].name)}</span><b>${v}</b></div>`).join("");
     return `<section class="box"><h3>What earns $MINE</h3>
       <p class="note">Natural blocks only (blocks players placed pay nothing). Up to ${DAILY_EARN_CAP.toLocaleString("en-US")} $MINE a day for you,
-      more with a cap boost (each autopilot bot has its own cap). Deepvein pays ${ZONE_PAY.deep}x; NFT boosts add their % on top.</p>
+      more with a cap boost (each DEGEN you deploy idle-mines up to its own cap). Deepvein pays ${ZONE_PAY.deep}x; NFT boosts add their % on top.</p>
       ${blocks}<h3>Monsters</h3>${mobs}
       <p class="note">Monsters come out at night, and underground at any time.</p></section>`;
   }

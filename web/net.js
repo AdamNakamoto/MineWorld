@@ -13,27 +13,23 @@
 // so the others don't see you glide the last stretch. Your miner's animation (avatar.js) is worked out on each game
 // from how the others move, so it costs no messages.
 //
-// $MINE amounts from the room (earn, signedin, boost, bossreward) are in ledger units, ten-thousandths of a $MINE
-// (rewards.js UNIT). Your NFT boost (boosts.js) comes as ["boost", ...] whenever it changes. Your rocket tickets
-// (zones.js) come as ["tickets", { zone: count }] after signing in and whenever they change.
+// $MINE amounts from the room (earn, signedin, boost, bossreward, botok, idle) are in ledger units, ten-thousandths
+// of a $MINE (rewards.js UNIT). Your NFT boost (boosts.js) comes as ["boost", ...] whenever it changes. Your rocket
+// tickets (zones.js) come as ["tickets", { zone: count }] after signing in and whenever they change.
 //
 // Knocked out (zones.js CHEST_MS), the game reports it once with what you carried (dead()); the room leaves it in a
 // loot chest where you fell and, in a zone, sends you home ("zoned"). At home, revive() asks to get up there again.
 //
-// Autopilot bots (bots.js, docs/AUTOPILOT.md): your bots' work rides inside your own position updates, as their 8th
-// element B = [zone, [tokenId, x, y, z, yaw, botFlags, breaks], ...]. When their breaks wait and nothing has gone out
-// for BOT_BATCH_MS, a "carrier" goes: your last update repeated exactly, with B (and at once before a flight's
-// ["zone", ...] or a hidden tab's ["bot", "sleep"], so their last breaks are paid). The room's word about them (botok,
-// botoff, botearn...) goes to the game's handlers. Other players' bots are drawn like players, under negative ids
-// (bots-rules.js botPid), more slowly (their updates come every few seconds) and only the nearest few.
+// Idle mining (bots.js, docs/AUTOPILOT.md): sendBot asks the room to deploy, recall or read again one of your other
+// DEGENs; its answers (botok, botoff) and its payments every few minutes (idle) go to the game's handlers. Nothing
+// about it rides in your position updates: the room pays by time, while your game is connected.
 
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { createAvatar } from "./avatar.js";
 import { heldModel } from "./held.js";
 import { unpackTraits } from "./degen-skin.js";
 import { unpackBoost } from "./boosts.js";
-import { wrap, wrapDelta, wrapDist } from "./rules.js";
-import { BOT_BATCH_MS, BOT_MARK_MOVE, BOT_MINING, botPid, botOf, botName } from "./bots-rules.js";
+import { wrap, wrapDelta } from "./rules.js";
 /// An angle brought round into [-pi, pi).
 const turnBy = (a) => a - 2 * Math.PI * Math.floor(a / (2 * Math.PI) + 0.5);
 import { place } from "./planet.js";
@@ -52,14 +48,9 @@ const JUMP_TO = 10; // blocks: an update this far from the last is a teleport or
 export const SNEAKING = 1; // a position update's flags: sneaking
 const PING_EVERY = 45_000; // Cloudflare drops sockets quiet for 100 s
 const SEEN = 96; // blocks: how far other miners are drawn
-// Other players' bots: their updates come with their owner's batches (every BOT_BATCH_MS, or the 3 s heartbeat), so
-// they're drawn further in the past; only the nearest BOT_SHOWN within BOT_SEEN are drawn, named within BOT_NAMED.
-const BOT_INTERP_S = 2.5, BOT_GAP_S = BOT_BATCH_MS / 1000, BOT_PAUSE = 2 * HEARTBEAT;
-const BOT_SHOWN = 8, BOT_SEEN = 48, BOT_NAMED = 16;
 export const short = (a) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
-/// A name over a miner's head (a player's, or a bot's: bots.js makes its own bots' with it too).
-export function nameTag(text) {
+function nameTag(text) {
   const c = document.createElement("canvas");
   c.width = 256;
   c.height = 64;
@@ -83,25 +74,19 @@ export function nameTag(text) {
 
 // What the room says about the planet you're on (ignored between leaving one and the room's "zoned" for the next).
 const PLANET_NEWS = new Set(["p", "act", "join", "leave", "look", "gear", "set", "edits", "mob", "boss", "bosshp",
-  "chest", "chests", "chestgone", "pvphit", "regrow", "sets", "botjoin", "botgear", "botps", "botleave"]);
+  "chest", "chests", "chestgone", "pvphit", "regrow"]);
 
 export function createNet(url, scene, h) {
   let ws = null, id = null, open = false, closedByUs = false, backoff = 1000;
   let hello = null, resume = null, zone = "home", flying = null;
   // id -> { av, tag, holder, name, look, gear, held, pos (drawn), yaw, pitch, sneak, target, tyaw (their latest
   // update), act, snaps (their updates: { t (seconds, when it came), x, y, z, yaw, pitch, flags }), clock (the moment
-  // shown, on the same clock), lag (how far that is behind their latest update, averaged), bot (another player's
-  // bot: its id is negative) }
+  // shown, on the same clock), lag (how far that is behind their latest update, averaged) }
   const others = new Map();
   const queue = [];
-  /// What was last sent (x NaN: send the next whatever it is), and `sent`: its numbers as they went (a carrier
-  /// repeats them exactly).
-  const unsent = () => ({ x: NaN, y: 0, z: 0, yaw: 0, pitch: 0, at: 0, flags: 0, moving: false, sent: null });
+  /// What was last sent (x NaN: send the next whatever it is).
+  const unsent = () => ({ x: NaN, y: 0, z: 0, yaw: 0, pitch: 0, at: 0, flags: 0, moving: false });
   let lastSent = unsent();
-  let lastOut = 0; // when the last position update went (yours or a carrier: performance.now() / 1000)
-  let mark = null; // { x, z }: where your walking last counted as activity for the room (BOT_MARK_MOVE)
-  let botSrc = null; // the game's bots (bots.js wire), as the last tick gave them
-  let asleep = false; // the room was told the tab is hidden (["bot", "sleep"])
   let lastTick = null; // (performance.now() / 1000 at the last tick)
   let pingTimer = null;
   const waiting = new Map(); // reply kind -> resolve
@@ -122,8 +107,6 @@ export function createNet(url, scene, h) {
       ws.send(JSON.stringify(["hello", { ...(hello ?? {}), zone }]));
       flying = null;
       lastSent = unsent(); // (the room starts us on the pad: say where we really are)
-      mark = null; // (a new connection starts with no activity: the room's bots wait for the first)
-      asleep = false;
       if (resume) ws.send(JSON.stringify(["resume", resume.address, resume.token]));
       while (queue.length) ws.send(JSON.stringify(queue.shift()));
       clearInterval(pingTimer);
@@ -154,7 +137,7 @@ export function createNet(url, scene, h) {
   /// `holder` stands their avatar there on the curved planet (draw()).
   /// `gear`: the armor tiers they wear (head, chest, legs, feet), then the item in their hand (0: nothing), as the
   /// room relays them.
-  function add(pid, name, look, x, y, z, yaw, gear, bot = false) {
+  function add(pid, name, look, x, y, z, yaw, gear) {
     const ok = Array.isArray(gear) && gear.length >= 4 && gear.slice(0, 4).every((t) => Number.isInteger(t) && t >= 0 && t <= 4);
     const held = ok ? heldOf(gear) : 0;
     gear = ok ? gear.slice(0, 4) : [0, 0, 0, 0];
@@ -168,24 +151,16 @@ export function createNet(url, scene, h) {
     holder.add(av.root);
     scene.add(holder);
     const o = { av, tag, holder, name, look, gear, held, pos: new THREE.Vector3(x, y, z), yaw, pitch: 0, sneak: false,
-      target: new THREE.Vector3(x, y, z), tyaw: yaw, act: false, clock: performance.now() / 1000, lag: 0, bot };
+      target: new THREE.Vector3(x, y, z), tyaw: yaw, act: false, clock: performance.now() / 1000, lag: 0 };
     o.snaps = [{ t: o.clock, x, y, z, yaw, pitch: 0, flags: 0 }];
     if (was) for (const k of ["pos", "yaw", "pitch", "sneak", "act", "snaps", "clock", "lag"]) o[k] = was[k];
     others.set(pid, o);
-  }
-  /// Another player's bot (as the room lists them: [pid, ownerId, name, look, x, y, z, yaw, held]): drawn like a
-  /// player, named for its owner and its DEGEN (the room may send either the owner's name or the bot's whole name).
-  function addBot(pid, ownerId, name, look, x, y, z, yaw, held) {
-    if (!Number.isInteger(pid) || pid >= 0 || ![x, y, z].every(Number.isFinite)) return;
-    const shown = String(name ?? "").includes("'s bot #") ? String(name) : botName(name ?? "Someone", botOf(pid).tokenId);
-    add(pid, shown, look, x, y, z, Number.isFinite(yaw) ? yaw : 0, [0, 0, 0, 0, held], true);
   }
   /// An update from another player: kept to draw them moving to it (tick). Positions are kept the short way round
   /// from the update before, so they interpolate across the seam.
   function heard(o, x, y, z, yaw, pitch, flags) {
     const t = performance.now() / 1000;
     const last = o.snaps[o.snaps.length - 1];
-    const gap = o.bot ? BOT_GAP_S : MIN_GAP, interp = o.bot ? BOT_INTERP_S : INTERP_S;
     x = last.x + wrapDelta(x - last.x);
     z = last.z + wrapDelta(z - last.z);
     const s = { t, x, y, z, yaw: last.yaw + turnBy(yaw - last.yaw), pitch, flags };
@@ -193,9 +168,9 @@ export function createNet(url, scene, h) {
     else {
       // After a pause (standing still, or turning only), the step to here is taken to have begun one update's gap
       // ago: they set off then, rather than creeping all the way since (and the moment shown skips the wait).
-      if (t - last.t > (o.bot ? BOT_PAUSE : PAUSE)) {
-        o.snaps.push({ ...last, t: t - gap });
-        if (o.clock < t - gap) { o.clock = t - gap; o.lag = interp; }
+      if (t - last.t > PAUSE) {
+        o.snaps.push({ ...last, t: t - MIN_GAP });
+        if (o.clock < t - MIN_GAP) { o.clock = t - MIN_GAP; o.lag = INTERP_S; }
       }
       o.snaps.push(s);
       if (o.snaps.length > 12) o.snaps.splice(0, o.snaps.length - 12);
@@ -213,24 +188,6 @@ export function createNet(url, scene, h) {
     others.delete(pid);
   }
 
-  // A hidden tab stops the game (and its bots' work): the room hides your bots meanwhile (they stay yours), and shows
-  // them again when you're back.
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) {
-      if (!open || id === null || !(botSrc?.count > 0)) return;
-      // Their last breaks go first: the room pays them as the bots stand now (back from sleeping, a bot settles in
-      // afresh, unpaid for a moment).
-      flushBots();
-      ws.send('["bot","sleep"]');
-      asleep = true;
-      botSrc.sleep?.();
-    } else if (asleep) {
-      asleep = false;
-      if (open) ws.send('["bot","wake"]');
-      botSrc?.wake?.();
-    }
-  });
-
   function receive(m) {
     const [k] = m;
     if (flying && PLANET_NEWS.has(k)) return; // (about the planet just left)
@@ -238,20 +195,15 @@ export function createNet(url, scene, h) {
       case "welcome": {
         id = m[1];
         for (const p of m[3]) add(...p);
-        for (const b of Array.isArray(m[6]?.bots) ? m[6].bots : []) if (Array.isArray(b)) addBot(...b);
         h.welcome?.(m[2], m[4] ?? others.size + 1, m[6] ?? {});
         break;
       }
       case "zoned": {
-        // The room has you on planet m[1] now: these are the players there (m[4]: their bots). Not the answer to a
-        // flight of ours, the room put you there (sent home, your zone restored), as it does without counting it as a
-        // walk: so does the walking mark here, and your next update says where you are.
-        if (!flying) { lastSent = unsent(); mark = null; }
+        // The room has you on planet m[1] now: these are the players there.
         flying = null;
         zone = m[1];
         for (const pid of [...others.keys()]) { drop(pid); h.gone?.(pid); }
         for (const p of m[2]) add(...p);
-        for (const b of Array.isArray(m[4]) ? m[4] : []) if (Array.isArray(b)) addBot(...b);
         h.zoned?.(m[1], m[3]);
         break;
       }
@@ -298,33 +250,10 @@ export function createNet(url, scene, h) {
       }
       case "edits": if ((m[3] ?? "home") === zone) h.edits?.(m[1], m[2]); break;
       case "set": h.set?.(m[1], m[2], m[3], m[4]); break;
-      // Several block changes at once: bots' breaks near you, or (to their owner) the undos of refused ones.
-      case "sets": for (const c of Array.isArray(m[1]) ? m[1] : []) if (Array.isArray(c)) h.set?.(c[0], c[1], c[2], c[3]); break;
-      // Your bots (bots.js), as the room keeps them.
-      case "botok": h.botok?.(m[1], m[2], m[3], m[4], m[5], m[6], m[7]); break;
-      case "botoff": h.botoff?.(m[1], m[2] ?? null, m[3] ? 1 : 0, m[4] ?? null, m[5] ?? null); break;
-      case "botpick": h.botpick?.(m[1], m[2], m[3]); break;
-      case "botearn": h.botearn?.(Array.isArray(m[1]) ? m[1].filter(Array.isArray) : [], m[2]); break;
-      case "botidle": h.botidle?.(!!m[1]); break;
-      case "bothit": h.bothit?.(m[1], m[2], m[3]); break;
-      case "botko": h.botko?.(m[1], m[2]); break;
-      // Other players' bots on your planet.
-      case "botjoin": addBot(m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9]); break;
-      case "botgear": {
-        const o = others.get(m[1]);
-        if (o?.bot) { o.held = heldOf([0, 0, 0, 0, m[2]]); o.av.hold(heldModel(o.held)); }
-        break;
-      }
-      case "botps": {
-        // ["botps", ownerId, [[tokenId, x, y, z, yaw, botFlags], ...]]: the owner's bots that moved.
-        if (!Number.isInteger(m[1]) || !Array.isArray(m[2])) break;
-        for (const b of m[2]) {
-          const o = Array.isArray(b) && Number.isInteger(b[0]) ? others.get(botPid(m[1], b[0])) : null;
-          if (o?.bot && [b[1], b[2], b[3], b[4]].every(Number.isFinite)) heard(o, b[1], b[2], b[3], b[4], 0, Number.isInteger(b[5]) ? b[5] : 0);
-        }
-        break;
-      }
-      case "botleave": drop(m[1]); break;
+      // Your deployed DEGENs (bots.js), as the room keeps them, and what idle mining paid.
+      case "botok": h.botok?.(m[1], m[2], m[3], m[4], m[5]); break;
+      case "botoff": h.botoff?.(m[1], m[2] ?? null, m[3] ? 1 : 0); break;
+      case "idle": h.idle?.(Array.isArray(m[1]) ? m[1].filter(Array.isArray) : [], m[2], m[3]); break;
       case "earn": h.earn?.({ units: m[1], today: m[2], total: m[3], what: m[4] }); break;
       case "boost": h.boost?.(unpackBoost(m.slice(1)), m[6]); break;
       case "ledger": h.ledger?.({ today: m[1], total: m[2], cap: m[3] }); break;
@@ -388,81 +317,35 @@ export function createNet(url, scene, h) {
     setTimeout(() => { if (waiting.get(reply) === ok) { waiting.delete(reply); bad(new Error("The world server didn't answer. Try again.")); } }, ms);
   });
 
-  /// Sends your position now (`me` as tick has it), with your bots' batch B if there is one.
-  function sendPos(me, now, B) {
-    const r = (v) => Math.round(v * 100) / 100;
-    const flags = me.flags | 0;
-    const sent = [wrap(r(me.x)), r(me.y), wrap(r(me.z)), r(me.yaw), r(me.pitch), flags];
-    ws.send(JSON.stringify(B ? ["p", ...sent, B] : ["p", ...sent]));
-    // A leap, as the room tells one from your last update (faster than anyone walks, climbs or falls, over at most a
-    // second): a teleport, not a walk.
-    const L = lastSent.sent, dt = Math.min(1, Math.max(0.05, now - lastSent.at)), dy = L ? sent[1] - L[1] : 0;
-    const leap = !!L && (wrapDist(sent[0], sent[2], L[0], L[2]) / dt > 40 || dy / dt > 20 || -dy / dt > 80);
-    lastSent = { x: me.x, y: me.y, z: me.z, yaw: me.yaw, pitch: me.pitch, at: now, flags, moving: !!me.moving, sent };
-    lastOut = now;
-    // Walking BOT_MARK_MOVE from where it last counted is activity, for the room's bots. As in the room, a leap and the
-    // first update after connecting, landing, being put somewhere or a teleport (unmark) only set the mark.
-    if (!mark || leap) mark = { x: sent[0], z: sent[2] };
-    else if (wrapDist(sent[0], sent[2], mark.x, mark.z) >= BOT_MARK_MOVE) { mark = { x: sent[0], z: sent[2] }; h.marked?.(); }
-  }
-  /// A carrier: your last update repeated exactly (so the room sees you haven't moved), with your bots' batch B.
-  /// Never touches lastSent.
-  function carry(now, B) {
-    ws.send(JSON.stringify(["p", ...lastSent.sent, B]));
-    lastOut = now;
-  }
-  /// Your bots' breaks still waiting go now, in a carrier (before a flight's ["zone", ...] or a hidden tab's ["bot",
-  /// "sleep"]: the room pays them where the bots stand now, on this planet).
-  function flushBots() {
-    if (!open || id === null || !lastSent.sent || flying || !(botSrc?.due() >= 2)) return;
-    const B = botSrc.take(zone);
-    if (B) carry(performance.now() / 1000, B);
-  }
-
   /// Called every frame with you (`me`: { x, y, z, yaw, pitch, flags (SNEAKING), moving (walking, not just
-  /// standing) }) and your bots (bots.js wire: { due() → 0 nothing, 1 only moved, 2 breaks waiting, 3 send at once;
-  /// take(zone) → their batch B, or null; count }): sends an update when it changed enough (your bots' batch rides
-  /// on it), or a carrier for the bots, and moves the others.
-  function tick(me, bots = null) {
+  /// standing) }): sends an update when it changed enough, and moves the others.
+  function tick(me) {
     const now = performance.now() / 1000;
     // (The others' clocks keep real time, even when frames are slow and the game's own dt is held short.)
     const step = Math.min(0.25, now - (lastTick ?? now));
     lastTick = now;
-    botSrc = bots;
     if (open && id !== null) {
       const L = lastSent;
       const moved = Math.hypot(wrapDelta(me.x - L.x), me.y - L.y, wrapDelta(me.z - L.z));
       const turned = Math.abs(me.yaw - L.yaw);
       const gap = now - L.at;
       const flags = me.flags | 0;
-      const due = flying ? 0 : bots?.due() ?? 0;
       // Moving, or sneaking or standing up, or just stopped, at once (but no more often than MIN_GAP). Turning alone
       // waits for the heartbeat (the others only see which way you face).
       const stopped = L.moving && !me.moving && moved > 0.05;
       if (gap > MIN_GAP && (!(moved <= 0.6) || flags !== L.flags || stopped || ((moved > 0.05 || turned > 0.35) && gap > HEARTBEAT))) {
-        sendPos(me, now, due ? bots.take(zone) : null);
-      } else if (due) {
-        // Your bots' work, when nothing of yours is going out: breaks after BOT_BATCH_MS of quiet, moves alone after
-        // the heartbeat's, and at once (MIN_GAP apart) when a bot can't go on without it. If you moved or turned since
-        // your last update, it's a real one.
-        const quiet = now - lastOut;
-        if ((due >= 3 && quiet > MIN_GAP) || (due >= 2 && quiet >= BOT_BATCH_MS / 1000) || quiet >= HEARTBEAT) {
-          const B = bots.take(zone);
-          if (B && (!L.sent || !(moved <= 0.05) || turned > 0.35 || flags !== L.flags)) sendPos(me, now, B);
-          else if (B) carry(now, B);
-        }
+        const r = (v) => Math.round(v * 100) / 100;
+        ws.send(JSON.stringify(["p", wrap(r(me.x)), r(me.y), wrap(r(me.z)), r(me.yaw), r(me.pitch), flags]));
+        lastSent = { x: me.x, y: me.y, z: me.z, yaw: me.yaw, pitch: me.pitch, at: now, flags, moving: !!me.moving };
       }
     }
-    // Other players' bots: only the nearest BOT_SHOWN within BOT_SEEN are drawn, and named within BOT_NAMED.
-    const near = [];
     for (const o of others.values()) {
       // The moment shown moves on (never past their latest update); they're drawn between the updates either side.
       // Far behind (a hidden tab, a stall), it skips ahead.
-      const interp = o.bot ? BOT_INTERP_S : INTERP_S;
       const S = o.snaps, latest = S[S.length - 1].t;
-      if (latest - o.clock > 2 * interp + (o.bot ? BOT_GAP_S : MIN_GAP)) { o.clock = latest - interp; o.lag = interp; }
+      if (latest - o.clock > 2 * INTERP_S + MIN_GAP) { o.clock = latest - INTERP_S; o.lag = INTERP_S; }
       o.lag += (latest - o.clock - o.lag) * (1 - Math.exp(-step / LAG_S));
-      o.clock = Math.min(latest, o.clock + step * Math.max(0.75, Math.min(1.25, 1 + (o.lag - interp) * CATCH_UP)));
+      o.clock = Math.min(latest, o.clock + step * Math.max(0.75, Math.min(1.25, 1 + (o.lag - INTERP_S) * CATCH_UP)));
       const shown = o.clock;
       while (S.length > 1 && S[1].t <= shown) S.shift();
       const A = S[0], B = S[1] ?? A;
@@ -470,24 +353,15 @@ export function createNet(url, scene, h) {
       o.pos.set(A.x + (B.x - A.x) * k, A.y + (B.y - A.y) * k, A.z + (B.z - A.z) * k);
       o.yaw = A.yaw + (B.yaw - A.yaw) * k;
       o.pitch = A.pitch + (B.pitch - A.pitch) * k;
-      // (A bot's flags say whether it's mining, BOT_MINING; it never sneaks.)
-      const f = (k < 0.5 ? A : B).flags;
-      o.sneak = !o.bot && !!(f & SNEAKING);
-      if (o.bot) o.act = !!(f & BOT_MINING);
+      o.sneak = !!((k < 0.5 ? A : B).flags & SNEAKING);
       o.av.root.rotation.y = o.yaw + Math.PI;
       o.av.animate(step, { x: o.pos.x, y: o.pos.y, z: o.pos.z, yaw: o.yaw, pitch: o.pitch, sneak: o.sneak, swinging: o.act });
       // Kept at the copy nearest you (voice.js and the rest measure straight to it).
       o.pos.x = me.x + wrapDelta(o.pos.x - me.x);
       o.pos.z = me.z + wrapDelta(o.pos.z - me.z);
-      const d = Math.hypot(o.pos.x - me.x, o.pos.z - me.z);
-      o.holder.visible = d <= (o.bot ? BOT_SEEN : SEEN);
-      if (o.bot && o.holder.visible) near.push([d, o]);
+      const far = Math.hypot(o.pos.x - me.x, o.pos.z - me.z) > SEEN;
+      o.holder.visible = !far;
     }
-    if (near.length > BOT_SHOWN) {
-      near.sort((a, b) => a[0] - b[0]);
-      for (let i = BOT_SHOWN; i < near.length; i++) near[i][1].holder.visible = false;
-    }
-    for (const [d, o] of near) o.tag.visible = d <= BOT_NAMED;
   }
 
   /// Stands the other miners on the curved planet as seen from the camera (after planet.follow, before the render).
@@ -530,25 +404,21 @@ export function createNet(url, scene, h) {
     tick,
     draw,
     raycast,
-    /// Fly to planet `key` (zones.js), taking the bots `tokenIds` (each needs a ticket of its own on a trip out): the
-    /// room puts you on its pad and answers "zoned" with who's there. Your bots' last breaks here go first.
-    fly(key, tokenIds = []) {
-      flushBots();
-      botSrc?.depart?.(); // (then the bots being recalled say so, before the flight: bots.js wire.depart)
+    /// Fly to planet `key` (zones.js): the room puts you on its pad and answers "zoned" with who's there.
+    fly(key) {
       zone = key;
       for (const pid of [...others.keys()]) { drop(pid); h.gone?.(pid); }
       if (!open) return; // (the next hello says where you are)
       flying = key;
-      send(tokenIds.length ? ["zone", key, tokenIds] : ["zone", key]);
+      send(["zone", key]);
       lastSent = unsent();
-      mark = null; // (where you land isn't a walk)
     },
-    /// A message about your bots (docs/AUTOPILOT.md): ["bot", "on", tokenId, pickId, wear], ["bot", "off", tokenId],
-    /// ["bot", "pick", tokenId, pickId, wear], ["bot", "recheck", tokenId]. Only while connected (bots.js tries again
-    /// itself); returns whether it went.
-    sendBot(kind, ...args) {
+    /// A message about one of your DEGENs' idle mining (docs/AUTOPILOT.md): ["bot", "on", tokenId] (deploy, or again
+    /// after a reconnect), ["bot", "off", tokenId] (recall), ["bot", "recheck", tokenId] (read it again: leveled up).
+    /// Only while connected (bots.js tries again itself); returns whether it went.
+    sendBot(kind, tokenId) {
       if (!open || id === null) return false;
-      ws.send(JSON.stringify(["bot", kind, ...args]));
+      ws.send(JSON.stringify(["bot", kind, tokenId]));
       return true;
     },
     bossHit: (dmg) => send(["bosshit", dmg]),
@@ -578,12 +448,8 @@ export function createNet(url, scene, h) {
     hit: (mobId, dmg) => send(["hit", mobId, dmg]),
     /// A monster the room sent that this game couldn't place, or that wandered off or was lost.
     gone: (mobId) => send(["gone", mobId]),
-    /// After a respawn (the room moved you to the town): your next position goes out whatever it is, and only sets the
-    /// walking mark (the room's is reset there too: a respawn isn't a walk).
-    respawn() { send(["respawn"]); lastSent = unsent(); mark = null; },
-    /// You were moved (a teleport: /wild, /spawn, /home): your next position goes out whatever it is, and only sets
-    /// the walking mark, as the room's leap does (a teleport isn't a walk).
-    unmark() { lastSent = unsent(); mark = null; },
+    /// After a respawn (the room moved you to the town): your next position goes out whatever it is.
+    respawn() { send(["respawn"]); lastSent = unsent(); },
     act: (on) => send(["act", on ? 1 : 0]),
     chat: (text) => send(["chat", text]),
     /// Pick a name (web/name-rules.js); the room answers "named" or an error.

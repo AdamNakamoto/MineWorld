@@ -7,8 +7,8 @@
 // rock), outside the town, and broken no faster than the best pickaxe allows; blocks players placed pay nothing;
 // monsters are spawned by the room and their hits come no faster and no harder than the best sword's. A player who
 // moves faster than anyone can, or has just (re)connected, earns nothing for a few seconds. Each wallet earns at most
-// DAILY_EARN_CAP a UTC day (more with boosts), from one connection at a time, its autopilot bots each up to their own
-// cap on top (below), and everyone together at most WORLD_DAILY_CAP. A player
+// DAILY_EARN_CAP a UTC day (more with boosts), from one connection at a time, its idle-mining DEGENs each up to their
+// own cap on top (below), and everyone together at most WORLD_DAILY_CAP. A player
 // signs in once with their wallet (a free signature), and the room signs vouchers for their lifetime total, which
 // MiningSites pays out on-chain to wallets with an open mining site. The ledger counts ten-thousandths of a $MINE
 // (rewards.js UNIT); vouchers are in wei.
@@ -19,8 +19,9 @@
 // and CrafterLevels' level) when they sign in, wear or equip, checks it again every few minutes while they earn, and
 // tells the game. Guests get none.
 //
-// Runs on Cloudflare's free plan: WebSockets hibernate, pings are answered without waking the room, and writes are
-// batched (edits per chunk, the ledger in 16 shards) every FLUSH_MS.
+// Runs on Cloudflare's free plan: WebSockets hibernate, pings are answered without waking the room, writes are batched
+// (edits per chunk, the ledger in 16 shards) every FLUSH_MS, and idle mining's alarm is only set while someone
+// connected has a DEGEN deployed.
 //
 // The world is a small planet that wraps round in x and z (rules.js): positions are kept in 0..WORLD, and every
 // distance (reach, who's near, voice, monsters, the speed check) is measured the short way round.
@@ -44,20 +45,18 @@
 // Rocket tickets (unless zones.js TICKETS_FREE): a signed-in player pays a zone's `ticket` in $MINE on-chain
 // (MinePayments.pay, kind 1, from their own wallet) and sends the transaction's hash; the room reads its receipt and,
 // if the payment checks out (see buyTicket), keeps as many tickets to that zone for the wallet as the payment covers
-// (up to BOT_TICKETS_MAX), once: a trip out there uses one for the player and one for each bot that comes along.
+// (up to TICKETS_MAX), once: each trip out there uses one.
 //
-// Autopilot bots (web/bots-rules.js; docs/AUTOPILOT.md has the design and the protocol): a signed-in player deploys up
-// to BOT_MAX of their other I'M DEGENs as bots that mine near them, each a DEGEN the chain says the wallet owns (read
-// at deploy and every BOOST_RECHECK_MS), never the one they wear or one another connection holds, and at most BOT_MAX
-// distinct ones a UTC day. The player's game simulates the bots and sends their work inside its own positions (["p",
-// ..., B]); the room checks every bot break as it checks a player's (a real natural block, with an open side, within
-// reach of the cell the bot stood in, near its player, never under anyone's feet, no faster than the best pickaxe with
-// the bot's own DEGEN speed boost) and pays it into the wallet's ledger total (not the player's own day), up to the
-// bot's own daily cap, counted by token id (`${ledgerKey}bots`), and only while the player's last accepted action is
-// less than BOT_IDLE_MS old. Bots follow their player on trips (a ticket each), go home with them when they're knocked
-// out, and in Red Mesa can be beaten by other players (the room keeps their health; their pickaxe drops in a loot
-// chest). Every incoming message counts towards the day's: past BOT_BUSY_AT the room takes no bot work until 00:00 UTC
-// (the free plan's limits).
+// Idle mining (web/bots-rules.js; docs/AUTOPILOT.md has the design and the protocol): a signed-in player deploys up to
+// BOT_MAX of their other I'M DEGENs to mine for them, each a DEGEN the chain says the wallet owns (read at deploy and
+// every BOOST_RECHECK_MS), never the one they wear, one another connection holds or one worn while earning today, and
+// at most BOT_MAX distinct ones a UTC day. Nothing of them is in the world (no avatars, no digging, no trips): while
+// the player is online (signed in, and their game heard from in the last IDLE_ONLINE_MS: a message, or its ping), each
+// earns its own daily cap (DAILY_EARN_CAP with its DEGEN's cap boost) spread over IDLE_DAY_MS, paid by a Durable Object
+// alarm every IDLE_TICK_MS into the wallet's ledger total (not the player's own day), counted by token id
+// (`${ledgerKey}bots`). When they all want more than WORLD_DAILY_CAP has left spread over the rest of the UTC day, each
+// gets the same fair share of its rate (idleShare). Offline time never pays. Every incoming message counts towards the
+// day's: past BOT_BUSY_AT the room takes no new deploys until 00:00 UTC (the free plan's limits).
 
 import { DurableObject } from "cloudflare:workers";
 import {
@@ -65,7 +64,7 @@ import {
   encodeAbiParameters, BaseError, ContractFunctionRevertedError,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { BLOCKS, TOOLS, AIR, WATER, BEDROCK, fastestBreak, BEST_DAMAGE, itemName, stackSize, maxDurability, damageable } from "../../web/blocks.js";
+import { BLOCKS, AIR, WATER, BEDROCK, fastestBreak, BEST_DAMAGE, itemName, stackSize, maxDurability, damageable } from "../../web/blocks.js";
 import { naturalBlock, index as blockIndex } from "../../web/worldgen.js";
 import {
   WORLD, CHUNK, HEIGHT, ROOM_REACH, isNight, MOBS, MOB_LIFE_MS, UNDERGROUND_Y, wrap, wrapDelta, wrapDist,
@@ -81,11 +80,7 @@ import {
 import { cleanChat, CHAT_EVERY_MS } from "../../web/chat-rules.js";
 import { traitsOf, packTraits, rarityOf, SUPPLY } from "../../web/degen-skin.js";
 import { cleanName, nameShown, NAME_EVERY_MS } from "../../web/name-rules.js";
-import {
-  BOT_MAX, BOT_IDLE_MS, BOT_MARK_MOVE, BOT_LEASH_ROOM, BOT_DY_ROOM, BOT_SPEED_ROOM, BOT_FOOT_ROOM, BOT_BREAKS_MAX,
-  BOT_CREDIT, BOT_HP, BOT_HEAL_MS, BOT_TICKETS_MAX, BOT_EDIT_CHUNKS, BOT_BUSY_AT, BOT_JUMP, BOT_PAID, BOT_AT_CAP,
-  BOT_WORLD_CAP, BOT_SETTLING, BOT_TOO_FAR, BOT_IDLE, BOT_REFUSED, botPid, botOf, botName,
-} from "../../web/bots-rules.js";
+import { BOT_MAX, IDLE_TICK_MS, IDLE_ONLINE_MS, IDLE_GAP_MAX_MS, BOT_BUSY_AT, idleRate } from "../../web/bots-rules.js";
 
 const MAX_SOCKETS = 300;
 const MAX_PER_IP = 8;
@@ -124,6 +119,7 @@ const RTC_PER_MIN = 240; // voice set-up messages a connection may send a minute
 const FLIGHTS = 3, FLIGHT_EVERY_S = 5; // rocket flights a connection may make at once, and one more every few seconds
 const PAY_AGE_S = 3 * 3600; // seconds: the oldest a ticket's or a revive's payment can be when it's sent here
 const TICKET_KIND = 1n; // MinePayments' kind for rocket tickets ("ticket": all to the treasury)
+const TICKETS_MAX = 5; // rocket tickets one payment can buy (each trip out uses one)
 const REVIVE_KIND_N = BigInt(REVIVE_KIND); // and for revives ("revive": all to the treasury too)
 const DEATHS = 3, DEATH_EVERY_S = 20; // knock-outs that make a chest a connection may have at once, and one more this often
 const MAX_CHESTS = 200; // loot chests kept at most, on all planets together (the oldest go first)
@@ -143,13 +139,9 @@ const WORLD_CAST_MS = 15_000;
 const SITES_WAIT_MS = 4000, SITES_RETRY_MS = 10_000; // (a first count that failed is tried again this soon at most)
 const MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11";
 const SITES_ABI = parseAbi(["function hasSite(address) view returns (bool)"]);
-// Autopilot bots (web/bots-rules.js has the shared rules).
-const BOT_Q = BOT_MAX, BOT_Q_EVERY_S = 5; // bot deploys, pickaxe swaps and rechecks a connection may send at once, and one more this often
-const BOT_SLEEPS = 4, BOT_SLEEP_EVERY_S = 5; // and hides / shows of its bots (its tab hidden and back): each makes every game there redraw them
-const BOT_GONE_MS = 10_000; // a bot the room recalled this recently may still be in a batch its game sent before it heard (botWork)
-const BOT_SAVE_MS = 5000; // what bot breaks change from carriers (which position() doesn't save: wear, the edit allowance) is kept at most this often
-const BOT_SPOTS = [[-1.5, 1.5], [1.5, 1.5], [-1.5, 3], [1.5, 3]]; // where bots come down round their player (x, z), after a flight
-const BOT_BUSY = "The world is busy today: bots can work again after 00:00 UTC.";
+// Idle mining (web/bots-rules.js has the shared rules).
+const BOT_Q = BOT_MAX, BOT_Q_EVERY_S = 5; // deploys and rechecks a connection may send at once, and one more this often
+const BOT_BUSY = "The world is busy today: DEGENs can be deployed again after 00:00 UTC.";
 const MSGS_MARK = 1000; // the day's message count goes into the world's row (written at the next flush) every this many
 // Cloudflare keeps 2,048 bytes of a socket's attachment: past ATT_ROOM, save() drops what's only for a moment first.
 const ATT_ROOM = 1900;
@@ -159,7 +151,6 @@ const BUCKETS = {
   hits: [2, 1000 / HIT_EVERY_MS], flights: [FLIGHTS, 1 / FLIGHT_EVERY_S], tix: [4, 1 / 5], revs: [4, 1 / 5],
   deaths: [DEATHS, 1 / DEATH_EVERY_S], equips: [3, 1 / 3], rechecks: [RECHECKS, 1 / RECHECK_EVERY_S], gears: [4, 1],
   rtcs: [RTC_PER_MIN, RTC_PER_MIN / 60], siteq: [2, 0.1], botq: [BOT_Q, 1 / BOT_Q_EVERY_S],
-  botsl: [BOT_SLEEPS, 1 / BOT_SLEEP_EVERY_S],
 };
 
 // The game's homes: its own domain (to be decided: add it here), Vercel previews and local development.
@@ -229,20 +220,16 @@ export class World extends DurableObject {
     this.nextId = null;
     this.authByIp = new Map(); // ip -> recent sign-in attempts (ms)
     this.crafterSeed = null; // the Crafters' revealed seed, once read (kept in storage too: keepSeed)
-    // Autopilot bots: which connection holds each DEGEN deployed as a bot (claims), each bot's state that needn't
-    // survive the room sleeping (ws -> Map tokenId -> its state: liveOf), the deploys on their way (ws -> Map tokenId
-    // -> { pickId, wear, off, claim }: botOn), the bots each connection lost a moment ago (ws -> Map tokenId -> when:
-    // botOff), when each connection's attachment was last kept from a carrier (ws -> ms: botWork), and the health of the
-    // bots hit in Red Mesa (tokenId -> { hp, hitAt }: botHit; by token, so hiding the tab or a redeploy doesn't heal
-    // them).
+    // Idle mining: which connection holds each deployed DEGEN (claims), the deploys on their way (ws -> Map tokenId ->
+    // { off, claim }: botOn), the connections that have closed (leave: never paid again, though Cloudflare may still
+    // list them for a moment), and when the idle tick's alarm is set (armIdle: undefined until it's known after a wake,
+    // null for none).
     this.botClaims = null;
-    this.botLive = new Map();
     this.botPending = new Map();
-    this.botGone = new Map();
-    this.botSavedAt = new Map();
-    this.botHp = new Map();
-    // The seed never changes once revealed, so a room waking from sleep reads it back before anything else: the bots'
-    // looks (botLook) are never missing.
+    this.left = new WeakSet();
+    this.alarmAt = undefined;
+    // The seed never changes once revealed, so a room waking from sleep reads it back before anything else: wearing a
+    // DEGEN never waits for it to be read on-chain again.
     ctx.blockConcurrencyWhile(async () => {
       const seed = await ctx.storage.get("crafterseed").catch(() => null);
       if (seed) this.crafterSeed ??= BigInt(seed);
@@ -346,10 +333,9 @@ export class World extends DurableObject {
     this.ctx.acceptWebSocket(server);
     const now = Date.now();
     // `eq`: the NFTs this player uses, slot -> [tokenId, tier, level] (boosts.js), as checked on-chain; `local`: the
-    // connection came to wrangler dev on this machine (the dev hooks need it). Later, for autopilot bots: `bots`
-    // ([[tokenId, tier, level, pickId, wear], ...]), `activeAt` (the player's last accepted action: none yet, so a new
-    // connection's bots start paused), `markX`/`markZ` (where walking last counted as one), `botsAt` (when the bots are
-    // next read on-chain), `botsAsleep` (the game's tab is hidden), `botIdle` (the game was told they're paused).
+    // connection came to wrangler dev on this machine (the dev hooks need it). Later: `seenAt` (the game's last message,
+    // for idle mining's online test), and for its deployed DEGENs `bots` ([[tokenId, tier, level, paidTo], ...]) and
+    // `botsAt` (when they're next read on-chain).
     const a = {
       id: this.nextId++, name: "", ip, wallet: null, look: null, zone: "home", ...xyz(spawnOf("home")), yaw: 0, ready: false,
       mobs: [], mobSeq: 0, credit: 0, creditAt: now, suspect: now + SETTLE_MS, eq: {},
@@ -369,11 +355,14 @@ export class World extends DurableObject {
     try { m = JSON.parse(data); } catch { return; }
     if (!Array.isArray(m)) return;
     const a = this.att(ws);
-    if (a.bots?.length) this.botsCheck(ws, a, now); // (their DEGENs read on-chain again, when it's time)
+    // Heard from: online, for idle mining (kept with the attachment's next save; its ping covers a room that slept). A
+    // player with DEGENs deployed makes sure the idle tick's alarm is set when the room doesn't know of one (it woke).
+    a.seenAt = now;
+    if (a.bots?.length && !this.alarmAt) this.armIdle().catch((e) => console.log("idle alarm failed", e?.message ?? e));
     try {
       switch (m[0]) {
         case "hello": return await this.hello(ws, a, m[1]);
-        case "zone": return await this.fly(ws, a, m[1], m[2]);
+        case "zone": return await this.fly(ws, a, m[1]);
         case "p": return await this.position(ws, a, m);
         case "chunks": return await this.chunks(ws, a, m[1]);
         case "break": return await this.breakBlock(ws, a, m[1], m[2], m[3]);
@@ -383,7 +372,7 @@ export class World extends DurableObject {
         case "act": if (a.ready) this.near(a.zone, a.x, a.z, ["act", a.id, m[1] ? 1 : 0], ws); return;
         case "respawn": return this.respawn(ws, a);
         case "bosshit": return await this.bossHit(ws, a, m[1]);
-        case "pvp": return await this.pvpHit(ws, a, m[1], m[2]);
+        case "pvp": return this.pvpHit(ws, a, m[1], m[2]);
         case "dead": return await this.died(ws, a, m[1], m[2], m[3], m[4], m[5]);
         case "pvpdead": return await this.died(ws, a, m[2], null, null, null, m[1]); // (a game from before: ["pvpdead", killer, stacks])
         case "revive": return await this.revive(ws, a, m[1]);
@@ -392,7 +381,7 @@ export class World extends DurableObject {
         case "auth": return this.auth(ws, a, m[1]);
         case "signin": return await this.signIn(ws, a, m[1]);
         case "resume": return await this.resume(ws, a, m[1], m[2]);
-        case "signout": this.dropBots(ws, a); a.wallet = null; a.nick = null; a.eq = {}; this.rename(ws, a); return;
+        case "signout": await this.dropBots(ws, a); a.wallet = null; a.nick = null; a.eq = {}; this.rename(ws, a); return;
         case "voucher": return await this.voucher(ws, a);
         case "wear": return await this.wear(ws, a, m[1]);
         case "equip": return await this.equip(ws, a, m[1], m[2]);
@@ -411,18 +400,20 @@ export class World extends DurableObject {
     }
   }
 
-  webSocketClose(ws) {
-    this.leave(ws);
+  async webSocketClose(ws) {
+    await this.leave(ws);
   }
-  webSocketError(ws) {
-    this.leave(ws);
+  async webSocketError(ws) {
+    await this.leave(ws);
   }
-  leave(ws) {
+  /// A connection closed (once, though both its close and an error may come): its DEGENs are paid up to now if it was
+  /// online, and let go (dropBots).
+  async leave(ws) {
+    if (this.left.has(ws)) return;
+    this.left.add(ws);
     const a = this.att(ws);
+    await this.dropBots(ws, a);
     this.atts.delete(ws);
-    this.dropBots(ws, a);
-    this.botGone.delete(ws);
-    this.botSavedAt.delete(ws);
     if (a.ready) {
       this.zoneCast(a.zone, ["leave", a.id], ws);
       this.everyone(["count", this.players().filter(([w]) => w !== ws).length], ws);
@@ -443,52 +434,35 @@ export class World extends DurableObject {
     const total = this.players().length;
     const w = await this.worldToday();
     this.send(ws, ["welcome", a.id, Date.now(), here.map(([, o]) => this.shown(o)), total, a.zone,
-      { practice: this.practice, ticketsFree: this.ticketsFree(), reviveFree: this.reviveFree(), world: [w.total, w.day], bots: this.botsShown(a.zone, ws) }]);
+      { practice: this.practice, ticketsFree: this.ticketsFree(), reviveFree: this.reviveFree(), world: [w.total, w.day] }]);
     const voices = this.players().filter(([w, o]) => w !== ws && o.voice).map(([, o]) => o.id);
     if (voices.length) this.send(ws, ["voices", voices]);
     this.zoneCast(a.zone, ["join", ...this.shown(a)], ws);
     this.everyone(["count", total], ws);
     await this.zoneNews(ws, a);
   }
-  /// A new name or look: the others on the same planet redraw them (and, when the name changed, their bots, whose name
-  /// tags carry it: the same name again, as on a resume, needn't rebuild every bot in every game there).
+  /// A new name or look: the others on the same planet redraw them.
   rename(ws, a) {
-    const was = a.name;
     a.name = a.wallet ? (a.nick && nameShown(a.nick) ? a.nick : short(a.wallet)) : `Guest-${a.id}`;
     this.save(ws, a);
-    if (!a.ready) return;
-    this.zoneCast(a.zone, ["join", ...this.shown(a)], ws);
-    if (a.name !== was) this.botsJoin(ws, a);
+    if (a.ready) this.zoneCast(a.zone, ["join", ...this.shown(a)], ws);
   }
 
-  /// ["p", x, y, z, yaw, pitch, flags, B]: where a player is, passed on to those near (flags: web/net.js SNEAKING; a
-  /// game from before sends none). B, when there, is the work of the player's bots since the last (botWork), done
-  /// before the player's own move; a `p` with B that repeats the player's last position, yaw and flags exactly (a
-  /// carrier: the game had nothing else to send) brings only that.
+  /// ["p", x, y, z, yaw, pitch, flags]: where a player is, passed on to those near (flags: web/net.js SNEAKING; a
+  /// game from before sends none).
   async position(ws, a, m) {
     if (!a.ready) return;
-    const [, x, y, z, yaw, pitch, flags, B] = m;
-    const ok = [x, y, z, yaw].every(num) && x >= 0 && z >= 0 && x < WORLD && z < WORLD && y >= 0 && y <= HEIGHT + 20;
-    const f = isInt(flags, 0, 256) ? flags : 0;
+    const [, x, y, z, yaw, pitch, flags] = m;
+    if (![x, y, z, yaw].every(num) || x < 0 || z < 0 || x >= WORLD || z >= WORLD || y < 0 || y > HEIGHT + 20) return;
     const now = Date.now();
-    const carrier = B !== undefined && ok && x === a.x && y === a.y && z === a.z && yaw === a.yaw && f === (a.flags ?? 0);
-    if (B !== undefined) await this.botWork(ws, a, B, ok && !carrier ? { x, y, z } : null, now);
-    if (!ok || carrier) return;
     // A player moving faster than anyone can (a teleport) earns nothing for a while. Idle time can't be banked:
     // whatever the gap, a single update may cover at most a second's worth. Falling is fast; climbing isn't.
     // (Walking over the seam, from 511 to 0, is a step, not a leap.)
     const dt = Math.min(1, Math.max(0.05, (now - (a.pAt ?? now)) / 1000));
     const dy = y - a.y;
-    const leap = wrapDist(x, z, a.x, a.z) / dt > 40 || dy / dt > 20 || -dy / dt > 80;
-    if (leap) a.suspect = now + SETTLE_MS;
-    a.x = x; a.y = y; a.z = z; a.yaw = yaw; a.flags = f; a.pAt = now;
-    // Walking BOT_MARK_MOVE from the last mark counts as activity for the bots (turning on the spot, or a leap, doesn't).
-    if (a.markX === undefined || leap) [a.markX, a.markZ] = [x, z];
-    else if (wrapDist(x, z, a.markX, a.markZ) >= BOT_MARK_MOVE) {
-      [a.markX, a.markZ] = [x, z];
-      this.active(ws, a, now);
-    }
-    this.near(a.zone, x, z, ["p", a.id, x, y, z, yaw, num(pitch) ? pitch : 0, f], ws);
+    if (wrapDist(x, z, a.x, a.z) / dt > 40 || dy / dt > 20 || -dy / dt > 80) a.suspect = now + SETTLE_MS;
+    a.x = x; a.y = y; a.z = z; a.yaw = yaw; a.pAt = now;
+    this.near(a.zone, x, z, ["p", a.id, x, y, z, yaw, num(pitch) ? pitch : 0, isInt(flags, 0, 256) ? flags : 0], ws);
     // Deepvein grows back on Mondays: anyone there when the week turns gets the new week's world.
     if (zoneOf(a.zone).weekly && a.week !== weekOf(now)) {
       a.week = weekOf(now);
@@ -509,7 +483,6 @@ export class World extends DurableObject {
     const r = cleanChat(raw);
     if (r.error) return this.send(ws, ["err", r.error]);
     a.chatAt = now;
-    this.active(ws, a, now);
     this.save(ws, a);
     this.everyone(["chat", a.id, a.name, r.text]);
   }
@@ -571,70 +544,52 @@ export class World extends DurableObject {
   }
 
   /// The block at (x, y, z) on `zone` now, and whether a player put it there. x and z wrap round (a neighbour of
-  /// x = 0 is 511). `nat` (optional) remembers the terrain's own blocks for a while (natural).
-  async blockAt(zone, x, y, z, nat) {
+  /// x = 0 is 511).
+  async blockAt(zone, x, y, z) {
     if (!Number.isInteger(x) || !Number.isInteger(z) || y < 0 || y >= HEIGHT) return { block: y < 0 ? BEDROCK : AIR, placed: false };
     x = wrap(x);
     z = wrap(z);
-    const key = this.chunkKey(zone, x, z);
+    const key = `${this.editPrefix(zone)}${Math.floor(x / CHUNK)},${Math.floor(z / CHUNK)}`;
     const e = await this.chunkEdits(key);
     const i = blockIndex(x % CHUNK, y, z % CHUNK);
     const placed = e.has(i);
-    return { key, e, i, placed, block: placed ? e.get(i) : this.natural(zone, x, y, z, nat) };
+    return { key, e, i, placed, block: placed ? e.get(i) : naturalBlock(x, y, z, zone) };
   }
-  /// Where the edits of the chunk holding column (x, z) on `zone` are stored (x and z in 0..WORLD).
-  chunkKey(zone, x, z) {
-    return `${this.editPrefix(zone)}${Math.floor(x / CHUNK)},${Math.floor(z / CHUNK)}`;
+  async solidAt(zone, x, y, z) {
+    return !!BLOCKS[(await this.blockAt(zone, x, y, z)).block]?.solid;
   }
-  /// The block the world was made with at (x, y, z), looked up in `nat` first if it's given: one bot batch's Map
-  /// (the terrain never changes, and a batch's breaks look at the same blocks again and again).
-  natural(zone, x, y, z, nat) {
-    if (!nat) return naturalBlock(x, y, z, zone);
-    const k = (y * WORLD + z) * WORLD + x;
-    let b = nat.get(k);
-    if (b === undefined) nat.set(k, (b = naturalBlock(x, y, z, zone)));
-    return b;
-  }
-  async solidAt(zone, x, y, z, nat) {
-    return !!BLOCKS[(await this.blockAt(zone, x, y, z, nat)).block]?.solid;
-  }
-  /// Whether a player (or a bot, on its foot cell) could stand where they say: their feet and head are not inside
-  /// solid blocks.
-  async standing(a, nat) {
+  /// Whether a player could stand where they say: their feet and head are not inside solid blocks.
+  async standing(a) {
     const x = Math.floor(a.x), y = Math.floor(a.y), z = Math.floor(a.z);
-    return !(await this.solidAt(a.zone, x, y, z, nat)) && !(await this.solidAt(a.zone, x, y + 1, z, nat));
+    return !(await this.solidAt(a.zone, x, y, z)) && !(await this.solidAt(a.zone, x, y + 1, z));
   }
   /// Whether a block has a side open to air or water (anything else couldn't have been reached).
-  async exposed(zone, x, y, z, nat) {
+  async exposed(zone, x, y, z) {
     for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
-      if (!(await this.solidAt(zone, x + dx, y + dy, z + dz, nat))) return true;
+      if (!(await this.solidAt(zone, x + dx, y + dy, z + dz))) return true;
     }
     return false;
   }
-  /// Changing a block counts against the connection's chunk allowance (a few distinct chunks a minute), which a player
-  /// with bots shares with them (BOT_EDIT_CHUNKS for all of them together). `key` is the chunk's storage key (chunkKey).
-  /// Kept small on the attachment, which trim never drops in its minute: `editMin` = { at (the minute's start), p (the
-  /// planet's editPrefix), k (its chunks this minute, as cz * CHUNKS + cx), o (chunks changed on another planet this
-  /// minute: they still count) }.
+  /// Changing a block counts against the connection's chunk allowance (a few distinct chunks a minute). `key` is the
+  /// chunk's storage key (blockAt). Kept small on the attachment, which trim never drops in its minute: `editMin` = {
+  /// at (the minute's start), p (the planet's editPrefix), k (its chunks this minute, as cz * CHUNKS + cx), o (chunks
+  /// changed on another planet this minute: they still count) }.
   editAllowed(a, key, now) {
     const i = key.lastIndexOf(":") + 1, p = key.slice(0, i), [cx, cz] = key.slice(i).split(",").map(Number), n = cz * CHUNKS + cx;
     let m = a.editMin;
     if (!m?.k || now - m.at > 60_000) m = a.editMin = { at: now, p, k: [] };
     if (m.p !== p) [m.o, m.p, m.k] = [(m.o ?? 0) + m.k.length, p, []];
     if (m.k.includes(n)) return true;
-    if (m.k.length + (m.o ?? 0) >= (a.bots?.length ? BOT_EDIT_CHUNKS : EDIT_CHUNKS_PER_MIN)) return false;
+    if (m.k.length + (m.o ?? 0) >= EDIT_CHUNKS_PER_MIN) return false;
     m.k.push(n);
     return true;
   }
-  /// Changes a block (`at`, from blockAt) to `b`: its chunk is written at the next flush. setBlock also tells those near.
-  putBlock(at, b) {
+  /// Changes a block (`at`, from blockAt) to `b` (its chunk is written at the next flush) and tells those near.
+  setBlock(zone, at, b, x, y, z, ws) {
     const e = this.edits.get(at.key) ?? this.edits.set(at.key, at.e).get(at.key); // (let go by the cache meanwhile: back in)
     e.set(at.i, b);
     this.dirtyChunks.add(at.key);
     this.scheduleFlush();
-  }
-  setBlock(zone, at, b, x, y, z, ws) {
-    this.putBlock(at, b);
     this.near(zone, x, z, ["set", x, y, z, b], ws, NEAR_EDITS);
   }
   inReach(a, x, y, z) {
@@ -655,7 +610,6 @@ export class World extends DurableObject {
     const cost = withSpeed(fastestBreak(cur), this.boost(a).speed) * 0.85;
     if (!bucket(a, "credit", BREAK_CREDIT, 1, cost, now)) { this.save(ws, a); return undo(); }
     this.setBlock(zone, at, AIR, x, y, z, ws);
-    if (!at.placed) this.active(ws, a, now);
     const reward = BLOCK_REWARDS[cur];
     if (!at.placed && reward && a.wallet && !(a.suspect > now)) await this.earn(ws, a, reward, cur);
     this.save(ws, a);
@@ -671,7 +625,6 @@ export class World extends DurableObject {
     if (!BLOCKS[b]?.placeable || (cur !== AIR && cur !== WATER && !BLOCKS[cur]?.plant) || protectedIn(zone, x, z) || !this.inReach(a, x, y, z)) return undo();
     if (!this.editAllowed(a, at.key, now) || !bucket(a, "pcredit", PLACE_PER_S, PLACE_PER_S, 1, now)) { this.save(ws, a); return undo(); }
     this.setBlock(zone, at, b, x, y, z, ws);
-    this.active(ws, a, now);
     this.save(ws, a);
   }
 
@@ -709,7 +662,6 @@ export class World extends DurableObject {
     if (wrapDist(a.x, a.z, m.x, m.z) > reach) return;
     // A sword swings every ATTACK_MS; the bucket lets two hits through close together (network jitter), no more.
     if (!bucket(a, "hits", 2, 1000 / HIT_EVERY_MS, 1, now)) { this.save(ws, a); return; }
-    this.active(ws, a, now);
     m.hp -= clampHit(damage);
     if (m.hp <= 0) {
       a.mobs = a.mobs.filter((o) => o !== m);
@@ -732,7 +684,6 @@ export class World extends DurableObject {
   arrive(a, zone, now, spot = landing(zone)) {
     a.zone = zone;
     Object.assign(a, xyz(spot));
-    [a.markX, a.markZ] = [a.x, a.z]; // (being put somewhere isn't walking there)
     a.pAt = now;
     a.suspect = Math.max(a.suspect ?? 0, now + SETTLE_MS); // (a flight is a teleport: nothing is earned for a moment)
     a.mobs = [];
@@ -740,12 +691,11 @@ export class World extends DurableObject {
     a.lastHit = null;
     a.week = weekOf(now);
   }
-  /// ["zone", key, [tokenIds]]: the rocket: the player flies to `zone`. A trip out (from home to a zone, or from a zone
-  /// to another) uses a ticket, and one more for each of their bots it names (useTickets: all or nothing); the bots
-  /// it leaves out stay home (recalled). The way home never needs one, and takes all their bots along. If the flight
-  /// is refused (no ticket, too many too fast, or a bot still being deployed), they're told which planet they're still
-  /// on, and their game goes back there.
-  async fly(ws, a, zone, toks) {
+  /// The rocket: the player flies to `zone`. A trip out (from home to a zone, or from a zone to another) uses a
+  /// ticket (useTicket); the way home never does. If the flight is refused (no ticket, or too many too fast), they're
+  /// told which planet they're still on, and their game goes back there. (Deployed DEGENs need no ticket: they earn
+  /// wherever the player is.)
+  async fly(ws, a, zone) {
     if (!a.ready || !isZone(zone)) return;
     const now = Date.now();
     if (!bucket(a, "flights", FLIGHTS, 1 / FLIGHT_EVERY_S, 1, now)) {
@@ -753,44 +703,30 @@ export class World extends DurableObject {
       this.send(ws, ["err", "The rocket needs a moment between flights."]);
       return this.zoned(ws, a);
     }
-    if (this.botPending.get(ws)?.size) {
-      this.send(ws, ["err", "Your bots are still getting ready: try again in a moment."]);
-      return this.zoned(ws, a);
-    }
-    const out = zone !== "home" && zone !== a.zone;
-    const come = (a.bots ?? []).map(([tok]) => tok).filter((tok) => !out || (Array.isArray(toks) && toks.includes(tok)));
-    if (out && !(await this.useTickets(ws, a, zone, come))) {
-      const Z = zoneOf(zone), n = 1 + come.length, price = `${Z.ticket.toLocaleString("en-US")} $MINE`;
-      const need = n > 1 ? `${n} tickets (${price} each: one for you and one for each bot)` : `a ticket (${price})`;
+    if (zone !== "home" && zone !== a.zone && !(await this.useTicket(ws, a, zone))) {
+      const Z = zoneOf(zone), price = `${Z.ticket.toLocaleString("en-US")} $MINE`;
       this.send(ws, ["err", a.wallet
-        ? `A trip to ${Z.name} needs ${need}: buy ${n > 1 ? "them" : "one"} at the rocket. The way home is free.`
-        : `A trip to ${Z.name} needs ${need}: sign in to earn (M) to buy one. The way home is free.`]);
+        ? `A trip to ${Z.name} needs a ticket (${price}): buy one at the rocket. The way home is free.`
+        : `A trip to ${Z.name} needs a ticket (${price}): sign in to earn (M) to buy one. The way home is free.`]);
       return this.zoned(ws, a);
     }
-    // The bots it leaves out stay home (and so does one deployed while the tickets were read: it has none).
-    for (const [tok] of [...(a.bots ?? [])]) if (!come.includes(tok)) this.botOff(ws, a, tok, "Stayed home.", 0);
     await this.move(ws, a, zone, now);
   }
   /// Trips are free while zones.js TICKETS_FREE says so, and before launch (no MinePayments to buy tickets with).
   ticketsFree() {
     return TICKETS_FREE || !this.env.PAYMENTS_ADDRESS;
   }
-  /// Tickets for player `a`'s trip out to `to`, used up on departure: one for them and one for each bot that comes
-  /// (`toks`), all or none; true if they may go. While TICKETS_FREE (zones.js) every trip is free; otherwise it takes
-  /// the signed-in wallet's tickets to `to` (bought with buyTicket; guests have none). A ticket has no time limit (a
-  /// zone can be stayed in as long as you like), and the way home never needs one. The bots that paid are kept in the
-  /// same write (`botz:<wallet>` = { zone, toks }): there, they can be deployed again for free after a reload or a
-  /// dropped connection (an earlier trip's bots never can, once a new trip out is made).
-  async useTickets(ws, a, to, toks) {
+  /// A ticket for player `a`'s trip out to `to`, used up on departure: true if they may go. While TICKETS_FREE
+  /// (zones.js) every trip is free; otherwise it takes one of the signed-in wallet's tickets to `to` (bought with
+  /// buyTicket; guests have none). A ticket has no time limit (a zone can be stayed in as long as you like), and the
+  /// way home never needs one.
+  async useTicket(ws, a, to) {
     if (this.ticketsFree()) return true;
     if (!a.wallet) return false;
-    const wallet = a.wallet, kept = await this.ctx.storage.get([`tix:${wallet}`, `botz:${wallet}`]);
-    const t = kept.get(`tix:${wallet}`) ?? {}, n = 1 + toks.length;
-    if (!(t[to] >= n)) return false;
-    if ((t[to] -= n) === 0) delete t[to];
-    const put = { [`tix:${wallet}`]: t };
-    if (toks.length || kept.has(`botz:${wallet}`)) put[`botz:${wallet}`] = { zone: to, toks };
-    await this.ctx.storage.put(put);
+    const t = await this.ticketsOf(a.wallet);
+    if (!(t[to] > 0)) return false;
+    if (--t[to] === 0) delete t[to];
+    await this.ctx.storage.put(`tix:${a.wallet}`, t);
     this.send(ws, ["tickets", t]);
     return true;
   }
@@ -801,10 +737,9 @@ export class World extends DurableObject {
   /// ["ticket", txHash, zone]: tickets to `zone`, bought with that transaction. It counts only if the transaction
   /// succeeded, holds a Paid event from MinePayments (PAYMENTS_ADDRESS) by this player's signed-in wallet for kind 1
   /// (tickets) and at least the zone's `ticket` price, is at most PAY_AGE_S old, and hasn't bought tickets before
-  /// (`tixTx:<hash>`, kept for good). The wallet then has as many more tickets there as the payment covers (one for the
-  /// player and one for each bot), up to BOT_TICKETS_MAX. Answers ["ticketok", zone, count, hash, bought] and
-  /// ["tickets", all], or ["ticketno", zone, why, hash, retry] (retry 1: the chain couldn't be read, so the same hash
-  /// may do later; 0: it never will).
+  /// (`tixTx:<hash>`, kept for good). The wallet then has as many more tickets there as the payment covers (one a
+  /// trip), up to TICKETS_MAX. Answers ["ticketok", zone, count, hash, bought] and ["tickets", all], or ["ticketno",
+  /// zone, why, hash, retry] (retry 1: the chain couldn't be read, so the same hash may do later; 0: it never will).
   async buyTicket(ws, a, hash, zone) {
     const env = this.env, now = Date.now();
     const no = (why, retry = false) =>
@@ -833,7 +768,7 @@ export class World extends DurableObject {
         old: "That payment is too old to buy a ticket (over 3 hours).",
       });
       if (!r.ok) return no(r.why, r.retry);
-      const n = Number(r.amount / price < BigInt(BOT_TICKETS_MAX) ? r.amount / price : BigInt(BOT_TICKETS_MAX));
+      const n = Number(r.amount / price < BigInt(TICKETS_MAX) ? r.amount / price : BigInt(TICKETS_MAX));
       const t = await this.ticketsOf(wallet);
       t[zone] = (t[zone] ?? 0) + n;
       await this.ctx.storage.put({ [key]: wallet, [`tix:${wallet}`]: t });
@@ -939,39 +874,29 @@ export class World extends DurableObject {
   /// reload or a dropped connection lands it back there.
   /// `ko`: they were knocked out in a zone and are sent home (died): they come down in town, still knocked out, and the
   /// others see why they left and came (["leave", id, "home", "ko"], ["join", ..., "ko", from]).
-  /// Their bots come along (on a flight, those fly() left them; knocked out, all of them, free) and come down round
-  /// them; `recall`: a move that isn't a flight (signedIn putting the wallet back on its zone) recalls them instead.
-  async move(ws, a, zone, now = Date.now(), ko = false, recall = false) {
+  async move(ws, a, zone, now = Date.now(), ko = false) {
     const from = a.zone;
-    if (recall) for (const [tok] of [...(a.bots ?? [])]) this.botOff(ws, a, tok, "Bots don't come along when the world puts you back on your planet.", 0);
-    if (from !== zone) {
-      this.zoneCast(from, ["leave", a.id, zone, ...(ko ? ["ko"] : [])], ws);
-      this.botsLeave(ws, a, from);
-    }
-    const spot = ko ? spawnOf(zone) : landing(zone);
-    this.arrive(a, zone, now, spot);
+    if (from !== zone) this.zoneCast(from, ["leave", a.id, zone, ...(ko ? ["ko"] : [])], ws);
+    this.arrive(a, zone, now, ko ? spawnOf(zone) : landing(zone));
     if (ko) a.dead = true;
-    this.botsLand(ws, a, spot, now);
     this.save(ws, a);
     this.zoned(ws, a);
     this.zoneCast(zone, ["join", ...this.shown(a), ...(from === zone ? [null] : ko ? ["ko", from] : ["landed"])], ws);
-    this.botsJoin(ws, a);
     if (a.wallet) {
       this.send(ws, this.boostMsg(a)); // (the daily cap there is the zone's: zones.js capMul)
       await this.keepZone(a.wallet, zone);
     }
     await this.zoneNews(ws, a);
   }
-  /// Remembers the zone a wallet is on (home is forgotten: it's where everyone starts; so is the trip its bots paid
-  /// for, useTickets).
+  /// Remembers the zone a wallet is on (home is forgotten: it's where everyone starts).
   async keepZone(wallet, zone) {
-    if (zone === "home") await this.ctx.storage.delete([`zone:${wallet}`, `botz:${wallet}`]);
+    if (zone === "home") await this.ctx.storage.delete(`zone:${wallet}`);
     else await this.ctx.storage.put(`zone:${wallet}`, zone);
   }
-  /// Tells a player which planet they're on and who else is there (["zoned", zone, players, where, bots]).
+  /// Tells a player which planet they're on and who else is there.
   zoned(ws, a) {
     const here = this.onZone(a.zone).filter(([w]) => w !== ws).map(([, o]) => this.shown(o));
-    this.send(ws, ["zoned", a.zone, here, xyz(a), this.botsShown(a.zone, ws)]);
+    this.send(ws, ["zoned", a.zone, here, xyz(a)]);
   }
   /// What a player arriving on a planet (or joining) needs besides the players: the boss in Cinderfall, and the loot
   /// chests there (every planet's, even none: the game drops what it showed before).
@@ -986,20 +911,17 @@ export class World extends DurableObject {
     this.send(ws, ["chests", list.map((c) => [c.id, c.x, c.y, c.z, c.until, c.who])]);
   }
   /// ["respawn"]: back on your feet after being knocked out, in town (knocked out in a zone, the room has already sent
-  /// you home: died), and your bots may work again (botsUp). Asked while up, it's a jump to spawn like any other
-  /// (nothing is earned for a moment).
+  /// you home: died). Asked while up, it's a jump to spawn like any other (nothing is earned for a moment).
   respawn(ws, a) {
     const now = Date.now();
     if (!a.dead) a.suspect = Math.max(a.suspect ?? 0, now + SETTLE_MS);
     Object.assign(a, xyz(spawnOf(a.zone)));
-    [a.markX, a.markZ] = [a.x, a.z]; // (being put somewhere isn't walking there)
     a.pAt = now;
     a.mobs = [];
     a.dead = false;
     a.died = null;
     a.lastHit = null;
     if (a.wallet) this.deaths?.delete(a.wallet);
-    this.botsUp(ws, a, now);
     this.save(ws, a);
   }
 
@@ -1113,7 +1035,6 @@ export class World extends DurableObject {
     const p = bossAt(B, now);
     if (wrapDist(a.x, a.z, p.x, p.z) > BOSS.hitRange || a.y < ARENA.y - 4 || a.y > ARENA.y + BOSS.height + 4) return no();
     if (!bucket(a, "hits", 2, 1000 / HIT_EVERY_MS, 1, now)) { this.save(ws, a); return no(); }
-    this.active(ws, a, now);
     this.save(ws, a);
     const d = Math.min(B.hp, clampHit(damage));
     B.hp -= d;
@@ -1174,10 +1095,9 @@ export class World extends DurableObject {
   /// A hit on another player: only when both are in the same PvP zone (zones.js `pvp`), neither on its pad, close
   /// enough (by where the server last heard they were), no sooner than a swing after the last one, no harder than the
   /// best weapon, and not from someone who has just teleported or is knocked out. Passed to the one hit, whose game
-  /// takes their armor off it. A refused hit is answered ["pvpno", target, why]. A negative id is a bot (botHit).
-  async pvpHit(ws, a, targetId, damage) {
+  /// takes their armor off it. A refused hit is answered ["pvpno", target, why].
+  pvpHit(ws, a, targetId, damage) {
     if (!a.ready) return;
-    if (Number.isInteger(targetId) && targetId < 0) return await this.botHit(ws, a, targetId, damage);
     const now = Date.now();
     const no = (why) => this.send(ws, ["pvpno", targetId, why]);
     const t = Number.isInteger(targetId) && targetId !== a.id ? this.players().find(([, o]) => o.id === targetId) : null;
@@ -1190,60 +1110,17 @@ export class World extends DurableObject {
     if (wrapDist(a.x, a.z, o.x, o.z) > PVP.reach || Math.abs(a.y - o.y) > 4) return no("far");
     if (now - (a.pvpAt ?? 0) < PVP.everyMs) return no("fast");
     a.pvpAt = now;
-    this.active(ws, a, now);
     this.save(ws, a);
     o.lastHit = { by: a.id, at: now };
     this.save(tws, o);
     const dx = wrapDelta(o.x - a.x), dz = wrapDelta(o.z - a.z), len = Math.hypot(dx, dz) || 1;
     this.send(tws, ["pvphit", a.id, clampHit(damage), Math.round((dx / len) * 100) / 100, Math.round((dz / len) * 100) / 100]);
   }
-  /// A hit on a bot (`pid`, its negative id: bots-rules.js botPid), checked as a hit on a player is, and never from its
-  /// own player ("yours"). Its health is kept here, by token (this.botHp: hiding the tab, a recall and a redeploy all
-  /// keep it; BOT_HP, no armor, 1 back every BOT_HEAL_MS after its last hit; whole again once healed, or if the room
-  /// slept) and its player hears of each hit (["bothit", tokenId, hp, attacker]). Beaten, its pickaxe drops in a loot
-  /// chest at its feet (made here, from the pickaxe the room knows it holds), the planet hears who beat it, and its
-  /// player gets ["botko", tokenId, attacker] and the bot back (botoff, its pickaxe lost). Its paid trip there is over.
-  async botHit(ws, a, pid, damage) {
-    const now = Date.now();
-    const no = (why) => this.send(ws, ["pvpno", pid, why]);
-    const { ownerId, tokenId } = botOf(pid);
-    const t = this.players().find(([, o]) => o.id === ownerId);
-    const b = t?.[1].bots?.find(([tok]) => tok === tokenId);
-    if (!b || t[1].botsAsleep) return no("gone");
-    const [tws, o] = t;
-    if (tws === ws) return no("yours");
-    const live = this.botLive.get(tws)?.get(tokenId), p = live?.x === undefined ? o : live;
-    if (!zoneOf(a.zone).pvp || o.zone !== a.zone) return no("nopvp");
-    if (onPad(a.zone, a.x, a.z) || onPad(o.zone, p.x, p.z)) return no("safe");
-    if (a.dead) return no("down");
-    if (a.suspect > now) return no("settling");
-    if (wrapDist(a.x, a.z, p.x, p.z) > PVP.reach || Math.abs(a.y - p.y) > 4) return no("far");
-    if (now - (a.pvpAt ?? 0) < PVP.everyMs) return no("fast");
-    a.pvpAt = now;
-    this.active(ws, a, now);
-    this.save(ws, a);
-    const healed = (h) => Math.min(BOT_HP, h.hp + Math.floor((now - h.hitAt) / BOT_HEAL_MS));
-    for (const [tok, h] of this.botHp) if (healed(h) >= BOT_HP) this.botHp.delete(tok); // (whole again: forgotten)
-    const hp = healed(this.botHp.get(tokenId) ?? { hp: BOT_HP, hitAt: now }) - clampHit(damage);
-    if (hp > 0) {
-      this.botHp.set(tokenId, { hp, hitAt: now });
-      return this.send(tws, ["bothit", tokenId, hp, a.name]);
-    }
-    this.botHp.delete(tokenId);
-    // Beaten: it's gone at once (so its pickaxe can only be in the chest), then the chest is made.
-    const name = botName(o.name, tokenId), zone = o.zone, [x, y, z] = [Math.floor(p.x) + 0.5, Math.floor(p.y), Math.floor(p.z) + 0.5];
-    this.send(tws, ["botko", tokenId, a.name]);
-    this.botOff(tws, o, tokenId, `${a.name} beat it: its pickaxe waits in a loot chest where it fell.`, 0, true);
-    this.zoneCast(zone, ["sys", `${a.name} beat ${name}.`]);
-    await this.makeChest(zone, wrap(x), y, wrap(z), name, `bot:${tokenId}`, cleanItems([[b[3], 1, b[4]]]), now);
-    if (o.wallet && zone !== "home") await this.botzDrop(o.wallet, tokenId);
-  }
 
   // ---------------------------------------------------------------- knock-outs: loot chests and revives
 
   /// The loot chests left by knocked-out players: id -> { id, zone, x, y, z, until, who, owner, items } (`owner`: the
-  /// wallet, "g:<id>" for a guest, or "bot:<tokenId>" for a bot), kept in storage too (the room may sleep between a
-  /// knock-out and the looting).
+  /// wallet, or "g:<id>" for a guest), kept in storage too (the room may sleep between a knock-out and the looting).
   async chestList() {
     if (!this.chests) {
       const list = (await this.ctx.storage.get("chests")) ?? [];
@@ -1283,8 +1160,7 @@ export class World extends DurableObject {
   /// a wallet this.deaths) for a revive. Their things (cleaned up) wait there in a loot chest for CHEST_MS, replacing
   /// any chest of theirs still open; a few knock-outs in a row (DEATHS, then one every DEATH_EVERY_S) make no chest and
   /// the game keeps what it carried. Answers ["dropped", chestId (0: nothing to drop)] or ["dropno", why]. The killer
-  /// is named only in a PvP zone, right after a checked hit from them. Knocked out in a zone, they're sent home (move),
-  /// and their bots with them.
+  /// is named only in a PvP zone, right after a checked hit from them. Knocked out in a zone, they're sent home (move).
   async died(ws, a, items, px, py, pz, killer) {
     if (!a.ready) return;
     if (a.dead) return this.send(ws, ["dropno", "You're already knocked out."]);
@@ -1373,12 +1249,10 @@ export class World extends DurableObject {
       this.payChecks.delete(key);
     }
   }
-  /// Up again where they fell: the room has them there (so their next position is no jump, and no teleport), and their
-  /// bots may work again (botsUp).
+  /// Up again where they fell: the room has them there (so their next position is no jump, and no teleport).
   revived(ws, a, died, hash) {
     Object.assign(a, { x: died.x, y: died.y, z: died.z, pAt: Date.now(), dead: false, died: null, lastHit: null, mobs: [] });
     if (a.wallet) this.deaths?.delete(a.wallet);
-    this.botsUp(ws, a, Date.now());
     this.save(ws, a);
     this.send(ws, ["revived", died.x, died.y, died.z, hash]);
   }
@@ -1423,7 +1297,7 @@ export class World extends DurableObject {
     }
     return [s, sh];
   }
-  /// A wallet's ledger entry: { total, day, today, bots } (`bots`: the DEGENs that earned as its bots today, at most
+  /// A wallet's ledger entry: { total, day, today, bots } (`bots`: the DEGENs that idle-mined for it today, at most
   /// BOT_MAX; cleared with `today` when the UTC day turns).
   async ledger(wallet) {
     const [s, sh] = await this.shard(wallet);
@@ -1453,8 +1327,8 @@ export class World extends DurableObject {
     if (this.world.day !== day) this.world = { day, total: 0 };
     return this.world;
   }
-  /// The bots' day, by token (`${ledgerKey}bots`, so a DEGEN that changes wallets keeps its day): { day, t: { tokenId:
-  /// units it earned as a bot today }, w: { tokenId: 1 if a player earned while wearing it today } }. Written with the
+  /// The DEGENs' day, by token (`${ledgerKey}bots`, so a DEGEN that changes wallets keeps its day): { day, t: { tokenId:
+  /// units it idle-mined today }, w: { tokenId: 1 if a player earned while wearing it today } }. Written with the
   /// ledger (one row a flush); it starts afresh when the UTC day turns.
   async botDays() {
     const day = Math.floor(Date.now() / DAY_MS);
@@ -1465,7 +1339,7 @@ export class World extends DurableObject {
     if (this.tokenDays.day !== day) this.tokenDays = { day, t: {}, w: {} };
     return this.tokenDays;
   }
-  /// The DEGEN `tokenId` boosted a player's earnings today: it can't mine as a bot until tomorrow.
+  /// The DEGEN `tokenId` boosted a player's earnings today: it can't idle-mine until tomorrow.
   async wornToday(tokenId) {
     const d = await this.botDays();
     if (d.w[tokenId]) return;
@@ -1518,7 +1392,7 @@ export class World extends DurableObject {
     // A pending timer also keeps the room from hibernating before its changes are written.
     this.flushTimer ??= setTimeout(() => this.flush().catch((e) => console.log("flush failed", e?.message ?? e)), FLUSH_MS);
   }
-  /// Writes every changed chunk and ledger shard (and the world's day and the bots' day with them). If a write fails,
+  /// Writes every changed chunk and ledger shard (and the world's day and the DEGENs' day with them). If a write fails,
   /// what it held is marked changed again.
   async flush() {
     if (this.flushing) await this.flushing;
@@ -1601,16 +1475,20 @@ export class World extends DurableObject {
     await this.signedIn(ws, a, wallet, token);
   }
   async signedIn(ws, a, wallet, token) {
-    // One earning connection per wallet: signing in here signs any other one out (and lets go of its bots).
-    for (const [w, o] of this.players()) {
-      if (w === ws || o.wallet !== wallet) continue;
-      this.dropBots(w, o);
+    // One earning connection per wallet: signing in here signs any other one out (and lets go of its deployed DEGENs,
+    // paid up to now). Every connection, not only those in the world: one signed in before its hello would otherwise
+    // stay signed in alongside this one (and deploy 4 more DEGENs).
+    for (const w of this.ctx.getWebSockets()) {
+      if (w === ws || this.left.has(w)) continue;
+      const o = this.att(w);
+      if (o.wallet !== wallet) continue;
+      await this.dropBots(w, o);
       o.wallet = null;
       o.eq = {};
       this.rename(w, o);
       this.send(w, ["signinfail", "You signed in somewhere else, so earnings count there now."]);
     }
-    if (a.wallet !== wallet) this.dropBots(ws, a); // (another wallet's bots)
+    if (a.wallet !== wallet) await this.dropBots(ws, a); // (another wallet's DEGENs)
     a.wallet = wallet;
     a.suspect = Math.max(a.suspect ?? 0, Date.now() + SETTLE_MS);
     // No boost until this wallet's own NFTs are checked: the game wears its Crafter again once it's signed in.
@@ -1619,13 +1497,19 @@ export class World extends DurableObject {
     this.rename(ws, a);
     const [, l] = await this.ledger(wallet);
     this.send(ws, ["signedin", wallet, token, l.today, l.total, dailyCap(0, a.zone), a.nick && nameShown(a.nick) ? a.nick : null]);
+    // Which DEGENs already idle-mined for this wallet today (so the game knows them: they count toward the 4 a day, and
+    // can't be worn until tomorrow), as an "idle" with nothing paid.
+    if (l.bots?.length) {
+      const d = await this.botDays();
+      this.send(ws, ["idle", l.bots.map((t) => [t, 0, d.t[t] ?? 0, null]), l.total]);
+    }
     this.noteSite(wallet).catch(() => {}); // (a mining site not counted yet: see SITES_KEY)
     if (!this.ticketsFree()) this.send(ws, ["tickets", await this.ticketsOf(wallet)]);
     // Back on the zone this wallet was on (its ticket has no time limit). A game in a zone already (a guest's free
     // trip, only possible while tickets are free) keeps its place, and that becomes the wallet's zone.
     const kept = (await this.ctx.storage.get(`zone:${wallet}`)) ?? "home";
     if (kept !== a.zone && a.ready) {
-      if (a.zone === "home" && isZone(kept)) await this.move(ws, a, kept, Date.now(), false, true);
+      if (a.zone === "home" && isZone(kept)) await this.move(ws, a, kept);
       else await this.keepZone(wallet, a.zone);
     }
   }
@@ -1709,9 +1593,9 @@ export class World extends DurableObject {
 
   /// Wear a MineWorld Crafter, an I'M DEGEN (or null for the Rookie): only once the chain says the signed-in wallet
   /// owns it. Its traits come from the revealed seed (web/degen-skin.js, the rules the contract's art follows) and go
-  /// to everyone; its rarity and level (CrafterLevels) are the player's Crafter boost. Not a DEGEN working as a bot
-  /// (one of theirs, or another connection's unless the chain says it's this wallet's now: then that bot is recalled),
-  /// nor one that mined as a bot today; the token is held (claims) while the chain is read, so it can't be deployed
+  /// to everyone; its rarity and level (CrafterLevels) are the player's Crafter boost. Not a DEGEN deployed to idle-mine
+  /// (one of theirs, or another connection's unless the chain says it's this wallet's now: then that one is recalled),
+  /// nor one that idle-mined today; the token is held (claims) while the chain is read, so it can't be deployed
   /// meanwhile.
   async wear(ws, a, tokenId) {
     const env = this.env;
@@ -1727,23 +1611,24 @@ export class World extends DurableObject {
     }
     if (!a.wallet || !env.CRAFTERS_ADDRESS || !env.CHAIN_RPC || !isInt(tokenId, 1, SUPPLY + 1) || now - (a.wearAt ?? 0) < 3000) return;
     const held = this.claims().get(tokenId);
-    if (held?.ws === ws) return held.wear ? undefined : this.send(ws, ["err", "That DEGEN is working as your bot: recall it first."]);
+    if (held?.ws === ws) return held.wear ? undefined : this.send(ws, ["err", "That DEGEN is idle mining for you: recall it first."]);
     a.wearAt = now;
     this.save(ws, a);
     const wallet = a.wallet;
     if (!held) this.claims().set(tokenId, { ws, wear: true });
     try {
-      if ((await this.botDays()).t[tokenId] > 0) return this.send(ws, ["err", "That DEGEN mined as a bot today: it can be worn again after 00:00 UTC."]);
+      if ((await this.botDays()).t[tokenId] > 0) return this.send(ws, ["err", "That DEGEN idle-mined today: it can be worn again after 00:00 UTC."]);
       const r = await this.readItem("crafter", tokenId, wallet).catch((e) => ({ failed: e }));
       if (r.failed) return this.chainDown(ws, r.failed);
       if (r.sealed) return this.send(ws, ["err", "The I'M DEGEN collection isn't revealed yet."]);
       if (!r.mine) return this.send(ws, ["err", "That DEGEN isn't in your wallet."]);
       if (a.wallet !== wallet) return; // (signed out meanwhile)
-      if ((await this.botDays()).t[tokenId] > 0) return this.send(ws, ["err", "That DEGEN mined as a bot today: it can be worn again after 00:00 UTC."]);
-      // (held as a bot meanwhile: by this player, or by another connection while the chain says it's this wallet's)
+      if ((await this.botDays()).t[tokenId] > 0) return this.send(ws, ["err", "That DEGEN idle-mined today: it can be worn again after 00:00 UTC."]);
+      // (deployed meanwhile: by this player, or by another connection while the chain says it's this wallet's)
       const cur = this.claims().get(tokenId);
-      if (cur?.ws === ws && !cur.wear) return this.send(ws, ["err", "That DEGEN is working as your bot: recall it first."]);
-      if (cur && !cur.wear) this.botOff(cur.ws, this.att(cur.ws), tokenId, "That DEGEN is in another wallet now.", 0);
+      if (cur?.ws === ws && !cur.wear) return this.send(ws, ["err", "That DEGEN is idle mining for you: recall it first."]);
+      // (Not paid: that wallet doesn't own it any more, and a payment would make it a DEGEN that idle-mined today.)
+      if (cur && !cur.wear) await this.botOff(cur.ws, this.att(cur.ws), tokenId, "That DEGEN is in another wallet now.", 0, false);
       a.look = packTraits(r.traits);
       this.zoneCast(a.zone, ["look", a.id, a.look]);
       this.equipped(ws, a, "crafter", [tokenId, r.tier, r.level], r.levelOk);
@@ -1898,30 +1783,11 @@ export class World extends DurableObject {
     if (changed || answer) this.send(ws, this.boostMsg(a));
   }
 
-  // ---------------------------------------------------------------- autopilot bots (web/bots-rules.js, docs/AUTOPILOT.md)
-  // A player's bots are kept on their attachment (`bots`: [[tokenId, tier, level, pickId, wear], ...]); what needn't
-  // outlive the room sleeping is in memory (liveOf), rebuilt from their next batch. Others know a bot by its negative
-  // id (botPid) and see it drawn like a player: ["botjoin", ...], ["botps", ...], ["botgear", ...], ["botleave", pid].
+  // ---------------------------------------------------------------- idle mining (web/bots-rules.js, docs/AUTOPILOT.md)
+  // A player's deployed DEGENs are kept on their attachment (`bots`: [[tokenId, tier, level, paidTo], ...], `paidTo`:
+  // the time each has been paid up to; `botsAt`: when they're next read on-chain). Nothing of them is in the world and
+  // nobody else hears of them: the idle tick (alarm) pays them every IDLE_TICK_MS while their player is online.
 
-  /// The player did something the room accepted (their own break of a natural block, a place, a hit on a monster, the
-  /// boss or a player, a chat line, or walking BOT_MARK_MOVE from their last mark): their bots work for BOT_IDLE_MS
-  /// from now (and their game hears so if they were paused: ["botidle", 0]).
-  active(ws, a, now) {
-    a.activeAt = now;
-    if (!a.botIdle) return;
-    a.botIdle = false;
-    this.send(ws, ["botidle", 0]);
-  }
-  /// The player is up again (respawned or revived): their bots' stop for the knock-out is over (the next stop is told
-  /// afresh: botWork), and if their last action is recent their game hears the bots may work (["botidle", 0]: it may
-  /// have heard ["botidle", 1] for a batch that came while they were down).
-  botsUp(ws, a, now) {
-    for (const s of this.botLive.get(ws)?.values() ?? []) s.stop = null;
-    if (a.botIdle && now - (a.activeAt ?? 0) < BOT_IDLE_MS) {
-      a.botIdle = false;
-      this.send(ws, ["botidle", 0]);
-    }
-  }
   /// Every incoming message counts towards the day's (BOT_BUSY_AT); the count goes into the world's row now and then
   /// (worldToday), so a restart doesn't forget it.
   countMsg(now) {
@@ -1932,13 +1798,13 @@ export class World extends DurableObject {
       this.scheduleFlush();
     }
   }
-  /// Whether the room has had BOT_BUSY_AT messages today (the free plan's daily limits are near): it takes no bot work
-  /// until 00:00 UTC.
+  /// Whether the room has had BOT_BUSY_AT messages today (the free plan's daily limits are near): it takes no new
+  /// deploys until 00:00 UTC (those deployed keep earning: the tick costs no messages).
   busy(now) {
     return this.msgs?.day === Math.floor(now / DAY_MS) && this.msgs.n >= BOT_BUSY_AT;
   }
-  /// Which connection holds each DEGEN that's a bot: tokenId -> { ws, wear } (`wear`: held by a wear() while it reads
-  /// the chain). Taken before any wait by a deploy or a wear, so two can't have one token; rebuilt from the attachments
+  /// Which connection holds each deployed DEGEN: tokenId -> { ws, wear } (`wear`: held by a wear() while it reads the
+  /// chain). Taken before any wait by a deploy or a wear, so two can't have one token; rebuilt from the attachments
   /// after the room slept.
   claims() {
     if (!this.botClaims) {
@@ -1947,192 +1813,119 @@ export class World extends DurableObject {
     }
     return this.botClaims;
   }
-  /// A bot's state that needn't outlive the room sleeping: { x, y, z, yaw, flags (none until its first batch), walk,
-  /// walkAt (its walking budget), suspect (no pay until then), credit, creditAt (its breaking budget, BOT_CREDIT
-  /// seconds), sent (what others last heard), stop (why it isn't worked, told to its game once) }. (Its health in Red
-  /// Mesa is kept by token: botHit.)
-  liveOf(ws, tok, now) {
-    let bots = this.botLive.get(ws);
-    if (!bots) this.botLive.set(ws, (bots = new Map()));
-    let s = bots.get(tok);
-    if (!s) bots.set(tok, (s = { credit: BOT_CREDIT, creditAt: now, suspect: 0 }));
-    return s;
+  /// A deployed DEGEN's daily cap, in units: DAILY_EARN_CAP raised by its own DEGEN's cap boost (rarity and level), as
+  /// at home (the planet its player is on doesn't matter). Its earn boost doesn't count: its cap already sets its rate.
+  botCap(b) {
+    return dailyCap(boostOf({ crafter: { tier: b[1], level: b[2] } }).cap, "home");
   }
-  /// A bot's boost: its own DEGEN's (rarity and level), nothing else.
-  botBoost(b) {
-    return boostOf({ crafter: { tier: b[1], level: b[2] } });
+  /// ["botok", tokenId, tier, level, today, cap]: a deployed DEGEN as the room has it (`d`: botDays), in units.
+  botOk(b, d) {
+    return ["botok", b[0], b[1], b[2], d.t[b[0]] ?? 0, this.botCap(b)];
   }
-  /// A bot's daily cap where its player is, in units.
-  botCap(a, b) {
-    return dailyCap(this.botBoost(b).cap, a.zone);
+  /// Why player `a`'s wallet (ledger entry `l`) can't have another DEGEN idle-mine today: those that earned today and
+  /// those deployed now are its BOT_MAX.
+  dayFull(l, a) {
+    const toks = new Set([...(l.bots ?? []), ...(a.bots ?? []).map(([t]) => t)]);
+    return `${BOT_MAX} DEGENs a day: ${[...toks].map((t) => `#${t}`).join(" ")} are today's.`;
   }
-  /// ["botok", tokenId, tier, level, today, cap, pickId, wear]: a bot as the room has it (`d`: botDays).
-  botOk(a, b, d) {
-    return ["botok", b[0], b[1], b[2], d.t[b[0]] ?? 0, this.botCap(a, b), b[3], b[4]];
-  }
-  /// Why a wallet can't have another DEGEN earn as its bot today.
-  dayFull(l) {
-    return `${BOT_MAX} bots a day: ${l.bots.map((t) => `#${t}`).join(" ")} have mined today.`;
-  }
-  /// A bot's look: its DEGEN's traits (degen-skin.js), from the revealed seed (kept in storage once read: keepSeed; null
-  /// only before the collection is revealed, when no bot can be deployed).
-  botLook(tok) {
-    if (!this.crafterSeed) return null;
-    let look = (this.looks ??= new Map()).get(tok);
-    if (!look) this.looks.set(tok, (look = packTraits(traitsOf(this.crafterSeed, tok, HASH))));
-    return look;
-  }
-  /// How player `a`'s bot `b` is shown to others: [pid, ownerId, name, look, x, y, z, yaw, held] (where its player is,
-  /// until its game says; `held`: its pickaxe).
-  botShown(ws, a, b) {
-    const s = this.botLive.get(ws)?.get(b[0]), p = s?.x === undefined ? a : s;
-    return [botPid(a.id, b[0]), a.id, botName(a.name, b[0]), this.botLook(b[0]), p.x, p.y, p.z, p.yaw ?? 0, b[3]];
-  }
-  /// The bots on `zone` (not `skip`'s own, nor those whose player's tab is hidden).
-  botsShown(zone, skip) {
-    const out = [];
-    for (const [w, o] of this.onZone(zone)) if (w !== skip && !o.botsAsleep) for (const b of o.bots ?? []) out.push(this.botShown(w, o, b));
-    return out;
-  }
-  /// The others on player `a`'s planet see their bots (or just bot `only`) appear: deployed, landed, back from a
-  /// hidden tab, renamed.
-  botsJoin(ws, a, only) {
-    if (!a.ready || a.botsAsleep) return;
-    for (const b of a.bots ?? []) if (!only || b === only) this.zoneCast(a.zone, ["botjoin", ...this.botShown(ws, a, b)], ws);
-  }
-  /// The others on `zone` see player `a`'s bots go.
-  botsLeave(ws, a, zone) {
-    if (!a.ready || a.botsAsleep) return;
-    for (const [tok] of a.bots ?? []) this.zoneCast(zone, ["botleave", botPid(a.id, tok)], ws);
-  }
-  /// Player `a`'s bots come down round `spot` with them (after a flight, or sent home knocked out), settling in.
-  botsLand(ws, a, spot, now) {
-    for (const [i, b] of (a.bots ?? []).entries()) {
-      const [dx, dz] = BOT_SPOTS[i % BOT_SPOTS.length];
-      Object.assign(this.liveOf(ws, b[0], now), {
-        x: wrap(spot.x + dx), y: spot.y, z: wrap(spot.z + dz), yaw: spot.yaw ?? 0, flags: 0, walk: undefined, walkAt: undefined,
-        suspect: now + SETTLE_MS, credit: BOT_CREDIT, creditAt: now, sent: null, stop: null,
-      });
-    }
+  /// Whether player `a` is online for idle mining: signed in, and their game was heard from in the last IDLE_ONLINE_MS
+  /// (a message, `seenAt`, or its ping, which Cloudflare answers without waking the room). Idle players and hidden tabs
+  /// still ping; a closed tab or a phone asleep doesn't.
+  online(ws, a, now) {
+    if (!a.ready || !a.wallet) return false;
+    let ping = 0;
+    try { ping = this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime() ?? 0; } catch {}
+    return now - Math.max(a.seenAt ?? 0, ping) <= IDLE_ONLINE_MS;
   }
 
-  /// ["bot", what, ...]: the player's bots. "on" deploys one (botOn), "off" recalls it, "pick" swaps its pickaxe
-  /// (botPick), "recheck" reads its DEGEN again (botRecheck), "sleep" / "wake" hide and show them (botSleep: a few at
-  /// once, then one every BOT_SLEEP_EVERY_S; one past that is ignored, and the next batch shows them anyway).
+  /// ["bot", what, tokenId]: the player's idle-mining DEGENs. "on" deploys one (botOn), "off" recalls it (paid up to
+  /// now first: botOff), "recheck" reads its DEGEN again (botRecheck).
   async bot(ws, a, m) {
     if (!a.ready) return;
-    const [, what, tok, pickId, wear] = m;
-    if (what === "on") return await this.botOn(ws, a, tok, pickId, wear);
-    if (what === "off") {
-      // Recalled while it's still being deployed: that deploy is called off (it answers nothing more, and its hold on
-      // the token goes now, so it may be deployed again at once), and the pickaxe it was given comes back (retry 0).
-      const jobs = this.botPending.get(ws), job = jobs?.get(tok);
-      if (job) {
-        job.off = true;
-        jobs.delete(tok);
-        if (!jobs.size) this.botPending.delete(ws);
-        if (this.claims().get(tok) === job.claim) this.claims().delete(tok);
-        return this.send(ws, ["botoff", tok, null, 0, job.pickId, job.wear]);
-      }
-      // (one the room doesn't have: pickaxe and wear null, "not here": the game gives back the pickaxe it keeps)
-      if (a.bots?.some(([t]) => t === tok)) this.botOff(ws, a, tok, null, 0);
-      else if (isInt(tok, 1, SUPPLY + 1)) this.send(ws, ["botoff", tok, null, 0, null, null]);
-      return;
-    }
-    if (what === "pick") return await this.botPick(ws, a, tok, pickId, wear);
+    const [, what, tok] = m;
+    if (what === "on") return await this.botOn(ws, a, tok);
     if (what === "recheck") return await this.botRecheck(ws, a, tok);
-    if (what === "sleep" || what === "wake") {
-      const asleep = what === "sleep";
-      if (!!a.botsAsleep === asleep || (asleep && !a.bots?.length)) return; // (nothing to change: free)
-      if (!bucket(a, "botsl", BOT_SLEEPS, 1 / BOT_SLEEP_EVERY_S, 1, Date.now())) return this.save(ws, a);
-      this.botSleep(ws, a, asleep); // (which saves)
+    if (what !== "off") return;
+    // Recalled while it's still being deployed: that deploy is called off (it answers nothing more, and its hold on
+    // the token goes now, so it may be deployed again at once).
+    const jobs = this.botPending.get(ws), job = jobs?.get(tok);
+    if (job) {
+      job.off = true;
+      jobs.delete(tok);
+      if (!jobs.size) this.botPending.delete(ws);
+      if (this.claims().get(tok) === job.claim) this.claims().delete(tok);
+      return this.send(ws, ["botoff", tok, null, 0]);
     }
+    if (a.bots?.some(([t]) => t === tok)) await this.botOff(ws, a, tok, null, 0);
+    else if (isInt(tok, 1, SUPPLY + 1)) this.send(ws, ["botoff", tok, null, 0]); // (one the room doesn't have: it isn't out)
   }
-  /// ["bot", "on", tokenId, pickId, wear]: deploy DEGEN `tokenId` as a bot holding that pickaxe (from the player's
-  /// bag; `wear` below its durability). Only one the chain says the signed-in wallet owns; not the one the player
-  /// wears; not one another connection holds (unless the chain says it's this wallet's now: that bot is recalled); not
-  /// one worn while earning today; at most BOT_MAX at once, and BOT_MAX distinct ones a day; on the home planet, or, free,
-  /// in the zone the trip it paid for went to (useTickets). The token is held (claims) before the chain is read, and it
-  /// all is checked again after. One already deployed here just gets its botok again (no bucket), and one being
-  /// deployed already gets nothing (that deploy answers). Answers ["botok", ...] (and ["botidle", 1] if the player is
-  /// idle), or ["botoff", tokenId, why, retry, pickId, wear]. While it waits, this.botPending has it (ws -> tokenId ->
-  /// { pickId, wear, off, claim }): ["bot", "off", tokenId] meanwhile calls it off (`off`: answered there, nothing
-  /// more here).
-  async botOn(ws, a, tok, pickId, wear) {
+  /// ["bot", "on", tokenId]: deploy DEGEN `tokenId` to idle-mine for the player. Only one the chain says the signed-in
+  /// wallet owns; not the one the player wears; not one another connection holds (unless the chain says it's this
+  /// wallet's now: that one is recalled); not one worn while earning today; at most BOT_MAX at once, and BOT_MAX
+  /// distinct ones a day (those that earned today and those deployed now, together); on any planet, knocked out or
+  /// not. The token is held (claims) before the chain is read, and it all is checked again after. One already deployed
+  /// here just gets its botok again (no bucket), and one being deployed already gets nothing (that deploy answers).
+  /// Answers ["botok", ...] or ["botoff", tokenId, why, retry]. While it waits, this.botPending has it (ws -> tokenId ->
+  /// { off, claim }): ["bot", "off", tokenId] meanwhile calls it off (`off`: answered there, nothing more here). It
+  /// earns from the moment it's deployed (`paidTo`), and the idle tick's alarm is set if it isn't (armIdle).
+  async botOn(ws, a, tok) {
     const env = this.env, now = Date.now();
     if (!isInt(tok, 1, SUPPLY + 1)) return;
-    const pick = TOOLS[pickId]?.kind === "pick" && isInt(wear, 0, maxDurability(pickId));
     let job = null; // (this deploy, once it waits)
-    const off = (why, retry = 0) => { if (!job?.off) this.send(ws, ["botoff", tok, why, retry, pick ? pickId : null, pick ? wear : null]); };
+    const off = (why, retry = 0) => { if (!job?.off) this.send(ws, ["botoff", tok, why, retry]); };
     const had = a.bots?.find(([t]) => t === tok);
-    if (had) return this.send(ws, this.botOk(a, had, await this.botDays()));
+    if (had) return this.send(ws, this.botOk(had, await this.botDays()));
     const pending = this.botPending.get(ws);
     if (pending?.has(tok)) return; // (being deployed already: that one answers)
-    if (!pick) return off("A bot needs a pickaxe (one that isn't broken).");
-    if (!a.wallet) return off("Sign in to earn (M) to deploy bots.");
-    if (!env.CRAFTERS_ADDRESS || !env.CHAIN_RPC) return off("Bots can't be deployed yet.");
+    if (!a.wallet) return off("Sign in to earn (M) to deploy your DEGENs.");
+    if (!env.CRAFTERS_ADDRESS || !env.CHAIN_RPC) return off("DEGENs can't be deployed yet.");
     if (this.busy(now)) return off(BOT_BUSY, 1);
-    if (a.dead) return off("You're knocked out: deploy your bots once you're up.", 1);
-    if (a.eq?.crafter?.[0] === tok) return off("You're wearing that DEGEN: a bot has to be another one.");
-    if ((a.bots?.length ?? 0) + (pending?.size ?? 0) >= BOT_MAX) return off(`At most ${BOT_MAX} bots at once.`);
+    if (a.eq?.crafter?.[0] === tok) return off("You're wearing that DEGEN: deploy another one.");
+    if ((a.bots?.length ?? 0) + (pending?.size ?? 0) >= BOT_MAX) return off(`At most ${BOT_MAX} DEGENs deployed at once.`);
     const held = this.claims().get(tok);
     if (held?.ws === ws) return held.wear ? off("You're putting that DEGEN on: try again in a moment.", 1) : undefined;
     if (!bucket(a, "botq", BOT_Q, 1 / BOT_Q_EVERY_S, 1, now)) {
       this.save(ws, a);
-      return off("One bot at a time: try again in a few seconds.", 1);
+      return off("One DEGEN at a time: try again in a few seconds.", 1);
     }
     this.save(ws, a);
     // Held from now (unless another connection holds it: then the chain decides, below). `claim`: this deploy's own
     // hold, so only it is ever let go here (a recall meanwhile lets it go at once, and a new deploy may take another).
-    job = { pickId, wear, off: false, claim: { ws, wear: false } };
+    job = { off: false, claim: { ws, wear: false } };
     if (!held) this.claims().set(tok, job.claim);
     (pending ?? this.botPending.set(ws, new Map()).get(ws)).set(tok, job);
-    const wallet = a.wallet, zone = a.zone;
+    const wallet = a.wallet;
+    let rival = null; // (another connection that had it, once the chain says it's this wallet's)
     try {
-      if (zone !== "home" && !this.ticketsFree()) {
-        const z = await this.ctx.storage.get(`botz:${wallet}`);
-        if (!(z?.zone === zone && z.toks?.includes(tok))) return off("New bots start on the home planet: bring them along on your next trip.");
-      }
       const r = await this.readItem("crafter", tok, wallet).catch((e) => ({ failed: e }));
       if (r.failed) {
-        console.log("bot read failed", r.failed?.shortMessage ?? r.failed?.message ?? r.failed);
-        return off("The chain didn't answer: your bot will try again soon.", 1);
+        console.log("idle DEGEN read failed", r.failed?.shortMessage ?? r.failed?.message ?? r.failed);
+        return off("The chain didn't answer: your DEGEN will try again soon.", 1);
       }
       if (r.sealed) return off("The I'M DEGEN collection isn't revealed yet.");
       if (!r.mine) return off("That DEGEN isn't in your wallet.");
       const [, l] = await this.ledger(wallet), d = await this.botDays();
       await this.worldToday(); // (today's message count, for busy, kept with it)
-      // All of it again: they may have called it off, left, signed out, moved, been knocked out, put it on or deployed
-      // others meanwhile.
+      // All of it again: they may have called it off, left, signed out, put it on or deployed others meanwhile.
       if (job.off || this.atts.get(ws) !== a || !a.ready || a.wallet !== wallet) return;
       const now2 = Date.now(), b = a.bots?.find(([t]) => t === tok);
-      if (b) return this.send(ws, this.botOk(a, b, d)); // (deployed meanwhile another way: the dev hook)
-      if (a.zone !== zone) return off("You moved meanwhile: deploy it again.", 1);
-      if (a.dead) return off("You're knocked out: deploy your bots once you're up.", 1);
+      if (b) return this.send(ws, this.botOk(b, d)); // (deployed meanwhile another way: the dev hook)
       if (this.busy(now2)) return off(BOT_BUSY, 1);
-      if (a.eq?.crafter?.[0] === tok) return off("You're wearing that DEGEN: a bot has to be another one.");
-      if (d.w[tok]) return off("You earned wearing that DEGEN today: it can mine as a bot after 00:00 UTC.");
-      if ((a.bots?.length ?? 0) >= BOT_MAX) return off(`At most ${BOT_MAX} bots at once.`);
-      if (!l.bots?.includes(tok) && (l.bots?.length ?? 0) >= BOT_MAX) return off(this.dayFull(l));
+      if (a.eq?.crafter?.[0] === tok) return off("You're wearing that DEGEN: deploy another one.");
+      if (d.w[tok]) return off("You earned wearing that DEGEN today: it can idle-mine after 00:00 UTC.");
+      if ((a.bots?.length ?? 0) >= BOT_MAX) return off(`At most ${BOT_MAX} DEGENs deployed at once.`);
+      if (new Set([...(l.bots ?? []), ...(a.bots ?? []).map(([t]) => t), tok]).size > BOT_MAX) return off(this.dayFull(l, a));
       const cur = this.claims().get(tok);
       if (!held && cur?.ws !== ws) return off("That DEGEN is in another wallet now.");
       if (cur?.ws === ws && cur.wear) return off("You're putting that DEGEN on: try again in a moment.", 1);
-      if (cur && cur.ws !== ws && !cur.wear) this.botOff(cur.ws, this.att(cur.ws), tok, "That DEGEN is in another wallet now.", 0);
+      if (cur && cur.ws !== ws && !cur.wear) rival = cur.ws;
       this.claims().set(tok, job.claim);
-      if (a.botsAsleep) this.botSleep(ws, a, false); // (deploying, so its tab is back)
-      const bot = [tok, r.tier, r.level, pickId, wear];
+      const bot = [tok, r.tier, r.level, now2];
       (a.bots ??= []).push(bot);
       const next = now2 + (r.levelOk ? BOOST_RECHECK_MS : BOOST_RETRY_MS);
       a.botsAt = a.bots.length === 1 ? next : Math.min(a.botsAt ?? next, next);
-      this.botLive.get(ws)?.delete(tok);
-      this.liveOf(ws, tok, now2); // (full credit; it settles in with its first batch)
-      // (The idle flag goes in before the save, so a room that sleeps and wakes still knows to send botidle 0.)
-      const tellIdle = !(now2 - (a.activeAt ?? 0) < BOT_IDLE_MS) && !a.botIdle;
-      if (tellIdle) a.botIdle = true;
       this.save(ws, a);
-      this.send(ws, this.botOk(a, bot, d));
-      this.botsJoin(ws, a, bot);
-      if (tellIdle) this.send(ws, ["botidle", 1]);
+      this.send(ws, this.botOk(bot, d));
     } finally {
       const jobs = this.botPending.get(ws);
       if (jobs?.get(tok) === job) {
@@ -2141,61 +1934,41 @@ export class World extends DurableObject {
       }
       if (this.claims().get(tok) === job.claim && !a.bots?.some(([t]) => t === tok)) this.claims().delete(tok); // (refused: free again)
     }
+    // Deployed: the connection that had it lets it go (the chain says it isn't theirs: unpaid), and the tick runs.
+    if (rival) await this.botOff(rival, this.att(rival), tok, "That DEGEN is in another wallet now.", 0, false);
+    await this.armIdle();
   }
-  /// Recalls player `a`'s bot `tok`: the others see it go, its token is free again, and the game hears ["botoff",
-  /// tokenId, why, retry, pickId, wear] (`why` null when the player asked; `retry` 1 if deploying it again later may
-  /// work; its pickaxe and wear back, or, when it's `lost` (broken, or in a loot chest), pickId null and wear -1: there's
-  /// nothing to give back). For BOT_GONE_MS its breaks still on the way are put back (botWork).
-  botOff(ws, a, tok, why, retry = 0, lost = false) {
+  /// Recalls player `a`'s DEGEN `tok`: what it earned up to now is paid first (when `pay`: not when the chain says it
+  /// isn't theirs; and only while they're online: ["idle", ...]), its token is free again, and their game hears
+  /// ["botoff", tokenId, why, retry] (`why` null when the player asked; `retry` 1 if deploying it again later may work).
+  async botOff(ws, a, tok, why, retry = 0, pay = true) {
+    if (!a.bots?.some(([t]) => t === tok)) return;
+    const paid = pay ? await this.idleSettle(ws, a, [tok], Date.now()).catch((e) => console.log("idle pay failed", e?.message ?? e)) : null;
     const b = a.bots?.find(([t]) => t === tok);
-    if (!b) return;
-    if (a.ready && !a.botsAsleep) this.zoneCast(a.zone, ["botleave", botPid(a.id, tok)], ws);
+    if (!b) return; // (recalled meanwhile: that recall answered)
     a.bots = a.bots.filter((o) => o !== b);
+    if (!a.bots.length) delete a.botsAt;
     if (this.claims().get(tok)?.ws === ws) this.claims().delete(tok);
-    this.botLive.get(ws)?.delete(tok);
-    this.botGoneNow(ws, tok);
     this.save(ws, a);
-    this.send(ws, ["botoff", tok, why, retry, lost ? null : b[3], lost ? -1 : b[4]]);
+    if (paid) this.send(ws, paid);
+    this.send(ws, ["botoff", tok, why, retry]);
   }
-  /// Lets go of all of player `a`'s bots (and the tokens their connection holds, and the deploys on their way: called
-  /// off, they answer nothing) without telling their game: it's closing, signed out or signed in somewhere else, and
-  /// keeps their pickaxes itself. The others see them go.
-  dropBots(ws, a) {
-    this.botsLeave(ws, a, a.zone);
-    for (const [tok, c] of this.claims()) if (c.ws === ws) this.claims().delete(tok);
-    for (const [tok] of a.bots ?? []) this.botGoneNow(ws, tok);
-    if (a.bots?.length) a.bots = [];
-    a.botsAsleep = false;
-    this.botLive.delete(ws);
+  /// Lets go of all of player `a`'s deployed DEGENs (and the tokens their connection holds, and the deploys on their
+  /// way: called off, they answer nothing) without telling their game: it's closing, signed out or signed in somewhere
+  /// else. What they earned up to now is paid first, if the player was online.
+  async dropBots(ws, a) {
     for (const job of this.botPending.get(ws)?.values() ?? []) job.off = true;
     this.botPending.delete(ws);
-  }
-  /// Connection `ws` just lost bot `tok` (recalled or let go): remembered for BOT_GONE_MS (botWork).
-  botGoneNow(ws, tok) {
-    (this.botGone.get(ws) ?? this.botGone.set(ws, new Map()).get(ws)).set(tok, Date.now());
-  }
-  /// ["bot", "pick", tokenId, pickId, wear]: bot `tokenId` swaps its pickaxe for that one (from the player's bag): the
-  /// old one comes back (["botpick", tokenId, oldPickId, oldWear]) and the others see the new one (["botgear", pid,
-  /// held]). Refused (too many changes), the one sent comes back instead, and botok says what the bot still holds.
-  async botPick(ws, a, tok, pickId, wear) {
-    if (TOOLS[pickId]?.kind !== "pick" || !isInt(wear, 0, maxDurability(pickId))) return;
-    const b = a.bots?.find(([t]) => t === tok);
-    if (!b) return this.send(ws, ["botoff", tok, "That bot isn't deployed: deploy it again.", 1, pickId, wear]);
-    if (!bucket(a, "botq", BOT_Q, 1 / BOT_Q_EVERY_S, 1, Date.now())) {
+    if (a.bots?.length) {
+      await this.idleSettle(ws, a, a.bots.map(([tok]) => tok), Date.now()).catch((e) => console.log("idle pay failed", e?.message ?? e));
+      a.bots = [];
+      delete a.botsAt;
       this.save(ws, a);
-      this.send(ws, ["err", "One bot change every few seconds."]);
-      this.send(ws, ["botpick", tok, pickId, wear]);
-      return this.send(ws, this.botOk(a, b, await this.botDays()));
     }
-    const [, , , oldPick, oldWear] = b;
-    b[3] = pickId;
-    b[4] = wear;
-    this.save(ws, a);
-    this.send(ws, ["botpick", tok, oldPick, oldWear]);
-    if (!a.botsAsleep) this.zoneCast(a.zone, ["botgear", botPid(a.id, tok), pickId], ws);
+    for (const [tok, c] of this.claims()) if (c.ws === ws) this.claims().delete(tok);
   }
-  /// ["bot", "recheck", tokenId]: read bot `tokenId`'s DEGEN again now (the game asks after leveling it up): a new level
-  /// counts at once (botok); a DEGEN no longer in the wallet is recalled.
+  /// ["bot", "recheck", tokenId]: read deployed DEGEN `tokenId` again now (the game asks after leveling it up): a new
+  /// level counts at once (botok: its cap, and so its rate); a DEGEN no longer in the wallet is recalled.
   async botRecheck(ws, a, tok) {
     const b = a.bots?.find(([t]) => t === tok);
     if (!b || !a.wallet) return;
@@ -2205,53 +1978,28 @@ export class World extends DurableObject {
     const r = await this.readItem("crafter", tok, wallet).catch((e) => ({ failed: e }));
     if (a.wallet !== wallet || !a.bots?.includes(b)) return; // (signed out or recalled meanwhile)
     if (r.failed) return this.chainDown(ws, r.failed);
-    if (r.mine === false) return this.botOff(ws, a, tok, "That DEGEN isn't in your wallet any more.", 0);
+    if (r.mine === false) return await this.botOff(ws, a, tok, "That DEGEN isn't in your wallet any more.", 0, false);
     if (!r.mine) return;
     b[1] = r.tier;
     if (r.levelOk) b[2] = r.level;
     this.save(ws, a);
-    this.send(ws, this.botOk(a, b, await this.botDays()));
+    this.send(ws, this.botOk(b, await this.botDays()));
   }
-  /// ["bot", "sleep"] / ["bot", "wake"]: the player's tab was hidden / is back (bot() limits how often). Their bots stay
-  /// deployed (their tokens held), but the others stop seeing them; back, they reappear and settle in afresh with their
-  /// next batch. Only where they are and how they walk starts afresh (and why they stopped, told again); their health
-  /// (botHit) and breaking budget stay as they were.
-  botSleep(ws, a, asleep) {
-    if (!!a.botsAsleep === asleep || (asleep && !a.bots?.length)) return;
-    if (asleep) this.botsLeave(ws, a, a.zone);
-    a.botsAsleep = asleep;
-    for (const s of this.botLive.get(ws)?.values() ?? []) {
-      Object.assign(s, { x: undefined, y: undefined, z: undefined, yaw: undefined, flags: undefined, walk: undefined, walkAt: undefined, sent: null, stop: null });
-    }
-    this.save(ws, a);
-    if (!asleep) this.botsJoin(ws, a);
-  }
-  /// Every BOOST_RECHECK_MS (a minute after a read failed), on any message from their player, all of a player's bots
-  /// are read on-chain at once (readBots), alongside and never holding anything up.
-  botsCheck(ws, a, now) {
-    if (!a.wallet || now < (a.botsAt ?? 0)) return;
-    a.botsAt = now + BOOST_RETRY_MS; // (one read at a time)
-    this.save(ws, a);
-    this.readBots(ws, a, a.wallet).catch((e) => console.log("bot check failed", e?.shortMessage ?? e?.message ?? e));
-  }
-  /// One multicall for all of a player's bots (ownerOf and levelOf each): one no longer in the wallet (or gone) is
-  /// recalled, a new level counts (botok). If the chain can't be read they keep working as they were, and it's tried
-  /// again after BOOST_RETRY_MS.
+  /// One multicall for all of a player's deployed DEGENs (ownerOf and levelOf each), from the idle tick every
+  /// BOOST_RECHECK_MS: one no longer in the wallet (or gone) is recalled, a new level counts (botok). If the chain
+  /// can't be read they keep earning as they were, and it's tried again after BOOST_RETRY_MS.
   async readBots(ws, a, wallet) {
     const env = this.env, S = SLOTS.crafter, address = env[S.env] || S.contract, levels = env[S.levels.env] || S.levels.contract;
     if (!address || !env.CHAIN_RPC || !a.bots?.length) return;
     const toks = a.bots.map(([tok]) => tok);
     const calls = toks.map((tok) => ({ address, abi: CRAFTERS_ABI, functionName: "ownerOf", args: [BigInt(tok)] }));
     if (levels) for (const tok of toks) calls.push({ address: levels, abi: viewAbi(S.levels.fn), functionName: S.levels.fn, args: [BigInt(tok)] });
-    if (!this.crafterSeed) calls.push({ address, abi: CRAFTERS_ABI, functionName: "seed" }); // (for the bots' looks)
     const pub = this.chainClient();
     let res = await pub.multicall({ contracts: calls, multicallAddress: MULTICALL3, allowFailure: true, batchSize: 0 });
     if (res.every((r) => r.status === "failure" && !reverted(r.error))) {
       // (no Multicall3, as on a bare local chain: one read each)
       res = await Promise.all(calls.map((c) => pub.readContract(c).then((result) => ({ status: "success", result }), (error) => ({ status: "failure", error }))));
     }
-    const seed = this.crafterSeed ? null : res[calls.length - 1];
-    if (seed?.status === "success" && seed.result) this.keepSeed(seed.result);
     const d = await this.botDays();
     if (this.atts.get(ws) !== a || a.wallet !== wallet) return;
     let ok = true;
@@ -2261,174 +2009,134 @@ export class World extends DurableObject {
       if (own.status === "failure" && !reverted(own.error)) { ok = false; continue; }
       // (a token that doesn't exist reverts: definitely not theirs)
       if (own.status === "failure" || getAddress(own.result) !== wallet) {
-        this.botOff(ws, a, tok, "That DEGEN isn't in your wallet any more.", 0);
+        await this.botOff(ws, a, tok, "That DEGEN isn't in your wallet any more.", 0, false);
         continue;
       }
       if (lv && lv.status !== "success") { ok = false; continue; }
       const level = lv ? Math.max(1, Math.min(255, Number(lv.result))) : 1;
       if (level !== b[2]) {
         b[2] = level;
-        this.send(ws, this.botOk(a, b, d));
+        this.send(ws, this.botOk(b, d));
       }
     }
     a.botsAt = Date.now() + (ok ? BOOST_RECHECK_MS : BOOST_RETRY_MS);
     this.save(ws, a);
   }
-  /// Bot `tok` was beaten in a zone: its paid trip there is over (deploying it there again takes a new ticket).
-  async botzDrop(wallet, tok) {
-    const z = await this.ctx.storage.get(`botz:${wallet}`);
-    if (z?.toks?.includes(tok)) await this.ctx.storage.put(`botz:${wallet}`, { ...z, toks: z.toks.filter((t) => t !== tok) });
-  }
 
-  /// B, the 8th element of the player's ["p", ...]: their bots' work since the last, done before the player's own move
-  /// (`to`: where the player is now, or null for a carrier). B = [zone, [tokenId, x, y, z, yaw, botFlags, breaks],
-  /// ...], at most BOT_MAX entries (one per bot: a token's first only), each with at most BOT_BREAKS_MAX breaks [bx, by,
-  /// bz, fx, fy, fz] (fx..fz: the cell the bot stood in). A B for another planet (sent before a flight) is dropped.
-  /// A bot the room recalled in the last BOT_GONE_MS (its game may have sent this before it heard) has its breaks put
-  /// back. A bot whose player is idle or knocked out, or that is at its cap or the world's, isn't worked, but is kept
-  /// in step with its game (which may not know yet): its breaks are put back, every batch, and where it is now is
-  /// taken (settling in: no pay for a moment) and shown; its game hears why once (botearn), and, while it's paused for
-  /// that and still sends breaks, ["botidle", 1] again. A DEGEN that would be the wallet's (BOT_MAX + 1)th to earn as a
-  /// bot today, and all of them past BOT_BUSY_AT messages today, are recalled (their breaks put back). Each break
-  /// is checked as a player's is, cheapest first: the breaking budget, the leash (from the player's position before or
-  /// after this `p`, whichever is closer), its foot cell near the bot, nothing protected or on a pad (block and foot),
-  /// within reach of the foot cell, the edit allowance the player shares with their bots, not under anyone's feet; then
-  /// the block itself: there, natural (never placed), with an open side, and the foot cell not inside rock. An accepted
-  /// break wears the bot's pickaxe (broken, the bot is recalled) and pays, unless the bot is settling in: into the
-  /// wallet's total and the token's day. Answered with one ["sets", ...] to everyone near (the accepted), one to the
-  /// player (the refused, put back), one ["botearn", [[tokenId, units, today, cap, why], ...], walletTotal] and one
-  /// ["botps", ownerId, [[tokenId, x, y, z, yaw, botFlags], ...]] (the bots that moved) to those near.
-  async botWork(ws, a, B, to, now) {
-    if (!Array.isArray(B) || B[0] !== a.zone) return;
-    const entries = B.slice(1, 1 + BOT_MAX).filter(Array.isArray);
-    if (!entries.length) return;
-    const zone = a.zone, nat = new Map(), sets = [], undo = [], earned = [], moved = [], seen = new Set();
-    const at = (x, y, z) => this.blockAt(zone, x, y, z, nat);
-    const putBack = async (list) => { for (const [x, y, z] of list) undo.push([x, y, z, (await at(x, y, z)).block]); };
-    const breaksOf = (e) => (Array.isArray(e[6]) ? e[6].slice(0, BOT_BREAKS_MAX) : []).filter((k) => Array.isArray(k)
-      && isInt(k[0], 0, WORLD) && isInt(k[1], 1, HEIGHT) && isInt(k[2], 0, WORLD) && isInt(k[3], 0, WORLD) && isInt(k[4], 0, HEIGHT + 20) && isInt(k[5], 0, WORLD));
-    const sendUndo = () => { if (undo.length && a.zone === zone) this.send(ws, ["sets", undo]); };
-    // A bot the room recalled a moment ago on its own (beaten, its pickaxe broke, busy, not theirs any more, signed in
-    // elsewhere...) may still be in a batch its game sent before it heard, which has already broken those blocks: they
-    // go back. (Only for those, and only for BOT_GONE_MS: this is no way to look blocks up.)
-    const gone = this.botGone.get(ws);
-    if (gone) {
-      for (const [tok, t] of gone) if (now - t > BOT_GONE_MS) gone.delete(tok);
-      if (!gone.size) this.botGone.delete(ws);
-      for (const e of entries) {
-        if (!gone.has(e[0]) || seen.has(e[0]) || a.bots?.some(([t]) => t === e[0])) continue;
-        seen.add(e[0]);
-        await putBack(breaksOf(e));
-      }
+  /// Sets the idle tick's alarm for IDLE_TICK_MS from now, unless one is set: when a DEGEN is deployed, after each tick
+  /// while anyone connected has one, and when a player with DEGENs is heard from and the room doesn't know of one (it
+  /// woke: this.alarmAt is only known while it's awake). Nothing else sets it, so an empty room sleeps.
+  async armIdle() {
+    if (this.alarmAt === undefined) this.alarmAt = await this.ctx.storage.getAlarm();
+    if (this.alarmAt) return;
+    const at = Date.now() + IDLE_TICK_MS;
+    await this.ctx.storage.setAlarm(at);
+    this.alarmAt = at;
+  }
+  /// The idle tick (a Durable Object alarm, armIdle): idleTick pays everyone's DEGENs, the alarm is set again while
+  /// anyone connected has one (not otherwise: an empty room sleeps), what changed is written now (rather than keeping
+  /// the room awake for FLUSH_MS), and the DEGENs due a read on-chain are read.
+  async alarm() {
+    this.alarmAt = null; // (this one's done)
+    const reads = await this.idleTick(Date.now()).catch((e) => { console.log("idle tick failed", e?.message ?? e); return []; });
+    if (this.ctx.getWebSockets().some((ws) => !this.left.has(ws) && this.att(ws).bots?.length)) {
+      await this.armIdle().catch((e) => console.log("idle alarm failed", e?.message ?? e));
     }
-    if (!a.bots?.length || !a.wallet) return sendUndo();
-    const wallet = a.wallet;
-    const w = await this.worldToday(), d = await this.botDays(), [s, l] = await this.ledger(wallet);
-    if (a.zone !== zone || a.wallet !== wallet) return sendUndo(); // (moved or signed out meanwhile)
-    if (this.busy(now)) {
-      for (const e of entries) if (!seen.has(e[0]) && a.bots.some(([tok]) => tok === e[0])) { seen.add(e[0]); await putBack(breaksOf(e)); }
-      for (const [tok] of [...a.bots]) this.botOff(ws, a, tok, BOT_BUSY, 1); // (hidden ones go quietly: nobody sees them)
-      return sendUndo();
+    await this.flush().catch((e) => console.log("flush failed", e?.message ?? e));
+    await Promise.all(reads);
+  }
+  /// One idle tick: every online player's deployed DEGENs are paid at one fair share for everyone (idleShare), and each
+  /// of those players hears their payment (["idle", ...]); an offline player's are marked paid up to now without pay
+  /// (offline time never pays). Resolves the reads on-chain started for the players whose DEGENs were due one
+  /// (readBots: each player's every BOOST_RECHECK_MS).
+  async idleTick(now) {
+    const d = await this.botDays(), w = await this.worldToday(), led = new Map();
+    const socks = this.ctx.getWebSockets().filter((ws) => !this.left.has(ws) && this.att(ws).bots?.length);
+    for (const ws of socks) {
+      const wallet = this.att(ws).wallet;
+      if (wallet && !led.has(wallet)) led.set(wallet, await this.ledger(wallet));
     }
-    if (a.botsAsleep) this.botSleep(ws, a, false); // (it's working, so its tab is back)
-    const idle = !(now - (a.activeAt ?? 0) < BOT_IDLE_MS), wasIdle = !!a.botIdle;
-    let tellIdle = idle && !wasIdle; // (told when they pause, and again whenever a batch still brings breaks: below)
-    const leashed = (fx, fy, fz) => [a, to].some((o) => o && wrapDist(fx + 0.5, fz + 0.5, o.x, o.z) <= BOT_LEASH_ROOM && Math.abs(fy - o.y) <= BOT_DY_ROOM);
-    // Who stands near (the player too, where they are now): no bot digs within 2 blocks under anyone's feet.
-    const feet = this.onZone(zone).map(([sock, o]) => (sock === ws && to ? to : o)).filter((o) => wrapDist(o.x, o.z, a.x, a.z) <= BOT_LEASH_ROOM + BOT_FOOT_ROOM + 4);
-    // Those near see a bot that moved, turned or changed what it's doing.
-    const shown = (tok, live) => {
-      const { x, y, z, yaw, flags } = live, was = live.sent;
-      if (was && was[0] === x && was[1] === y && was[2] === z && was[3] === yaw && was[4] === flags) return;
-      live.sent = [x, y, z, yaw, flags];
-      moved.push([tok, x, y, z, yaw, flags]);
-    };
-    let paid = false;
-    for (const e of entries) {
-      const [tok, x, y, z, yaw, fl] = e;
-      const b = a.bots.find(([t]) => t === tok);
-      if (!b || seen.has(tok)) continue;
-      seen.add(tok);
-      const list = breaksOf(e), flags = isInt(fl, 0, 256) ? fl : 0;
-      // (Somewhere it can't be: nothing is taken from it, and what it broke goes back, as any refused break does.)
-      if (![x, y, z, yaw].every(num) || x < 0 || z < 0 || x >= WORLD || z >= WORLD || y < 0 || y > HEIGHT + 20) {
-        await putBack(list);
-        continue;
-      }
-      const live = this.liveOf(ws, tok, now), cap = this.botCap(a, b), today = d.t[tok] ?? 0;
-      if (!l.bots?.includes(tok) && (l.bots?.length ?? 0) >= BOT_MAX) {
-        await putBack(list);
-        this.botOff(ws, a, tok, this.dayFull(l), 0);
-        continue;
-      }
-      const stop = idle || a.dead ? BOT_IDLE : today >= cap ? BOT_AT_CAP : w.total >= WORLD_CAP ? BOT_WORLD_CAP : null;
-      if (stop !== null) {
-        // Not worked, but kept in step with its game: what it broke goes back (every batch: its game may not know it's
-        // stopped yet), and where it is now is taken (settling in: no pay for a moment) and shown. Its game hears why
-        // once, and, paused for idleness (or a knock-out) and still sending breaks, that it's paused, again.
-        if (list.length) await putBack(list);
-        if (live.stop !== stop) {
-          live.stop = stop;
-          earned.push([tok, 0, today, cap, stop]);
+    // (Everything is read: from here, everyone is paid in one go.)
+    const owners = this.idleOwners(now, d), share = this.idleShare(w, owners, now), reads = [];
+    for (const ws of socks) {
+      const a = this.att(ws), rows = owners.find(([o]) => o === ws)?.[2];
+      if (rows && led.has(a.wallet)) {
+        const [s, l] = led.get(a.wallet);
+        this.send(ws, this.idlePay(s, l, rows, share, w, d, now));
+        if (now >= (a.botsAt ?? 0)) {
+          a.botsAt = now + BOOST_RETRY_MS; // (one read at a time)
+          reads.push(this.readBots(ws, a, a.wallet).catch((e) => console.log("idle DEGENs check failed", e?.shortMessage ?? e?.message ?? e)));
         }
-        if (stop === BOT_IDLE && list.length) tellIdle = true;
-        Object.assign(live, { x, y, z, yaw, flags, suspect: now + SETTLE_MS });
-        shown(tok, live);
-        continue;
-      }
-      live.stop = null;
-      // Walking takes a budget (BOT_SPEED_ROOM blocks a second, twice that banked). Past it, jumping back to its
-      // player, or new here (just deployed, or back from a hidden tab), a bot settles in: no pay for a moment.
-      if (live.x === undefined || flags & BOT_JUMP) live.suspect = now + SETTLE_MS;
-      else if (!bucket(live, "walk", 2 * BOT_SPEED_ROOM, BOT_SPEED_ROOM, Math.hypot(wrapDelta(x - live.x), y - live.y, wrapDelta(z - live.z)), now)) live.suspect = now + SETTLE_MS;
-      Object.assign(live, { x, y, z, yaw, flags });
-      const boost = this.botBoost(b);
-      let units = 0, why = null, broke = false;
-      for (const [bx, by, bz, fx, fy, fz] of list) {
-        const foot = { zone, x: fx + 0.5, y: fy, z: fz + 0.5 };
-        bucket(live, "credit", BOT_CREDIT, 1, 0, now); // (topped up for the time gone by)
-        let no = null;
-        if (broke || !(live.credit > 0)) no = BOT_REFUSED;
-        else if (!leashed(fx, fy, fz) || Math.abs(wrapDelta(foot.x - x)) > BOT_FOOT_ROOM || Math.abs(fy - y) > BOT_FOOT_ROOM || Math.abs(wrapDelta(foot.z - z)) > BOT_FOOT_ROOM) no = BOT_TOO_FAR;
-        else if (protectedIn(zone, fx, fz) || onPad(zone, foot.x, foot.z) || protectedIn(zone, bx, bz) || onPad(zone, bx + 0.5, bz + 0.5)) no = BOT_REFUSED;
-        else if (!this.inReach(foot, bx, by, bz) || !this.editAllowed(a, this.chunkKey(zone, bx, bz), now)) no = BOT_REFUSED;
-        else if (feet.some((o) => Math.abs(wrapDelta(bx + 0.5 - o.x)) < 2 && Math.abs(wrapDelta(bz + 0.5 - o.z)) < 2 && by < o.y)) no = BOT_REFUSED;
-        const cur = await at(bx, by, bz);
-        if (no === null) {
-          const c = cur.block;
-          if (c === AIR || c === WATER || c === BEDROCK || cur.placed || !(await this.exposed(zone, bx, by, bz, nat)) || !(await this.standing(foot, nat))) no = BOT_REFUSED;
-          // Breaking takes time, as for a player: what the best pickaxe needs, less the bot's own DEGEN speed boost.
-          else if (!bucket(live, "credit", BOT_CREDIT, 1, withSpeed(fastestBreak(c), boost.speed) * 0.85, now)) no = BOT_REFUSED;
-        }
-        if (no !== null) {
-          undo.push([bx, by, bz, cur.block]);
-          why = no;
-          continue;
-        }
-        this.putBlock(cur, AIR);
-        sets.push([bx, by, bz, AIR]);
-        // Its pickaxe wears one use a block (none for blocks that break at once); broken, the bot is done.
-        if (BLOCKS[cur.block].hardness > 0 && ++b[4] >= maxDurability(b[3])) broke = true;
-        const reward = BLOCK_REWARDS[cur.block];
-        if (reward && live.suspect > now) why = BOT_SETTLING;
-        else if (reward) units += withEarn(toUnits(reward) * (ZONE_PAY[zone] ?? 1), boost.earn);
-      }
-      // Paid into the wallet's total (not the player's own day) and the token's day, within its cap and everyone's.
-      const c = Math.max(0, Math.min(units, cap - today, WORLD_CAP - w.total));
+      } else for (const b of a.bots) b[3] = now;
+      this.save(ws, a);
+    }
+    return reads;
+  }
+  /// The online players with DEGENs deployed (never a closed connection, nor `skip`), each with what its DEGENs want
+  /// now (idleRows): [[ws, a, rows], ...].
+  idleOwners(now, d, skip) {
+    const out = [];
+    for (const ws of this.ctx.getWebSockets()) {
+      if (ws === skip || this.left.has(ws)) continue;
+      const a = this.att(ws);
+      if (a.bots?.length && this.online(ws, a, now)) out.push([ws, a, this.idleRows(a, d, now)]);
+    }
+    return out;
+  }
+  /// What each of player `a`'s deployed DEGENs wants now (`d`: botDays): [[b, want, today, cap, gap], ...], its full
+  /// rate (idleRate of its own cap) for the time since it was last paid (`gap`, at most IDLE_GAP_MAX_MS: a late tick
+  /// doesn't pay a long gap), within what's left of its cap today.
+  idleRows(a, d, now) {
+    return a.bots.map((b) => {
+      const cap = this.botCap(b), today = d.t[b[0]] ?? 0, gap = Math.max(0, Math.min(now - b[3], IDLE_GAP_MAX_MS));
+      return [b, Math.max(0, Math.min(idleRate(cap) * gap, cap - today)), today, cap, gap];
+    });
+  }
+  /// The fair share for paying `owners` (idleOwners) now: what the world has left today (`w`), spread evenly over the
+  /// rest of the UTC day, is what idle mining may take for the time this payment covers (the longest gap of those that
+  /// want something). If they all want more, each gets the same part of its want (every idle rate slows evenly, so
+  /// WORLD_DAILY_CAP lasts until 00:00 UTC); otherwise each gets all of it (1).
+  idleShare(w, owners, now) {
+    let want = 0, span = 0;
+    for (const [, , rows] of owners) for (const [, wi, , , gap] of rows) if (wi > 0) { want += wi; span = Math.max(span, gap); }
+    const left = Math.max(0, WORLD_CAP - w.total), msLeft = (Math.floor(now / DAY_MS) + 1) * DAY_MS - now;
+    const budget = Math.min(left, (left * span) / msLeft);
+    return want > budget ? budget / want : 1;
+  }
+  /// Pays player `a`'s DEGENs `toks` what they earned up to `now`, at this moment's fair share, before they go
+  /// (recalled, signed out, signed in elsewhere, the connection closing). Resolves the payment (["idle", ...]), or null
+  /// when the player isn't online (offline time never pays) or none of them is deployed.
+  async idleSettle(ws, a, toks, now) {
+    if (!a.wallet || !this.online(ws, a, now)) return null;
+    const wallet = a.wallet, d = await this.botDays(), w = await this.worldToday(), [s, l] = await this.ledger(wallet);
+    if (a.wallet !== wallet || !a.bots?.length) return null;
+    const rows = this.idleRows(a, d, now), mine = rows.filter(([b]) => toks.includes(b[0]));
+    if (!mine.length) return null;
+    return this.idlePay(s, l, mine, this.idleShare(w, [...this.idleOwners(now, d, ws), [ws, a, rows]], now), w, d, now);
+  }
+  /// Pays DEGENs `rows` (idleRows, of the wallet whose ledger entry is `l`, in shard `s`) their want times `share` in
+  /// whole units, never past what the world has left today (`w`), and marks them paid up to `now` (less the time the
+  /// fraction of a unit left over is worth: the next payment covers it, so a whole day online reaches the cap exactly):
+  /// into the wallet's total (never its own day, l.today), each token's day (`d`), the wallet's day list (l.bots) and
+  /// the world's total. Returns the payment for its game: ["idle", [[tokenId, units, today, cap], ...], walletTotal,
+  /// share].
+  idlePay(s, l, rows, share, w, d, now) {
+    const out = [];
+    let paid = 0;
+    for (const [b, want, today, cap, gap] of rows) {
+      // (At most BOT_MAX different DEGENs earn for a wallet in a day, however they were deployed: a 5th earns nothing.)
+      const fifth = !(l.bots ?? []).includes(b[0]) && (l.bots?.length ?? 0) >= BOT_MAX;
+      const due = fifth ? 0 : want * share, c = Math.max(0, Math.min(Math.floor(due), WORLD_CAP - w.total));
+      const owed = c === Math.floor(due) && share > 0 ? Math.min(gap, (due - c) / (idleRate(cap) * share)) : 0; // (ms)
+      b[3] = Math.max(b[3], now - owed);
       if (c > 0) {
         l.total += c;
-        d.t[tok] = today + c;
+        d.t[b[0]] = today + c;
         w.total += c;
-        if (!(l.bots ??= []).includes(tok)) l.bots.push(tok);
-        paid = true;
+        if (!(l.bots ??= []).includes(b[0])) l.bots.push(b[0]);
+        paid += c;
       }
-      if (list.length) earned.push([tok, c, today + c, cap, units && today + c >= cap ? BOT_AT_CAP : units > c ? BOT_WORLD_CAP : c ? BOT_PAID : why ?? BOT_PAID]);
-      if (broke) this.botOff(ws, a, tok, "Its pickaxe broke.", 0, true);
-      else shown(tok, live);
-    }
-    if (tellIdle) {
-      a.botIdle = true;
-      this.send(ws, ["botidle", 1]);
+      out.push([b[0], c, today + c, cap]);
     }
     if (paid) {
       this.dirtyShards.add(s);
@@ -2437,27 +2145,17 @@ export class World extends DurableObject {
       this.scheduleFlush();
       this.castWorld();
     }
-    if (sets.length) this.near(zone, a.x, a.z, ["sets", sets], ws, NEAR_EDITS);
-    sendUndo();
-    if (earned.length) this.send(ws, ["botearn", earned, l.total]);
-    if (moved.length && !a.botsAsleep) this.near(zone, a.x, a.z, ["botps", a.id, moved], ws);
-    // A carrier (or a `p` whose position was refused) isn't saved by position(): what changed here is kept now when
-    // the game was told its bots are paused, else at most every BOT_SAVE_MS while their breaks are taken (their
-    // pickaxes' wear, the edit allowance; a broken pickaxe was kept by botOff), so the room sleeping loses little.
-    if (!to && (!!a.botIdle !== wasIdle || (sets.length && now - (this.botSavedAt.get(ws) ?? 0) >= BOT_SAVE_MS))) {
-      this.botSavedAt.set(ws, now);
-      this.save(ws, a);
-    }
+    return ["idle", out, l.total, Math.floor(share * 1000) / 1000];
   }
 
   // ---------------------------------------------------------------- local testing only
 
   /// Dev hooks, for trying the daily caps without mining for hours: ["dev", "today", mine] sets the signed-in wallet's
-  /// earnings today, ["dev", "world", mine] everyone's. For the autopilot: ["dev", "msgs", n] sets today's message count
-  /// (BOT_BUSY_AT), ["dev", "bot", tokenId] deploys a Common level 1 bot with the best pickaxe without reading the chain
-  /// (so bot batches can be tried with a wallet that owns no DEGEN). Only when the room runs under `wrangler dev --var
-  /// DEV_HOOKS:1` (never put DEV_HOOKS in wrangler.toml) and the connection came to it on this machine, so never in
-  /// production.
+  /// earnings today, ["dev", "world", mine] everyone's. For idle mining: ["dev", "msgs", n] sets today's message count
+  /// (BOT_BUSY_AT), ["dev", "bot", tokenId] deploys a Common level 1 DEGEN without reading the chain (so it can be tried
+  /// with a wallet that owns no DEGEN, until its first read on-chain recalls it), ["dev", "tick", 0] runs the idle tick
+  /// now. Only when the room runs under `wrangler dev --var DEV_HOOKS:1` (never put DEV_HOOKS in wrangler.toml) and the
+  /// connection came to it on this machine, so never in production.
   async dev(ws, a, what, mine) {
     if (this.env.DEV_HOOKS !== "1" || !a.local || !num(mine) || mine < 0) return;
     if (what === "today" && a.wallet) {
@@ -2472,15 +2170,15 @@ export class World extends DurableObject {
       this.countMsg(Date.now());
       this.msgs.n = Math.floor(mine);
     } else if (what === "bot" && a.wallet && a.ready && isInt(mine, 1, SUPPLY + 1) && !this.claims().has(mine) && (a.bots?.length ?? 0) < BOT_MAX) {
-      const [pick] = Object.entries(TOOLS).filter(([, t]) => t.kind === "pick").sort(([, p], [, q]) => q.tier - p.tier)[0];
-      const b = [mine, 0, 1, Number(pick), 0];
+      const b = [mine, 0, 1, Date.now()];
       this.claims().set(mine, { ws, wear: false });
       (a.bots ??= []).push(b);
       a.botsAt = Date.now() + BOOST_RECHECK_MS;
       this.save(ws, a);
-      this.send(ws, this.botOk(a, b, await this.botDays()));
-      this.botsJoin(ws, a, b);
-    } else return;
+      this.send(ws, this.botOk(b, await this.botDays()));
+      await this.armIdle();
+    } else if (what === "tick") await this.alarm();
+    else return;
     this.scheduleFlush();
     const l = a.wallet ? (await this.ledger(a.wallet))[1] : null;
     this.send(ws, ["dev", what, l?.today ?? 0, (await this.worldToday()).total]);

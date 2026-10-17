@@ -23,7 +23,7 @@ a Cloudflare Worker for the shared world, Foundry contracts reusing Courier's au
 - `contracts/`: Foundry project (`git submodule update --init --recursive`).
 - `dev.sh`: a local chain, the contracts and the site.
 - `docs/DESIGN.md`: the design the three parts share.
-- `docs/AUTOPILOT.md`: the autopilot bots' rules and protocol (their numbers are in `web/bots-rules.js`).
+- `docs/AUTOPILOT.md`: idle mining's rules and protocol (its numbers are in `web/bots-rules.js`).
 
 ## Run it locally
 
@@ -76,8 +76,8 @@ health and food as a respawn gives, in time to grab your own chest if nobody has
 (MinePayments, the "revive" kind: all to the treasury, nothing burned) and checked by the world server; it's free before
 $MINE launches ("Revive here (free until $MINE launches)"), while `REVIVE_FREE` is set, and offline. Guests can't pay,
 so once revives cost $MINE they respawn in town. Knocked out in a zone, you're sent back to the home planet, with no
-revive there: your things stay in the zone, in a chest anyone there can take for 5 minutes, your bots come home with
-you, and the trip back needs new tickets (yours were used on the way out). Offline, the game keeps your chest itself.
+revive there: your things stay in the zone, in a chest anyone there can take for 5 minutes, and the trip back needs a
+new ticket (yours was used on the way out). Offline, the game keeps your chest itself.
 
 The Smithy's shop (**H**, or Garrick the armorer at the Smithy's door; `web/shop.js`) sells tools for mining (up to the
 Crystal pickaxe, the fastest), weapons (up to the Crystal sword and the slow, heavy war hammer) and armor: helmet,
@@ -122,30 +122,29 @@ one to talk: they know the game.
 
 ## The rocket and its zones
 
-A rocket stands on the launch pad in the town's north-east (`web/town.js` `LAUNCH`, on open grass between the north road,
-the lane and the clock tower). Click it, or stand on the pad and press **F**, for the destination card; it lifts off,
-the screen fades to the destination turning in space, and you land on its pad (`web/rocket.js`). **Tickets:** one
-ticket per trip out (home to a zone, or a zone to another) for the player and one for each autopilot bot that comes
-along (the card's **Take bots** checklist; all or nothing), with no time limit; the way home is always free, and from
-home the next trip out needs new ones. The world server remembers each wallet's zone, so a reload or a dropped
-connection lands you back there. A ticket costs the zone's `ticket` in $MINE, paid in full to the treasury: Deepvein
-and Cinderfall 2,100 each, Red Mesa 210. Sign in, then buy on the rocket's card: the game approves exactly the price
-of the tickets the trip is short of for MinePayments and pays it in one payment (the "ticket" kind), and hands the
-world server the transaction; the server reads its receipt and, if the payment succeeded, came from that signed-in
-wallet, was a ticket payment of at least that zone's price, is at most 3 hours old and never bought tickets before,
-keeps for the wallet as many tickets as it covers, up to 5 (`BOT_TICKETS_MAX`: you and 4 bots). A payment buys
-tickets once. The card then says how many you have there; the next trip out there uses one each for you and your
-bots. Guests can't fly out. `TICKETS_FREE` in `web/zones.js` makes
-every trip free again. Every zone is its own 512-block planet, bent like home, from its
-own seed (`web/zonegen.js`); its landing pad (the middle of the planet) is protected for 20 blocks: no mining, building or
-fighting there. Everything tunable is in `web/zones.js`; what the zones pay is in `web/rewards.js` (`ZONE_PAY`, `BOSS_POOL`).
+A rocket stands on the launch pad in the town's north-east (`web/town.js` `LAUNCH`, on open grass between the north
+road, the lane and the clock tower). Click it, or stand on the pad and press **F**, for the destination card; it lifts
+off, the screen fades to the destination turning in space, and you land on its pad (`web/rocket.js`). **Tickets:** one
+ticket per trip out (home to a zone, or a zone to another), with no time limit; the way home is always free, and from
+home the next trip out needs a new one. DEGENs deployed for idle mining don't travel and need none. The world server
+remembers each wallet's zone, so a reload or a dropped connection lands you back there. A ticket costs the zone's
+`ticket` in $MINE, paid in full to the treasury: Deepvein and Cinderfall 2,100 each, Red Mesa 210. Sign in, then buy on
+the rocket's card (one ticket, or several with its − and +): the game approves exactly their price for MinePayments and
+pays it in one payment (the "ticket" kind), and hands the world server the transaction; the server reads its receipt
+and, if the payment succeeded, came from that signed-in wallet, was a ticket payment of at least that zone's price, is
+at most 3 hours old and never bought tickets before, keeps for the wallet as many tickets as it covers, up to 5
+(`TICKETS_MAX`). A payment buys tickets once. The card then says how many you have there; the next trip out there uses
+one. Guests can't fly out. `TICKETS_FREE` in `web/zones.js` makes every trip free again. Every zone is its own 512-block
+planet, bent like home, from its own seed (`web/zonegen.js`); its landing pad (the middle of the planet) is protected
+for 20 blocks: no mining, building or fighting there. Everything tunable is in `web/zones.js`; what the zones pay is in
+`web/rewards.js` (`ZONE_PAY`, `BOSS_POOL`).
 
 | Zone | | |
 |---|---|---|
 | Home planet | No PvP | The town and its villagers |
-| **Deepvein**, the 2x Mine Zone | No PvP | Rocky crags riddled with caves, stone over harder deep rock (1.5x stone's breaking time), glowcaps on cave floors, rare ores three times as common (iron 2x, coal 1.5x). Everything earned pays **2x** (blocks and monsters, bots' blocks too), within the usual caps (300 for a player's own play, more with a cap boost; each bot its own) and 35,000 a day for everyone. Monsters come day and night, up to 5 at once, about every 10 s, with 1.5x health and damage. Its edits are kept a week at a time: every Monday 00:00 UTC it grows back |
+| **Deepvein**, the 2x Mine Zone | No PvP | Rocky crags riddled with caves, stone over harder deep rock (1.5x stone's breaking time), glowcaps on cave floors, rare ores three times as common (iron 2x, coal 1.5x). Everything a player earns pays **2x** (blocks and monsters; idle mining earns the same on every planet), within the usual caps (1,500 a day for a player's own play, more with a cap boost) and 35,000 a day for everyone. Monsters come day and night, up to 5 at once, about every 10 s, with 1.5x health and damage. Its edits are kept a week at a time: every Monday 00:00 UTC it grows back |
 | **Cinderfall**, the Boss Zone | No PvP | Ash plains, basalt, volcanoes with glowing craters, cracks of fire and ember-tipped spires. A stone-brick path runs north from the pad to the arena, where **Ashgrim, the Cinder Colossus** (an original giant of cooled lava with a molten heart, 1,500 HP) fights everyone at once |
-| **Red Mesa**, the PvP Zone | PvP off the pad | Terraced mesas in banded clays over red sand, dry riverbeds and cacti. Players can hit each other; a player beaten here drops everything they carry and is sent home. Other players' bots can be hit too: a beaten bot drops its pickaxe in a loot chest and is recalled |
+| **Red Mesa**, the PvP Zone | PvP off the pad | Terraced mesas in banded clays over red sand, dry riverbeds and cacti. Players can hit each other; a player beaten here drops everything they carry and is sent home |
 
 **The boss.** The world server keeps its health and picks its moves; every game animates each move from its start time,
 so all see the same thing and nothing is sent while it moves. It walks towards someone, **slams** both fists (a red ring
@@ -164,10 +163,11 @@ beaten there drops everything, as every knock-out does, and is sent home; the ki
 only right after a checked hit from them.
 
 **Knock-outs in the zones.** Wherever it happens (Deepvein's monsters, Ashgrim's slam, another player in Red Mesa, a
-fall), a player knocked out in a zone is sent back to the home planet's town square the moment their game reports it: the
-others in the zone see them go ("knocked out and sent home"), the home planet sees them come back, and the server
-remembers their wallet's zone as home. Their loot chest stays in the zone for 5 minutes, for whoever is there. There's no
-revive in a zone, and going back needs a new ticket, and one for each bot (free while tickets are).
+fall), a player knocked out in a zone is sent back to the home planet's town square the moment their game reports it:
+the others in the zone see them go ("knocked out and sent home"), the home planet sees them come back, and the server
+remembers their wallet's zone as home. Their loot chest stays in the zone for 5 minutes, for whoever is there. There's
+no revive in a zone, and going back needs a new ticket (free while tickets are). DEGENs deployed for idle mining keep
+earning through it all.
 
 **Loot chests and revives on the server.** Inventories live in the browser, so a chest holds what the knocked-out
 player's game reports, cleaned up by the server (real items, counts within a stack, wear within durability, at most 40
@@ -204,12 +204,12 @@ servers only, so players behind strict networks may not connect until a TURN rel
 | Trading fee | Every swap pays 4% of its IMD side to `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` (taken by the pool's hook; the hook is renounced at launch: after the renounce only the current fee recipient can move the fees; nobody else can). The fees wait in the pool until someone calls `MineHook.collectProtocolFees(IMD)` (anyone may; it always pays the fee recipient): logged in with the project's wallet, the Mining Site panel shows an **Admin** box with the fees waiting and a **Claim fees** button, plus the treasury's balances and $MINE's numbers (`web/panel.js` `adminBox`, `web/chain.js` `adminStats`) |
 | Mining site | Opened once per wallet with ETH (0.005 at launch), paid to the treasury. Needed to convert earnings to $MINE. A new site is level 1 and converts 50% of what it earns; upgrades raise it to 60%, 70%, 85% and 100% at levels 2 to 5, for 4,620, 18,942, 77,662 and 318,415 $MINE (about $1,000 for all four at a $50,000 market cap) |
 | DEGEN levels | Every DEGEN starts at level 1; its holder raises it to level 5 for 2,310, 9,471, 38,831 and 159,207 $MINE (half a site's). The level stays with the DEGEN when it's sold, shows as its "Level" trait, and adds to its boost (below) |
-| Shop and tickets | Paid in $MINE through `MinePayments` at the game's prices (`web/shop.js` `CATALOG`, `web/zones.js` `ticket`): the shop's 75% burned and 25% to the treasury; rocket tickets (2,100 for Deepvein or Cinderfall, 210 for Red Mesa; one for the player and one for each bot on a trip out; a payment buys as many tickets as it covers, up to 5) and revives (420, to revive on the spot after dying on the home planet: kind 2 "revive") all to the treasury |
-| Autopilot bots | A signed-in player can send out up to 4 of their other DEGENs as bots that mine beside them while they play: each earns the block rates with its own DEGEN's boost, up to its own daily cap (330 to 750 $MINE by its rarity and level, counted per token), into the wallet's ledger total (not the player's own cap). At most 4 different DEGENs a wallet a UTC day. Rules below, under Autopilot bots |
+| Shop and tickets | Paid in $MINE through `MinePayments` at the game's prices (`web/shop.js` `CATALOG`, `web/zones.js` `ticket`): the shop's 75% burned and 25% to the treasury; rocket tickets (2,100 for Deepvein or Cinderfall, 210 for Red Mesa; one per trip out; a payment buys as many tickets as it covers, up to 5) and revives (420, to revive on the spot after dying on the home planet: kind 2 "revive") all to the treasury |
+| Idle mining | A signed-in player can deploy up to 4 of their other DEGENs to mine for them while they're online (connected and signed in): each earns its own daily cap (1,650 to 3,750 $MINE by its rarity and level, counted per token) spread over 24 hours, into the wallet's ledger total (not the player's own cap), and every idle rate slows evenly when the world's 35,000 a day is busy. Offline, nothing. At most 4 different DEGENs a wallet a UTC day. Rules below, under Idle mining |
 | Burns | Site upgrades and DEGEN levels burn 75% of what they cost and send 25% to the treasury, as the shop does. The token counts every mint against its 21M cap, so a burn is for good: the supply only ever shrinks from what was minted |
 | NFT: I'M DEGEN | "I'M DEGEN" (symbol DEGEN; the contract is `MineWorldCrafters`): 3,333 frogs, each a full Minecraft-style skin (64 x 64, with the second layer), drawn and stored entirely on chain, no two alike (every token has a different face and top). The NFT's picture is the skin as a "skin card"; the one a player wears is their miner in the game, the same skin pixel for pixel, and boosts their mining by its rarity and level (below). Traits: background, skin (5 greens; Ice, Purple and Stone are Rare, Gold Legendary), eyes, mouth, cheeks, top (58: hoodies, tees, jackets, tracksuits, suits, miner's overalls and vests, sweaters, flannels; royal robes, space suits and iron armour Rare, gold armour Legendary), bottoms, shoes, headwear (caps, beanies, hard hats with a lamp, headphones, goggles, a straw hat, the hood on hoodies; wizard hat and viking helmet Rare, the crowns Legendary) and an accessory; about 69% Common, 25% Rare, 6% Legendary. Free blind mint for wallets only (no contracts, so one transaction can't sweep it through throwaway contracts), at most 3 a wallet (the owner can change that, 1 to 50, or set a price, paid straight to the treasury), then revealed: the owner publishes the secret committed at deploy, and the seed waits for the next block's hash, which anyone then locks in (`seal`) within about 26 seconds (the panel sends both at once), so nobody can pick looks or see them before everyone else. If nobody locks it in, only the owner can move it on to a new block, in public, at most 3 times; anyone can run `tools/sealer.sh` to lock it in the moment it can be. 5% royalty, enforced through the transfer validator the owner picks (it can relax that, in public) |
 | Owner and treasury | `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` owns the vault, the three upgradeable contracts and I'M DEGEN, and is the treasury (site sales, the unburned share of upgrades and payments, tickets, any mint price, the royalty) and the fee recipient. Ownership moves in two steps and can't be renounced; it can be handed to a multisig or a timelock (I'M DEGEN's only to a wallet that can sign in to OpenSea Studio: launch step 10). A treasury must take ETH where ETH is sent to it (MiningSites and I'M DEGEN refuse one that doesn't) |
-| Nothing for holding | Nothing pays for holding or waiting. $MINE comes only from playing; NFT boosts only add to what a player does, and bots earn only while their player is in the game and active (they pause 5 minutes after the player's last action the server accepts) |
+| Nothing offline | Nothing pays while a player is offline. $MINE comes only from the game: from playing, and from idle mining while the player is connected and signed in. An NFT merely held earns nothing, and NFT boosts only add to what a player does |
 
 **What can change and what can't.** Fixed forever: the token (21M cap, no owner, no proxy, no pause, no blocklist, no
 transfer tax), the mining vault (35,000 a day and 10,500,000 in all, not upgradeable; its distributor can only be
@@ -225,41 +225,42 @@ level and total kept across upgrades): `MiningSites` (site price, upgrade costs,
 kind's burn share, new kinds). Whatever runs in them, nobody can mint more than the vault allows: the most an owner or
 a leaked server key could take is the vault's 35,000 a day.
 
-**Earning.** Signing in with a wallet (one free signature) makes the world server count that wallet's earnings:
-breaking natural blocks and defeating monsters, at the rates in `web/rewards.js` (grass, dirt and sand 0.01; stone and
-logs 0.05; coal 0.3, iron 0.8, gold 2, diamond 6, a $MINE crystal 15; monsters 0.6 to 2.5; Deepvein pays 2x). Blocks
-players placed pay nothing. A player earns up to 300 $MINE a UTC day by their own play before boosts (times a zone's
-`capMul` in `web/zones.js`, 1 everywhere for now), each of their autopilot bots up to its own cap (below), and
-everyone together at most 35,000 a day, boosts and bots included. The ledger counts
-ten-thousandths of a $MINE, so a percentage boost on a 0.01 block is kept exactly. To add an activity or change a rate,
-edit `web/rewards.js` and deploy the server and the site.
+**Earning.** Signing in with a wallet (one free signature) makes the world server count that wallet's earnings: breaking
+natural blocks and defeating monsters, at the rates in `web/rewards.js` (grass, dirt and sand 0.01; stone and logs 0.05;
+coal 0.3, iron 0.8, gold 2, diamond 6, a $MINE crystal 15; monsters 0.6 to 2.5; Deepvein pays 2x). Blocks players placed
+pay nothing. A player earns up to 1,500 $MINE a UTC day by their own play before boosts (`DAILY_EARN_CAP`, times a
+zone's `capMul` in `web/zones.js`, 1 everywhere for now), each of their deployed DEGENs up to its own cap by idle mining
+(below), and everyone together at most 35,000 a day, boosts and idle mining included. The ledger counts ten-thousandths
+of a $MINE, so a percentage boost on a 0.01 block is kept exactly. To add an activity or change a rate, edit
+`web/rewards.js` and deploy the server and the site.
 
 **NFT boosts.** Every NFT a player uses can boost their mining while they play (`web/boosts.js`, shared by the game and
-the server; nothing pays for holding). One item per slot, and the slots add up: **speed** (blocks break that much faster;
-the server allows for it in its break-rate check), **earn** (more $MINE for every block, monster and boss share),
-**cap** (a higher daily cap) and **move** (faster walking, for the vehicles to come). Totals are capped at +150% speed,
-+150% earn, +300% cap and +100% move. Today the **DEGEN** slot (I'M DEGEN) is live: its rarity gives Common +5% speed, +5% earn,
-+10% cap; Rare +10/+10/+25; Legendary +20/+20/+50; its level (bought on-chain from CrafterLevels) adds L2 +5/+5/+10,
-L3 +15/+15/+30, L4 +30/+30/+60, L5 +50/+50/+100. Skins, companions, auras and vehicles have their slots and placeholder
-tables waiting (contract `null`, "Coming soon" in the panel); the top of `web/boosts.js` says how to plug a collection
-in. The server reads what a player owns when they sign in, wear or equip (`ownerOf`, the DEGEN's rarity from its
-seed, `levelOf`; a level it can't read counts as 1 and is read again a minute later), checks again every 10 minutes
-while they earn, and tells the game; the Mining Site panel (M) and a line under the HUD's earnings show it. An
-autopilot bot gets only its own DEGEN's boost (`itemBoost`), never the player's.
+the server; an NFT merely held earns nothing). One item per slot, and the slots add up: **speed** (blocks break that
+much faster; the server allows for it in its break-rate check), **earn** (more $MINE for every block, monster and boss
+share), **cap** (a higher daily cap) and **move** (faster walking, for the vehicles to come). Totals are capped at +150%
+speed, +150% earn, +300% cap and +100% move. Today the **DEGEN** slot (I'M DEGEN) is live: its rarity gives Common +5%
+speed, +5% earn, +10% cap; Rare +10/+10/+25; Legendary +20/+20/+50; its level (bought on-chain from CrafterLevels) adds
+L2 +5/+5/+10, L3 +15/+15/+30, L4 +30/+30/+60, L5 +50/+50/+100, so a worn DEGEN makes a player's cap 1,650 (Common, level
+1) to 3,750 (Legendary, level 5). Skins, companions, auras and vehicles have their slots and placeholder tables waiting
+(contract `null`, "Coming soon" in the panel); the top of `web/boosts.js` says how to plug a collection in. The server
+reads what a player owns when they sign in, wear or equip (`ownerOf`, the DEGEN's rarity from its seed, `levelOf`; a
+level it can't read counts as 1 and is read again a minute later), checks again every 10 minutes while they earn, and
+tells the game; the Mining Site panel (M) and a line under the HUD's earnings show it. A DEGEN deployed for idle mining
+gets only its own DEGEN's cap (`itemBoost`), never the player's boost.
 
 **Checks.** The server runs the same world generator as the game (`web/worldgen.js`), so it knows what every block
 was. It pays for a break only if the block is really there, within reach of where the player really is, outside the
 town, and not faster than the best pickaxe allows; monsters are spawned by the server, and hits come no faster and no
-harder than the best sword's. A player who moves faster than anyone can earns nothing for a while. Bot breaks get the
-same checks, from the cell the bot stood in, plus the bots' own (below).
+harder than the best sword's. A player who moves faster than anyone can earns nothing for a while.
 
 **Converting.** With a mining site open, **Convert to $MINE** asks the server for a voucher for the wallet's lifetime
 total (in wei) and `MiningSites.claim` converts the earnings it hasn't converted before at the site's rate (50% at level
 1, up to 100% at level 5) at the moment it claims, so an upgrade before claiming converts everything still unclaimed at
-the better rate. It pays within a per-wallet daily cap (1,500 $MINE at launch, at most 3,500; bot earnings count in
-the wallet's total, so what a player and their bots earn above it waits for later days) and one across everyone
-(35,000, the vault's daily limit); the owner can change the caps and pause claims. The panel shows both what you earned
-and what you'll receive. A leaked server key can take at most the daily caps until it's paused and replaced.
+the better rate. It pays within a per-wallet daily cap (3,500 $MINE, the most it allows, raised from 1,500 on 2026-10-17; idle mining counts in
+the wallet's total, and a player's own cap can be above it too, so what a wallet earns above it waits for later days)
+and one across everyone (35,000, the vault's daily limit); the owner can change the caps and pause claims. The panel
+shows both what you earned and what you'll receive. A leaked server key can take at most the daily caps until it's
+paused and replaced.
 
 **Upgrading.** The Mining Site panel (M) shows your site's level and rate, the next level's rate and cost, and an
 **Upgrade to level N** button: it approves exactly that cost for MiningSites, then calls `upgradeSite(cost, rate)` with
@@ -273,69 +274,51 @@ approves exactly what it costs, never more, and every upgrade names the cost it 
 cut meanwhile makes it fail (`CostAboveMax`, `RateBelowMin`) instead of charging for less, even from a wallet that
 approved more. Short of $MINE? Buy some in the panel's trade box.
 
-## Autopilot bots
+## Idle mining
 
-A signed-in player can send out up to 4 (`BOT_MAX`) of their other I'M DEGENs as bots that mine near them: the player
-plus 4 bots, 5 DEGENs mining. The player's own game runs the bots (`web/bots.js`): each wears its DEGEN's skin, holds a
-pickaxe from the player's bag, goes for the best open-faced natural block its pickaxe gets the drop from, walks there,
-mines it, and jumps back beside its player when it's stuck or too far. The world server checks every bot break like a
-player's and pays it. The rules are the player's rules. The whole design and the protocol, which the game and the
-server follow exactly, are in [`docs/AUTOPILOT.md`](docs/AUTOPILOT.md); the shared numbers are in `web/bots-rules.js`
-(import them, never copy them).
+A signed-in player can deploy up to 4 (`BOT_MAX`) of their other I'M DEGENs to mine for them while they're online, as
+Courier World's couriers work at a post office: the player mines by hand with the DEGEN they wear, and the deployed
+ones earn by time. Nothing walks, digs or wears out: there are no avatars and no pickaxes, and the world server pays
+them on a timer. It replaced the digging autopilot bots on 2026-10-17. The whole design and the protocol, which the
+game and the server follow exactly, are in [`docs/AUTOPILOT.md`](docs/AUTOPILOT.md); the shared numbers are in
+`web/bots-rules.js` (import them, never copy them).
 
-**Own cap.** A bot earns the block rates in `web/rewards.js` times the zone's `ZONE_PAY`, plus its own DEGEN's earn
-boost, up to its own daily cap, `dailyCap` with that DEGEN's cap boost (330 for a Common level 1, 750 for a Legendary
-level 5), counted per token id, so a DEGEN passed to another wallet keeps the same day. Bot earnings go into the
-wallet's ledger total, so they convert like any earnings, but not into the player's own `today`. Everyone's 35,000 a
-day holds for everything. MiningSites converts at most `walletDailyCap` (1,500 today) a day per wallet; the rest waits
-for later days, and the panel says so.
+**Own cap, by time.** Each deployed DEGEN earns its own daily cap, `dailyCap` with that DEGEN's cap boost on the home
+planet's terms (1,650 for a Common level 1, 3,750 for a Legendary level 5), spread over 24 hours online
+(`IDLE_DAY_MS`): `idleRate(cap)` a millisecond, so 1,650 a day is 68.75 an hour. Its earn boost doesn't change the
+rate (its cap boost already does), the player's boost never applies, and the planet doesn't matter: deployed DEGENs
+don't travel and need no tickets. Counted per token id, so a DEGEN passed to another wallet keeps the same day. Idle
+earnings go into the wallet's ledger total, so they convert like any earnings, but not into the player's own `today`.
+MiningSites converts at most `walletDailyCap` (3,500 today) a day per wallet; the rest waits for later days, and the
+panel says so.
 
-**You + 4, per day.** At most 4 bots at once, and at most 4 distinct DEGENs earn as one wallet's bots in a UTC day:
-swapping in fresh DEGENs adds no caps, and a 5th distinct DEGEN that day is refused. A bot is a DEGEN the wallet owns
-now (read on-chain at deploy and every 10 minutes), never the one the player wears, never one another connection holds
-(unless the chain says it's the requester's now: then that connection's bot is recalled), and never one the player
-wore while earning today; a DEGEN that mined as a bot today can't be worn until tomorrow.
+**Online only.** A deployed DEGEN earns while its player's game is connected and signed in and was heard from in the
+last 150 s (`IDLE_ONLINE_MS`: any message, or the game's 45 s ping, which the room answers without waking). Idle
+players and hidden tabs count; offline (signed out, the tab closed, the phone asleep) earns nothing, and offline time is
+never paid later. The world server pays every 5 minutes (`IDLE_TICK_MS`: a Durable Object alarm, set only while some
+connected player has DEGENs deployed, so an empty room sleeps), one payment covering at most 10 minutes
+(`IDLE_GAP_MAX_MS`), and on recall, sign-out or disconnect.
 
-**Active play.** Bots work while the player's last accepted action is less than 5 minutes old (`BOT_IDLE_MS`): their
-own break of a natural block, a place, a hit on a monster, the boss or a player, a chat line, or walking at least 2
-blocks (`BOT_MARK_MOVE`) from the last mark. Not `act`, turning, connecting, signing in or anything a bot does; a new
-connection starts paused until the first action. A knocked-out player's bots pause until the player is up. (A script
-that really walks or mines can't be told from a player; the rule stops message-only keepalives.)
+**Fair share.** Everyone's 35,000 a day holds for everything. Each tick the room works out what the world can still pay
+this tick (what's left of the 35,000, times the tick's length, over the time left until 00:00 UTC) and what all online
+deployed DEGENs want; when they want more, each gets the same share of what it wants, so every idle rate slows evenly
+and the 35,000 lasts the day. Manual mining pays as before, from the same total.
 
-**Follow you.** A trip out names the bots that come (`["zone", key, [tokenIds]]`) and costs one ticket for the player
-and one for each of them, all or nothing. Bots left out are recalled ("stayed home"), and the game redeploys them,
-with their pickaxes, when the player is home again. The way home is free, and a knock-out in a zone brings the bots
-home with the player, free. New bots deploy on the home planet only; in a zone the player can redeploy, free, a bot
-whose ticket was paid for that trip (after a reload or a dropped connection: `botz:<wallet>`, written in the same put
-as `tix:<wallet>`).
+**You + 4, per day.** At most 4 deployed at once, and at most 4 distinct DEGENs earn as one wallet's idle miners in a
+UTC day: swapping in fresh DEGENs adds no caps, and a 5th distinct DEGEN that day is refused. A deployed DEGEN is one
+the wallet owns now (read on-chain at deploy, then every 10 minutes for all of them in one multicall), never the one the
+player wears, never one another connection holds (unless the chain says it's the requester's now: then that
+connection's is recalled), and never one the player wore while earning today; a DEGEN that idle-mined today can't be
+worn until tomorrow.
 
-**Gear.** Each bot holds a pickaxe from the player's bag; the server is told which one and its wear at deploy, adds 1
-wear for every accepted bot break of a block with hardness, and recalls the bot when it breaks. A bot mines what its
-pickaxe harvests, at that pickaxe's speed with its DEGEN's speed boost. Ores a bot digs go into the player's bag when
-there's room (other drops are left), and a recalled pickaxe goes back to the bag or waits in the panel's Autopilot box
-until there's room: never lost. Bot pickaxes are kept in the bag's own saved value (`mwc:inv:<wallet>`).
+**Free plan.** Deploys are rate-limited (4 at once, then 1 every 5 s), and after 85,000 incoming messages in a UTC day
+(`BOT_BUSY_AT`) the room takes no new deploys for the rest of the day; DEGENs already deployed keep earning. Paying
+them costs one alarm every 5 minutes, and one message to each such player.
 
-**Where bots mine.** Natural blocks only (never a placed one), never in a protected place (`protectedIn`), never while
-standing in one or on a pad, and never a block within 2 blocks under a player's feet; bots stand and walk anywhere. A
-bot roams at most 24 blocks from its player, horizontally (`BOT_LEASH`) and vertically (`BOT_DY`); the server refuses
-breaks beyond 34 and 32. No x-ray: the brain targets only blocks with a face open to air the bot can reach, and
-tunnels only in straight runs of at most 6 blocks, in a direction chosen without looking inside the rock. Bots don't
-fight: monsters and the boss ignore them.
-
-**Red Mesa.** Off the pad, other players can hit a bot (not its owner): 20 health (`BOT_HP`), no armor, healing 1
-every 4 s (`BOT_HEAL_MS`) after its last hit. Beaten, its pickaxe drops in a loot chest at its feet (built by the
-server from the pickaxe it knows; 5 minutes; anyone there may take it), the planet hears "<attacker> beat <owner>'s bot
-#id", and the bot is recalled.
-
-**Free plan.** Bot work rides inside the player's own position messages (`["p", x, y, z, yaw, pitch, flags, B]`), or
-in a carrier `p` that repeats the player's last position when breaks are waiting and nothing went out for 2 s
-(`BOT_BATCH_MS`), so 4 bots add few incoming messages. The room counts incoming messages per UTC day, and after 85,000
-(`BOT_BUSY_AT`) it refuses bot work for the rest of the day ("The world is busy today").
-
-In the game, the Mining Site panel's **Autopilot** box deploys and recalls bots and gives them pickaxes; a HUD line
-shows them; the rocket card shows the tickets a trip needs, a **Take bots** checklist and a multi-ticket purchase.
-Other players' bots are drawn like players, with a name tag such as "Name's bot #1234" (`botName`). The players' guide
-(`web/docs.html#bots`) explains it all for players.
+In the game (`web/bots.js`), the Mining Site panel's **Idle mining** box deploys and recalls DEGENs (each with its cap
+a day, its rate an hour and what it earned today), remembers them per wallet and deploys them again after a sign-in,
+and gives back the pickaxes the old bots held (**Take back**); a HUD line shows them (and the share when the day is
+busy). The players' guide (`web/docs.html#bots`) explains it all for players.
 
 ## Contracts
 
@@ -344,7 +327,7 @@ Other players' bots are drawn like players, with a name tag such as "Name's bot 
 | `MineToken.sol` | $MINE: Courier World's $STAMP (StampToken) line for line. ERC-20 with permit and burn, 21M cap counting every mint (so burns are for good), 10.5M to the hook (pool) at launch, the rest minted only by its one minter, the vault (set once). Renounced at deploy: no owner, no proxy, no pause, no tax |
 | `MineVault.sol` | The mining vault, $MINE's minter: mints straight to players when its distributor (MiningSites) asks, never more than 35,000 in a UTC day nor 10,500,000 in all. Not upgradeable. The owner can replace the distributor only in the open (`proposeDistributor`, then `acceptDistributor` two days later), and only with a contract whose `owner()` is the vault's owner, `vault()` the vault and `predecessor()` the current distributor: propose the new proxy's predicted address, deploy it with `initialize` in its constructor, then accept (the steps are in its NatSpec) |
 | `MineHook.sol`, `MineRouter.sol`, `MineEthRouter.sol` | Courier's audited `StampHook` and routers for $MINE: one pool, locked launch liquidity, 4% fee on the IMD side, buy/sell with IMD or ETH. The one difference from StampHook: the lowest start tick is -300,000 (was -400,000, as CourierPad); everything else, the 21M launch limit and the market-cap maths included, is StampHook's |
-| `MiningSites.sol` | UUPS proxy, the rules for converting: mining sites (ETH, once per wallet) with levels 1 to 5 converting 50/60/70/85/100% (`upgradeSite(maxCost, minRateBps)`, paid in $MINE: `upgradeCost(level)`, 75% burned, never more than `maxCost`, never for a rate below `minRateBps`), and the claims the vault pays: EIP-712 vouchers from the world server, a daily cap per wallet (1,500, at most 3,500) and across everyone (35,000), pause. The owner tunes prices, rates, costs and caps, adds levels (up to 20) and can upgrade it. `initialize` runs only in the proxy's own constructor, never later. A replacement can take over from any distributor, one without code too (a predicted address nothing was deployed at: no books), and carries each player's site (its level as bought, even above the replacement's top, which then earns the top rate), `settled` and `claimed` over from its predecessor (read through, then imported on the player's first act), and the replaced one retires (`NotActive`) |
+| `MiningSites.sol` | UUPS proxy, the rules for converting: mining sites (ETH, once per wallet) with levels 1 to 5 converting 50/60/70/85/100% (`upgradeSite(maxCost, minRateBps)`, paid in $MINE: `upgradeCost(level)`, 75% burned, never more than `maxCost`, never for a rate below `minRateBps`), and the claims the vault pays: EIP-712 vouchers from the world server, a daily cap per wallet (3,500, the most it allows) and across everyone (35,000), pause. The owner tunes prices, rates, costs and caps, adds levels (up to 20) and can upgrade it. `initialize` runs only in the proxy's own constructor, never later. A replacement can take over from any distributor, one without code too (a predicted address nothing was deployed at: no books), and carries each player's site (its level as bought, even above the replacement's top, which then earns the top rate), `settled` and `claimed` over from its predecessor (read through, then imported on the player's first act), and the replaced one retires (`NotActive`) |
 | `CrafterLevels.sol` | UUPS proxy: each DEGEN's level (`levelOf`, 1 to `maxLevel`), raised by its holder with `upgrade(tokenId, maxCost)` for `upgradeCost(level)` $MINE (75% burned, never more than `maxCost`). I'M DEGEN shows it as the "Level" trait once pointed at it (`setAttributesExtension`) |
 | `MinePayments.sol` | UUPS proxy: `pay(kind, amount, ref)` takes $MINE from the player (with their exact approval), burns the kind's share, sends the rest to the treasury and emits `Paid(player, kind, amount, burned, ref)`, which the game checks. Kinds at launch: 0 "shop" (75% burned), 1 "ticket" and 2 "revive" (the 420 $MINE revive on the spot after dying on the home planet), both burning nothing (all to the treasury); the owner can change burn shares and add kinds. Prices live in the game, not here |
 | `MinePayer.sol`, `UpgradeCosts.sol`, `lib/OwnedUUPS.sol` | What the three proxies share: taking a payment (burned share burned from the payer's wallet, the rest to the treasury; nothing ever held), level costs, and two-step ownership that can't be renounced, with the owner alone upgrading; each proxy is set up only in its own constructor (`__Owned_init` refuses anywhere else), so a proxy deployed without its setup is nobody's. State in ERC-7201 namespaced storage |
@@ -445,16 +428,16 @@ One Durable Object holds the world: who's playing and on which planet, every edi
 `c2:`, a zone's under `z<zone>:`, Deepvein's under `zdeep<week>:` with older weeks cleared), the monsters, the boss, the
 loot chests (`chests`: every open one, on every planet), chat, names, voice set-up messages, the revive payments it took
 (`revTx:<hash>`, kept for good), rocket tickets (`tix:<wallet>`: how many to each zone; every payment that bought some
-under `tixTx:<hash>`, kept for good; the bots whose tickets paid for the current trip under `botz:<wallet>`) and the
-$MINE ledger (16 shards under `led2:`, in ten-thousandths of a $MINE; the old `led:` shards in hundredths are converted
-the first time they're read; today's bot earnings per DEGEN, and the DEGENs worn while earning today, in one more key,
-`led2:bots`). The terrain itself is never stored: both sides generate it from the same seed. Built for Cloudflare's
-free plan: hibernating WebSockets, pings answered without waking the room, positions sent only while moving, writes
+under `tixTx:<hash>`, kept for good) and the $MINE ledger (16 shards under `led2:`, in ten-thousandths of a $MINE; the
+old `led:` shards in hundredths are converted the first time they're read; today's idle mining per DEGEN, and the
+DEGENs worn while earning today, in one more key, `led2:bots`). The terrain itself is never stored: both sides
+generate it from the same seed. Built for Cloudflare's free plan: hibernating WebSockets, pings answered without
+waking the room, an alarm only while someone has DEGENs deployed, positions sent only while moving, writes
 batched every 30 seconds (the free plan allows 100,000 requests and 100,000 written rows a day per account, shared by
 every Worker on it, so a separate Cloudflare account keeps Courier World's room unaffected).
 
-Knock-outs, loot chests and revives on the wire (the rest of the protocol is in `docs/DESIGN.md`, the autopilot bots'
-in `docs/AUTOPILOT.md`):
+Knock-outs, loot chests and revives on the wire (the rest of the protocol is in `docs/DESIGN.md`, idle mining's in
+`docs/AUTOPILOT.md`):
 
 | Direction | Message | |
 |---|---|---|

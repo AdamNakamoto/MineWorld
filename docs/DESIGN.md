@@ -21,7 +21,9 @@ $STAMP hook for the 4% fee, the audited enforced-royalty NFT pattern, and server
 | Treasury | Site sales, the unburned share of upgrades and shop payments, tickets, any NFT mint price and the NFT royalty. Defaults to the fee recipient `0x6e85…70eD`; separate setting |
 | Owner | `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` owns the vault, the three proxies and I'M DEGEN. Two-step transfer, never renounced (`OwnedUUPS`); can be a multisig or a timelock |
 
-No auto yield farming: nothing pays for holding or waiting. $MINE is only paid for things players do in the game.
+No auto yield farming: nothing pays while a player is offline, and an NFT merely held earns nothing. $MINE is paid
+for things players do in the game, and for idle mining by the DEGENs a player deploys while they're online (connected
+and signed in), each within its own daily cap (`docs/AUTOPILOT.md`).
 
 **Fixed forever:** the token, the vault (its daily and total limits; a new distributor only two days after it's
 proposed, in the open), the hook (renounced: the 4% fee is final, and only the current fee recipient can move its fees)
@@ -38,17 +40,18 @@ the vault caps what can be minted at 35,000 a day.
 3. The server checks each action: the block is really there (it runs the same world generator as the game), within
    reach of where the player really is, not faster than the best pickaxe allows, outside the protected town; a
    monster was really spawned for that player, hits come no faster than a sword swings and no harder than the best
-   sword. Each wallet earns at most a daily cap from its own play (server-side: `DAILY_EARN_CAP` 300 times its NFT cap
-   boost and the zone's `capMul`); its autopilot bots (other DEGENs of the wallet, mining near the player: see
-   `docs/AUTOPILOT.md`) earn into the same wallet total on top of that, each within its own daily cap counted by token
-   id; and everyone together, players and bots, earns at most `WORLD_DAILY_CAP` (35,000) a day. The ledger counts
-   ten-thousandths of a $MINE (`UNIT`); vouchers are in wei.
+   sword. Each wallet earns at most a daily cap from its own play (server-side: `DAILY_EARN_CAP` 1,500 times its NFT
+   cap boost and the zone's `capMul`); its idle miners (up to 4 other DEGENs of the wallet, deployed while the player
+   is online: see `docs/AUTOPILOT.md`) earn into the same wallet total on top of that, by time, each its own daily cap
+   spread over 24 hours and counted by token id; and everyone together, manual and idle, earns at most
+   `WORLD_DAILY_CAP` (35,000) a day (every idle rate slows evenly when the day is busy, so it lasts until 00:00 UTC).
+   The ledger counts ten-thousandths of a $MINE (`UNIT`); vouchers are in wei.
 5. NFT boosts (`web/boosts.js`): the NFTs a signed-in player uses (one per slot: DEGEN, skin, companion, aura,
    vehicle; only the DEGEN is out) add a % to their block-breaking speed (allowed for in the server's break-rate
    check), to every block, monster and boss share they earn, to their daily cap, and (client only) to walking. Totals
    are clamped (+150% speed, +150% earn, +300% cap, +100% move). The server checks ownership and reads the tier and
-   level on-chain when the player signs in, wears or equips, and again every 10 minutes while they earn. Nothing pays
-   for holding.
+   level on-chain when the player signs in, wears or equips, and again every 10 minutes while they earn. A DEGEN
+   deployed for idle mining earns by its own cap boost alone; an NFT merely held earns nothing.
 4. To convert, the player needs an open mining site (on-chain). The server signs a voucher for the wallet's
    lifetime total earned; `MiningSites.claim` converts what hasn't been converted yet (`total - settled`) at the
    site's rate now, within a per-wallet daily cap and a global daily cap (both owner-settable below hard maxima, they
@@ -82,7 +85,7 @@ the vault caps what can be minted at 35,000 a day.
   `MAX_WALLET_DAILY_CAP` (3,500 $MINE) and `MAX_DAILY_CAP()` (the vault's 35,000), `setUpgradeCosts` (each 1 wei to
   1,000,000 $MINE), `setRates` (each 10% to 100%, never lower for a higher level), `setUpgradeBurnBps` (0-100%),
   `addLevel(cost, rate)` (up to 20 levels, never fewer), `sweep(token, to)` for tokens sent by mistake, and upgrades.
-  Defaults: 1,500 $MINE a wallet a day, 35,000 across everyone.
+  Defaults: 1,500 $MINE a wallet a day, 35,000 across everyone (the wallet cap raised to its most, 3,500, on 2026-10-17).
 
 **MineVault** (not upgradeable): `release(to, amount)` only from `distributor` (MiningSites), at most `DAILY_LIMIT`
 (35,000) a UTC day and `TOTAL_LIMIT` (10,500,000) in all; `released`, `releasedToday()`, `remaining()`, `roomToday()`.
@@ -133,21 +136,18 @@ The rocket flies between planets (`web/zones.js`): home, Deepvein (2x $MINE, gro
 and Red Mesa (PvP). Each is its own 512-block planet from its own seed (`web/zonegen.js`; `tools/check-worldgen.mjs` checks
 that naturalBlock and generateChunk agree on every one). The room keeps each player on one planet: positions, edits,
 monsters, block checks, voice and join/leave only within it; chat everywhere. A trip out (home to a zone, or zone to
-zone) uses a ticket for the player and one for each autopilot bot that comes along (`useTickets` in the room: all or
-nothing, always yes while `TICKETS_FREE`), the way home never does (and takes every bot along), and the room remembers
-each wallet's zone (`zone:<wallet>`) and puts it back there when it signs in again.
+zone) uses one ticket (always free while `TICKETS_FREE`), the way home never does, and the room remembers each
+wallet's zone (`zone:<wallet>`) and puts it back there when it signs in again. DEGENs deployed for idle mining don't
+travel: they earn wherever their player is.
 
-Tickets (unless `TICKETS_FREE`, which makes every trip free and the room sell none): a signed-in player pays the
-zone's `ticket` (times the tickets wanted: one for the player and one for each bot taken) with `MinePayments.pay(1,
-amount, ref)` and sends `["ticket", txHash, zone]`. The room reads the receipt from `CHAIN_RPC` and adds `n =
-min(BOT_TICKETS_MAX, floor(amount / price))` tickets (5 at most, `web/bots-rules.js`) to that zone for the wallet
-(`tix:<wallet>`, zone -> count, no expiry) only if the transaction succeeded; it holds a `Paid` log from
-`PAYMENTS_ADDRESS` whose player is the signed-in wallet, kind 1 and amount at least that zone's price (`amount` is the
-largest such payment in it); its block is at most 3 hours old; and the hash never bought tickets before
-(`tixTx:<hash>`, kept for good; the same hash sent twice at once is checked once). On the way out `useTickets` takes
-one for the player plus one for each bot the `zone` message names, all or nothing (bots left out stay home: recalled),
-and writes `botz:<wallet>` = { zone, toks } in the same put (there, those bots may be deployed again free after a
-reload); the way home is free (and `botz:` goes); guests can't fly out. The game keeps a paid hash the room hasn't
+Tickets (unless `TICKETS_FREE`, which makes every trip free and the room sell none): a signed-in player pays the zone's
+`ticket` (times the tickets wanted: several can be bought in one payment) with `MinePayments.pay(1, amount, ref)` and
+sends `["ticket", txHash, zone]`. The room reads the receipt from `CHAIN_RPC` and adds `n = min(TICKETS_MAX,
+floor(amount / price))` tickets (5 at most) to that zone for the wallet (`tix:<wallet>`, zone -> count, no expiry) only
+if the transaction succeeded; it holds a `Paid` log from `PAYMENTS_ADDRESS` whose player is the signed-in wallet, kind 1
+and amount at least that zone's price (`amount` is the largest such payment in it); its block is at most 3 hours old;
+and the hash never bought tickets before (`tixTx:<hash>`, kept for good; the same hash sent twice at once is checked
+once). A trip out takes one; the way home is free; guests can't fly out. The game keeps a paid hash the room hasn't
 confirmed and sends it again after the next sign-in.
 
 Knock-outs (`web/zones.js` `CHEST_MS`, `REVIVE_*`): any knock-out, anywhere (falls, monsters, the boss, PvP, the void),
@@ -159,47 +159,48 @@ is lifted onto the ground), keeps at most one open chest per player (wallet, or 
 old), allows three in a row and then one every 20 s (the rest make none and the game keeps what it carried: `dropno`)
 and 200 in all, and stores them under `chests`. A chest lasts `CHEST_MS` (5 minutes) and goes, once, to the first player
 on that planet within `CHEST_REACH` who opens it, its owner included. Knocked out in a zone, the room sends the player
-home at once (`move(..., ko)`: to the town square, still down, the wallet's zone forgotten, its bots home with it,
-free); the chest stays in the zone; no revive there; the ticket out was used, so going back needs a new one. At home the
-game offers "Respawn at spawn" (free) and "Revive here": `REVIVE_PRICE` 420 $MINE ($1 at a $50K market cap) paid with
-`MinePayments.pay(2, price, ref)` (kind 2 "revive", nothing burned), then `["revive", txHash]`; the room checks the
-receipt as `buyTicket` does (shared `paidBy`: success, a Paid log from `PAYMENTS_ADDRESS` by the signed-in wallet, kind
-2, amount at least the price, at most 3 hours old) and that the hash never revived anyone (`revTx:<hash>`, written only
-when it does), then stands the player at the stored death spot (`a.died`, and per wallet in memory for 30 minutes, for a
-game that reconnected while down), so the next position is no jump. Free (no hash) before launch (no
-`PAYMENTS_ADDRESS`), while `REVIVE_FREE`, and offline (the game keeps its own chest); guests can't pay. A valid payment
-the room didn't use (the player was up first) answers retry 2, and the game keeps it for the next revive.
+home at once (`move(..., ko)`: to the town square, still down, the wallet's zone forgotten); the chest stays in the
+zone; no revive there; the ticket out was used, so going back needs a new one. At home the game offers "Respawn at
+spawn" (free) and "Revive here": `REVIVE_PRICE` 420 $MINE ($1 at a $50K market cap) paid with `MinePayments.pay(2,
+price, ref)` (kind 2 "revive", nothing burned), then `["revive", txHash]`; the room checks the receipt as `buyTicket`
+does (shared `paidBy`: success, a Paid log from `PAYMENTS_ADDRESS` by the signed-in wallet, kind 2, amount at least the
+price, at most 3 hours old) and that the hash never revived anyone (`revTx:<hash>`, written only when it does), then
+stands the player at the stored death spot (`a.died`, and per wallet in memory for 30 minutes, for a game that
+reconnected while down), so the next position is no jump. Free (no hash) before launch (no `PAYMENTS_ADDRESS`), while
+`REVIVE_FREE`, and offline (the game keeps its own chest); guests can't pay. A valid payment the room didn't use (the
+player was up first) answers retry 2, and the game keeps it for the next revive.
 
 Protocol additions (client → room):
-`["hello", {zone}]`, `["zone", key, [tokenIds]]` (fly; the bots that come along, a ticket each), `["ticket", txHash,
-zone]`, `["bosshit", damage]`, `["pvp", target, damage]`, `["dead", stacks, x, y, z, killer]` (any knock-out; a game
-from before may still send `["pvpdead", killer, stacks]`), `["respawn"]`, `["revive", txHash | null]`, `["loot",
-chestId]`; (room → client): `["zoned", key, players, at, bots]` (`bots`: the autopilot bots there, `docs/AUTOPILOT.md`),
-`["tickets", { zone: count }]` (after signing in, buying and using them), `["ticketok", zone, count, txHash, bought]`
-(`count`: the wallet's tickets there now; `bought`: how many this payment bought), `["ticketno", zone, why, txHash,
-retry]` (retry 1: the chain couldn't be read, the same hash may do later), `["count", n]`, `["sys", text]`, `["regrow",
-key]`, `["boss", hp, max, act, t0, ms, fromX, fromZ, toX, toZ, target, aim, downUntil]`, `["bosshp", hp, by, counted]`,
-`["bossreward", units, share%, items, signedIn]`, `["pvphit", from, damage, dirX, dirZ]`, `["pvpno", target, why]`,
-`["dropped", chestId]` (0: nothing dropped), `["dropno", why]`, `["chest", id, x, y, z, until, who]`, `["chests", list]`
-(every planet's, on joining and arriving), `["chestgone", id, by]` (`by` null: replaced), `["looted", id, stacks, who]`,
-`["lootno", id, why]`, `["revived", x, y, z, txHash]`, `["reviveno", why, txHash, retry]` (retry 1: the chain couldn't
-be read; 2: the payment wasn't used and can pay for a later revive; 0: never); `welcome`'s flags carry `reviveFree` (and
-`bots`, as `zoned`); `edits` carries the zone, `join` a "landed" flag (or "ko" and the zone left, after a knock-out
-there) and `leave` the planet flown to (and "ko"). The boss's moves are one message each (no per-frame traffic); its
-timers run only while someone is in the fight.
+`["hello", {zone}]`, `["zone", key]` (fly), `["ticket", txHash, zone]`, `["bosshit", damage]`, `["pvp", target,
+damage]`, `["dead", stacks, x, y, z, killer]` (any knock-out; a game from before may still send `["pvpdead", killer,
+stacks]`), `["respawn"]`, `["revive", txHash | null]`, `["loot", chestId]`; (room → client): `["zoned", key, players,
+at]`, `["tickets", { zone: count }]` (after signing in, buying and using them), `["ticketok", zone, count, txHash,
+bought]` (`count`: the wallet's tickets there now; `bought`: how many this payment bought), `["ticketno", zone, why,
+txHash, retry]` (retry 1: the chain couldn't be read, the same hash may do later), `["count", n]`, `["sys", text]`,
+`["regrow", key]`, `["boss", hp, max, act, t0, ms, fromX, fromZ, toX, toZ, target, aim, downUntil]`, `["bosshp", hp, by,
+counted]`, `["bossreward", units, share%, items, signedIn]`, `["pvphit", from, damage, dirX, dirZ]`, `["pvpno", target,
+why]`, `["dropped", chestId]` (0: nothing dropped), `["dropno", why]`, `["chest", id, x, y, z, until, who]`, `["chests",
+list]` (every planet's, on joining and arriving), `["chestgone", id, by]` (`by` null: replaced), `["looted", id, stacks,
+who]`, `["lootno", id, why]`, `["revived", x, y, z, txHash]`, `["reviveno", why, txHash, retry]` (retry 1: the chain
+couldn't be read; 2: the payment wasn't used and can pay for a later revive; 0: never); `welcome`'s flags carry
+`reviveFree`; `edits` carries the zone, `join` a "landed" flag (or "ko" and the zone left, after a knock-out there) and
+`leave` the planet flown to (and "ko"). The boss's moves are one message each (no per-frame traffic); its timers run
+only while someone is in the fight. Idle mining's messages (`bot`, `botok`, `botoff`, `idle`) are in
+`docs/AUTOPILOT.md`.
 
 ## Ledger units and boosts on the wire
 
 Every $MINE amount the room sends is in units of 1/10,000 $MINE (`rewards.js` UNIT): `["earn", units, today, total,
 what]` (`what` a block id, a monster, "boss", or "cap" / "worldcap" with 0), `["signedin", wallet, token, today, total,
-dailyCap, name]`, `["bossreward", units, ...]`. Vouchers stay 18-decimal wei of the lifetime total (units x 1e14). NFT
-boosts (`web/boosts.js`): client → room `["wear", crafterId | null]` (the DEGEN slot, as before) and `["equip", slot,
-tokenId | null]` (any other slot: checked with `ownerOf` and the slot's `tierOf` on its contract; "coming soon" while it
-has none) and `["recheck"]` (read what the player uses again now, sent after leveling up the DEGEN they wear; two at
-once, then one every 15 s; answered with a boost); room → client `["boost", speed, earn, cap, move, sources, dailyCap]`,
-sources `[slot, label, speed, earn, cap, move]` per item, dailyCap in units for the zone the player is on (sent after a
-wear or equip, a flight, a recheck, and when a re-check changes it). Local testing only (`wrangler dev --var DEV_HOOKS:1`, connections to that local server):
-`["dev", "today" | "world", mine]`.
+dailyCap, name]`, `["bossreward", units, ...]`, `["idle", [[tokenId, units, today, cap], ...], walletTotal, share]`
+(idle mining). Vouchers stay 18-decimal wei of the lifetime total (units x 1e14). NFT boosts (`web/boosts.js`): client →
+room `["wear", crafterId | null]` (the DEGEN slot, as before) and `["equip", slot, tokenId | null]` (any other slot:
+checked with `ownerOf` and the slot's `tierOf` on its contract; "coming soon" while it has none) and `["recheck"]` (read
+what the player uses again now, sent after leveling up the DEGEN they wear; two at once, then one every 15 s; answered
+with a boost); room → client `["boost", speed, earn, cap, move, sources, dailyCap]`, sources `[slot, label, speed, earn,
+cap, move]` per item, dailyCap in units for the zone the player is on (sent after a wear or equip, a flight, a recheck,
+and when a re-check changes it). Local testing only (`wrangler dev --var DEV_HOOKS:1`, connections to that local
+server): `["dev", "today" | "world", mine]`.
 
 ## Local ports (so Courier's dev setup can run at the same time)
 

@@ -2,7 +2,7 @@
 // (net.js), the chain (chain.js) and the Mining Site panel together. The rocket (rocket.js) flies between the home
 // planet and the zones (zones.js): Deepvein (2x $MINE), Cinderfall (the boss, boss.js) and Red Mesa (PvP). Knocked
 // out anywhere, you drop everything in a loot chest (chests.js); at home you can revive where you fell. Up to four of
-// your other DEGENs can mine beside you as autopilot bots (bots.js), sent out from the Mining Site panel.
+// your other DEGENs can idle-mine for you while you're online (bots.js), deployed from the Mining Site panel.
 
 import * as THREE from "https://esm.sh/three@0.160.0";
 import { BLOCKS, AIR, WATER, TOOLS, HAND_DAMAGE, breakTime, itemName } from "./blocks.js";
@@ -11,7 +11,7 @@ import {
   ZONES, zoneOf, landing, spawnOf, protectedIn, calmAt, pvpAt, BOSS, PVP, ROCKET_REACH, PAD_R, CHEST_MS, CHEST_REACH,
   REVIVE_PRICE, REVIVE_KIND,
 } from "./zones.js";
-import { createRocket, openCard, cardOpen, closeCard, drawCard, setTicketsFree, ticketsAreFree } from "./rocket.js";
+import { createRocket, openCard, cardOpen, closeCard, drawCard, setTicketsFree, ticketsAreFree, TICKETS_MAX } from "./rocket.js";
 import { createBoss } from "./boss.js";
 import { createChests, lootLabel } from "./chests.js";
 import { OFFICE } from "./worldgen.js";
@@ -27,7 +27,6 @@ import { createShop } from "./shop.js";
 import { createSky } from "./sky.js";
 import { createNet, short, SNEAKING } from "./net.js";
 import { createBots } from "./bots.js";
-import { BOT_TICKETS_MAX } from "./bots-rules.js";
 import { createAvatar } from "./avatar.js";
 import { heldModel, setHeldAtlas, tileUVs, bareArm, tickGlint } from "./held.js";
 import * as BLK from "./blocks.js";
@@ -116,7 +115,7 @@ const world = createWorld(scene, atlas);
 let zone = "home"; // the planet you're on (zones.js)
 const sky = createSky(scene);
 const inv = createInventory();
-world.onDrop = (k) => { synced.delete(k); bots.forget(k); };
+world.onDrop = (k) => synced.delete(k);
 
 let settings = { view: touch ? 5 : 10, mouse: 1, bob: true };
 try { settings = { ...settings, ...JSON.parse(localStorage.getItem("mwc:settings")) }; } catch {}
@@ -709,7 +708,6 @@ function standUp(at, yaw) {
   mobs.clear();
   hunger.reset();
   drawHearts();
-  bots.up(); // (bots the room refused while you were down try again: after a respawn's message, next frame)
 }
 /// "Respawn at spawn": the town square on the home planet (from a zone too: the room has already sent you home, or,
 /// offline, the game flies you there now).
@@ -822,35 +820,28 @@ function dropBoost() {
   ledger.boost = NO_BOOST;
   ledger.cap = dailyCap(0, zone);
 }
-// Your autopilot bots (bots.js): sent out from the Mining Site panel's Autopilot box, simulated here, checked and paid
-// by the room. They work only while you play: activity() marks each action of yours the room counts as one.
+// Idle mining (bots.js): your other DEGENs deployed from the Mining Site panel's Idle mining box earn by time while
+// you're online, paid by the room (into your wallet's total, never your own today).
 const bots = createBots({
-  scene, world, inv, atlasTex, player, half: HALF, tall: TALL, eye: EYE,
-  zone: () => zone,
-  synced: (k) => synced.has(k),
   net: () => net,
   signedIn: () => ledger.signedIn,
-  owner: () => ledger.name ?? (ledger.wallet ? short(ledger.wallet) : "Guest"),
+  wallet: () => ledger.wallet,
+  worn: () => panel?.worn ?? null,
   now: () => Date.now() + serverOffset,
-  flying: () => !!trip,
-  burst, sfx, toast,
-  say: (text) => sysLine(text),
+  toast,
   changed() { drawBots(); panel?.render(); },
 });
-/// You did something the room counts as activity (a natural block broken, a block placed, a hit, a chat line; walking
-/// is counted by net.js as it sends it): your bots keep working.
-function activity() { if (net?.online) bots.active(); }
-let redeployTimer = 0;
-/// The HUD's bots line, under your earnings: how many, what they earned today, or why they wait.
+/// The HUD's idle mining line, under your earnings: your deployed DEGENs and what they earned today (and the fair
+/// share, while a busy day slows everyone's idle rate).
 function drawBots() {
-  const el = $("earnBots"), s = bots.summary();
+  const el = $("earnIdle"), s = bots.summary();
   el.hidden = !ledger.signedIn || !s.n;
   if (el.hidden) return;
-  const text = s.paused ? `🤖 Bots paused: ${s.paused}`
-    : `🤖 ${s.out < s.n ? `${s.out}/${s.n}` : s.n} bot${s.n === 1 ? "" : "s"} · +${fmtMine(s.today)} today`;
+  const busy = s.share !== null && s.share < 1 ? ` · ${Math.floor(s.share * 100)}% rate` : "";
+  const text = `⛏ ${s.live < s.n ? `${s.live}/${s.n}` : s.n} DEGEN${s.n === 1 ? "" : "s"} idle mining · +${fmtMine(s.today)} today${busy}`;
   if (el.textContent !== text) el.textContent = text;
-  el.title = s.each.length ? s.each.map(([tok, t, cap]) => `#${tok}: ${fmtMine(t)}${cap ? ` / ${fmtMine(cap)}` : ""} $MINE today`).join(" · ")
-    : "Your autopilot bots: the Mining Site panel (M)";
+  el.title = `${s.each.map(([tok, t, cap]) => `#${tok}: ${fmtMine(t)}${cap ? ` / ${fmtMine(cap)}` : ""} $MINE today`).join(" · ")}${busy
+    ? `. A busy day: everyone's idle rate is at ${Math.floor(s.share * 100)}% so today's ${WORLD_DAILY_CAP.toLocaleString("en-US")} $MINE lasts until 00:00 UTC.` : ""}`;
 }
 let voice = null;
 const url = roomUrl();
@@ -861,7 +852,6 @@ if (url) {
       synced.clear();
       world.forgetRequests();
       if (!on) { mobs.clear(); dropBoost(); bots.closed(); drawLedger(); }
-      else bots.connected();
       $("onlineN").hidden = !on;
     },
     welcome(serverTime, count, flags) {
@@ -905,7 +895,6 @@ if (url) {
       if (k !== zone) return;
       world.setZone(zone);
       synced.clear();
-      bots.landed(); // (they stand beside you again on the new ground)
       toast(`A new week: ${ZONES[zone].name} has grown back.`, "good");
     },
     sys(text) { sysLine(text); },
@@ -959,31 +948,24 @@ if (url) {
     voices(ids) { voice?.setVoices(ids); },
     voice(id, on) { voice?.setVoice(id, on); },
     rtc(from, data) { voice?.signal(from, data); },
-    named(name) { ledger.name = name; bots.rename(); drawLedger(); drawNameBox(); toast(`You're ${name} now.`, "good"); },
-    edits(k, list) { world.setEdits(k, list); synced.add(k); bots.edits(k, list); },
-    set(x, y, z, b) { world.set(x, y, z, b); bots.set(x, y, z, b); },
-    // Your autopilot bots, as the room keeps them (bots.js; docs/AUTOPILOT.md).
-    botok(tok, tier, level, today, cap, pickId, wear) { bots.ok(tok, tier, level, today, cap, pickId, wear); },
-    botoff(tok, why, retry, pickId, wear) { bots.off(tok, why, retry, pickId, wear); },
-    botpick(tok, oldId, oldWear) { bots.picked(tok, oldId, oldWear); },
-    /// What a batch of your bots' breaks paid: into your wallet's total (not your own today), a coin, and a word for
-    /// the bigger finds.
-    botearn(list, total) {
-      const { units, big } = bots.earn(list);
+    named(name) { ledger.name = name; drawLedger(); drawNameBox(); toast(`You're ${name} now.`, "good"); },
+    edits(k, list) { world.setEdits(k, list); synced.add(k); },
+    set(x, y, z, b) { world.set(x, y, z, b); },
+    // Your deployed DEGENs, as the room keeps them (bots.js; docs/AUTOPILOT.md).
+    botok(tok, tier, level, today, cap) { bots.ok(tok, tier, level, today, cap); },
+    botoff(tok, why, retry) { bots.off(tok, why, retry); },
+    /// What idle mining paid (every few minutes, and on a recall): into your wallet's total (not your own today), and
+    /// the coin pops (quietly: it isn't something you just did).
+    idle(list, total, share) {
+      const units = bots.paid(list, share);
       if (Number.isFinite(total)) ledger.total = total;
       if (units > 0) { const c = document.querySelector(".coin"); c.classList.remove("pop"); void c.offsetWidth; c.classList.add("pop"); }
-      for (const [tok, u] of big) toast(`Bot #${tok}: +${fmtMine(u)} $MINE`, "gold");
       drawLedger();
     },
-    botidle(on) { bots.idle(on); },
-    bothit(tok, hp, by) { bots.hit(tok, hp, by); },
-    botko(tok, by) { bots.ko(tok, by); },
-    /// Your walking counted as activity (net.js, as it sent it).
-    marked() { activity(); },
     earn({ units, today, total, what }) {
       Object.assign(ledger, { today, total });
       if (what === "cap" || what === "worldcap" || !units) {
-        if (what === "cap") showTarget(`Your daily $MINE limit (${fmtMine(ledger.cap)}) is reached: ${bots.summary().out ? "your bots keep earning to their own caps" : "come back tomorrow (UTC)"}`, 2500);
+        if (what === "cap") showTarget(`Your daily $MINE limit (${fmtMine(ledger.cap)}) is reached: ${bots.summary().live ? "your deployed DEGENs keep idle mining to their own caps" : "come back tomorrow (UTC)"}`, 2500);
         if (what === "worldcap") {
           showTarget(`Today's ${WORLD_DAILY_CAP.toLocaleString("en-US")} $MINE for everyone is all mined: back at 00:00 UTC`, 2500);
           worldMined = [WORLD_DAILY_CAP * UNIT, Math.floor((Date.now() + serverOffset) / 86_400_000)];
@@ -1018,21 +1000,16 @@ if (url) {
       Object.assign(ledger, { signedIn: true, wallet, name: l.name, today: l.today, total: l.total, cap: l.cap, boost: NO_BOOST });
       drawNameBox();
       try { localStorage.setItem(`mwc:tok:${wallet.toLowerCase()}`, token); } catch {}
-      bots.rename();
       drawLedger();
       if (panel?.worn !== null && panel?.worn !== undefined) net.wear(panel.worn);
       resendTickets(wallet);
-      // Your bots go out again (all of them at home; in a zone, the ones that flew there), a moment later: the room
-      // may be about to put you back on the zone you left off on.
-      clearTimeout(redeployTimer);
-      redeployTimer = setTimeout(() => bots.redeploy(), 1500);
+      bots.redeploy(); // (the DEGENs this browser remembers you deployed: after the DEGEN you wear, so the room knows it)
       drawDead();
     },
     signedout(reason) {
       ledger.signedIn = false;
       ledger.name = null;
       tickets = {};
-      clearTimeout(redeployTimer);
       bots.signedOut();
       dropBoost();
       try { localStorage.removeItem(`mwc:tok:${ledger.wallet?.toLowerCase()}`); } catch {}
@@ -1123,7 +1100,7 @@ connectChain().catch((e) => { console.warn("chain unavailable", e); return null;
       dressMe(traits);
       try { localStorage.setItem("mwc:wornTraits", JSON.stringify(traits ? packTraits(traits) : null)); } catch {}
     },
-    /// Crafter `id` was just leveled up to `level`: if it's out as a bot, the room reads it again ("recheck"); if it's
+    /// Crafter `id` was just leveled up to `level`: if it's deployed, the room reads it again ("recheck"); if it's
     /// the one you wear, the room reads it again at once (rather than at its next check, minutes away), and once more a
     /// few seconds later if the boost it sends back doesn't show the new level yet (its RPC a block behind).
     leveled(id, level) {
@@ -1136,16 +1113,17 @@ connectChain().catch((e) => { console.warn("chain unavailable", e); return null;
         if (!src || !src.label.endsWith(` L${level}`)) net.recheck();
       }, 5000);
     },
-    /// The Autopilot box (bots.js): your bots with their state, the pickaxes in your bag, and sending them out.
+    /// The Idle mining box (bots.js): your deployed DEGENs with their state, deploying and recalling, and the pickaxes
+    /// the old autopilot bots held that wait for room in your bag.
     bots: {
       list: () => bots.roster(),
-      picks: () => inv.picks().map((p) => ({ ...p, max: BLK.maxDurability(p.id), name: itemName(p.id), icon: iconFor(p.id, atlas) })),
-      returned: () => inv.returned().map((p, i) => ({ ...p, i, max: BLK.maxDurability(p.id), name: itemName(p.id), icon: iconFor(p.id, atlas) })),
-      item: (id) => ({ max: BLK.maxDurability(id), name: itemName(id), icon: iconFor(id, atlas) }),
+      today: (tok) => bots.today(tok),
+      share: () => bots.share,
       cannot: (tok) => bots.cannot(tok),
-      deploy: (tok, slot, traits) => bots.deploy(tok, slot, traits ? packTraits(traits) : null),
+      wearWhy: (tok) => bots.wearWhy(tok),
+      deploy: (tok) => bots.deploy(tok),
       recall: (tok) => bots.recall(tok),
-      changePick: (tok, slot) => bots.changePick(tok, slot),
+      returned: () => inv.returned().map((p, i) => ({ ...p, i, max: BLK.maxDurability(p.id), name: itemName(p.id), icon: iconFor(p.id, atlas) })),
       takeBack: (i) => inv.takeBack(i),
     },
   });
@@ -1158,15 +1136,25 @@ connectChain().catch((e) => { console.warn("chain unavailable", e); return null;
     tickets = {};
     ledger.today = ledger.total = 0;
     dropBoost();
-    bots.signedOut(); // (the old wallet's bots stay in its bag's store, for its next sign-in)
-    inv.load(a);
+    bots.signedOut(); // (this browser still remembers the old wallet's deployed DEGENs, for its next sign-in)
+    loadBag(a);
     if (a) tryResume(a);
     else net?.signOut();
     drawLedger();
   };
   chain.reconnect().catch(() => {});
 });
-inv.load(null);
+/// Loads the bag of wallet `who` (null: the guest's). The pickaxes the old autopilot bots held come back into it
+/// (inventory.js), and you're told where they are.
+function loadBag(who) {
+  const back = inv.load(who);
+  if (!back) return;
+  const what = back > 1 ? `The ${back} pickaxes your bots held are` : "The pickaxe your bot held is";
+  toast(inv.returned().length
+    ? `${what} back: what your bag had no room for waits in the Mining Site panel (M), where you now deploy your DEGENs to idle-mine.`
+    : `${what} back in your bag. Your DEGENs idle-mine now, with no pickaxe: deploy them in the Mining Site panel (M).`, "good");
+}
+loadBag(null);
 
 // ---------------------------------------------------------------- chat
 function chatLine(name, text, mine) {
@@ -1201,14 +1189,12 @@ function closeChat() {
   $("chatForm").hidden = true;
   $("chatInput").blur();
 }
-/// Move the player somewhere (a command): the world loads around them before they fall. (Not a walk: the room's bots
-/// don't count it as activity, so neither does the game: net.js unmark.)
+/// Move the player somewhere (a command): the world loads around them before they fall.
 function teleport(x, y, z) {
   player.pos.set(wrap(x), y, wrap(z));
   player.vel.set(0, 0, 0);
   player.fallFrom = null;
   mobs.clear();
-  net?.unmark();
 }
 const commandGame = {
   teleport,
@@ -1231,7 +1217,6 @@ $("chatForm").addEventListener("submit", (e) => {
   const r = cleanChat(raw);
   if (r.error) return toast(r.error, "bad");
   net.chat(r.text);
-  activity();
   $("chatInput").value = "";
   closeChat();
   if (!touch) lockMouse();
@@ -1547,7 +1532,7 @@ function interact(dt, now) {
         attackAt = now;
         const dmg = swing(hand);
         mobs.hit(mobHit.mob, dmg, ray.x, ray.z);
-        if (mobHit.mob.id > 0 && net) { net.hit(mobHit.mob.id, dmg); activity(); }
+        if (mobHit.mob.id > 0) net?.hit(mobHit.mob.id, dmg);
       }
     } else if (hit && allowed) {
       if (protectedIn(zone, hit.x, hit.z)) { spawnNotice(); breaking = null; }
@@ -1582,8 +1567,6 @@ function interact(dt, now) {
         world.set(px, py, pz, s.id);
         inv.useSlot(player.sel);
         net?.place(px, py, pz, s.id);
-        bots.placedAt(px, py, pz);
-        activity();
         sfx.place();
         swingHand();
         me.swing();
@@ -1637,7 +1620,7 @@ function useThing(th, dt, now) {
       attackAt = now;
       const dmg = swing(hand);
       boss.flash();
-      if (net?.online) { net.bossHit(dmg); activity(); }
+      if (net?.online) net.bossHit(dmg);
       else toast("The boss fight needs the world server (offline right now).");
     }
   } else if (th.kind === "foe") {
@@ -1646,7 +1629,6 @@ function useThing(th, dt, now) {
     if (mining && player.alive && can && ready()) {
       attackAt = now;
       net.pvpHit(th.id, swing(hand));
-      activity();
     }
   }
 }
@@ -1662,8 +1644,6 @@ function finishBreak(b) {
   burst(b.x, b.y, b.z, b.b);
   sfx.broke(BLOCKS[b.b].tier > 0);
   net?.breakBlock(b.x, b.y, b.z);
-  bots.edited(b.x, b.z);
-  if (bots.natural(b.x, b.y, b.z)) activity(); // (breaking a block a player placed doesn't count)
   hunger.tire(EXHAUSTION.break);
   // The tool in hand wears: a pickaxe 1 a block, anything else 2 (blocks that break instantly cost nothing).
   const tool = TOOLS[inv.slot(player.sel)?.id];
@@ -1719,11 +1699,10 @@ function openRocket() {
 }
 
 // Rocket tickets (zones.js): the room keeps each signed-in wallet's (["tickets", { zone: count }]) and uses one on each
-// trip out, and one for each bot you take (bots.js). Buying: pay the zone's `ticket` in $MINE, times the tickets wanted
-// (up to BOT_TICKETS_MAX: MinePayments, kind 1: chain.pay approves exactly that, then pays) and hand the room the
-// transaction, which it checks on-chain (it counts the tickets from the amount paid). A payment the room hasn't
-// confirmed yet (it was offline, or the page closed) is kept here and sent again after the next sign-in. Offline (no
-// room) trips are free.
+// trip out. Buying: pay the zone's `ticket` in $MINE, times the tickets wanted (up to TICKETS_MAX in one payment:
+// MinePayments, kind 1: chain.pay approves exactly that, then pays) and hand the room the transaction, which it checks
+// on-chain (it counts the tickets from the amount paid). A payment the room hasn't confirmed yet (it was offline, or
+// the page closed) is kept here and sent again after the next sign-in. Offline (no room) trips are free.
 let tickets = {};
 const claiming = new Set(); // payments being handed to the room right now
 const tixKey = (w) => `mwc:tixpay:${w.toLowerCase()}`;
@@ -1733,8 +1712,8 @@ function unconfirmed(w) {
 function setUnconfirmed(w, list) {
   try { list.length ? localStorage.setItem(tixKey(w), JSON.stringify(list)) : localStorage.removeItem(tixKey(w)); } catch {}
 }
-/// Whether a trip to `to` taking `n` bots needs more tickets than you have (one for you, one for each bot).
-const needsTicket = (to, n = 0) => !ticketsAreFree() && !!net && to !== "home" && to !== zone && zoneOf(to).ticket > 0 && !((tickets[to] ?? 0) >= 1 + n);
+/// Whether a trip to `to` needs a ticket you don't have.
+const needsTicket = (to) => !ticketsAreFree() && !!net && to !== "home" && to !== zone && zoneOf(to).ticket > 0 && !(tickets[to] > 0);
 /// Hands the room payment `hash` (from `wallet`) for a ticket to `to`: resolves with your tickets there now, or throws
 /// why not. Tried again a couple of times while the room can't read the chain yet.
 async function claimTicket(wallet, hash, to) {
@@ -1755,7 +1734,7 @@ async function claimTicket(wallet, hash, to) {
 /// Buys `n` tickets to `to` in one payment (n x the ticket); resolves with your tickets there now.
 async function buyTicket(to, step, n = 1) {
   const Z = ZONES[to];
-  n = Math.max(1, Math.min(BOT_TICKETS_MAX, Math.floor(n) || 1));
+  n = Math.max(1, Math.min(TICKETS_MAX, Math.floor(n) || 1));
   if (!chain?.hasPayments) throw new Error("Tickets can't be bought on this chain yet.");
   if (!net?.online) throw new Error("The world server is offline right now, and it keeps the tickets. Try again soon.");
   if (!ledger.signedIn) throw new Error("Sign in to earn first (Mining Site panel, M): the world server keeps tickets for your wallet.");
@@ -1786,8 +1765,6 @@ function resendTickets(wallet) {
 }
 const ticketSales = {
   tickets: () => tickets,
-  /// Your bots that can fly with you (each needs its own ticket on a trip out).
-  bots: () => bots.flyList().map((tok) => ({ tok, label: `#${tok}` })),
   signedIn: () => ledger.signedIn && !!net?.online,
   balance: () => (chain?.account ? chain.mineBalance() : Promise.resolve(null)),
   buy: buyTicket,
@@ -1795,25 +1772,16 @@ const ticketSales = {
   moreMine: () => (chain?.trade ? "buy some in the Mining Site panel's trade box (M)" : "convert your earnings in the Mining Site panel (M)"),
 };
 
-/// Fly to planet `to`, taking your bots `toks` (all of them unless the rocket card says which; home, all of them, free):
-/// the take-off starts here; frame() runs the rest (tripStep). Bots left out stay home: they go out again once you're
-/// back there.
-function fly(to, toks = null) {
+/// Fly to planet `to`: the take-off starts here; frame() runs the rest (tripStep).
+function fly(to) {
   if (trip || !player.alive || !ZONES[to] || to === zone) return;
-  const out = bots.flyList();
-  const going = to === "home" || !toks ? out : out.filter((t) => toks.includes(t));
-  if (bots.pending) return toast("Your bots are still getting ready: try again in a moment.", "bad");
-  if (needsTicket(to, going.length)) {
-    return toast(going.length ? `A trip to ${ZONES[to].name} with ${going.length} bot${going.length === 1 ? "" : "s"} needs ${going.length + 1} tickets: buy them at the rocket.`
-      : `A trip to ${ZONES[to].name} needs a ticket: buy one at the rocket.`, "bad");
-  }
+  if (needsTicket(to)) return toast(`A trip to ${ZONES[to].name} needs a ticket: buy one at the rocket.`, "bad");
   closeCard();
   if (!touch && playing) lockMouse();
   setMining(false);
   placing = false;
   breaking = null;
-  bots.flying(to, going);
-  trip = { to, phase: "lift", t: 0, toks: going };
+  trip = { to, phase: "lift", t: 0 };
   travelGlobe ??= createGlobe();
   const Z = ZONES[to];
   picture(to).then(({ data, w, h }) => data && travelGlobe.setMap(data, w, h, Z.globe.cap, Z.globe.air));
@@ -1829,7 +1797,7 @@ function tripStep(dt) {
     if (trip.t > 2.4 && !trip.dark) { trip.dark = true; fade.hidden = false; void fade.offsetWidth; fade.classList.add("on"); }
     if (trip.t > 2.95) {
       // In space: the new planet loads round its pad meanwhile.
-      switchZone(trip.to, landing(trip.to), trip.toks);
+      switchZone(trip.to);
       Object.assign(trip, { phase: "space", t: 0 });
       $("travelTo").textContent = `Flying to ${ZONES[trip.to].name}`;
       $("travelLine").textContent = ZONES[trip.to].line;
@@ -1863,9 +1831,8 @@ function liftCamera() {
 }
 
 /// Puts you on planet `k`, standing at `spot` (its pad, unless the room says otherwise): the world, the monsters, the
-/// loot chests, the boss, the rocket, the sky and the HUD all switch over, and the room is told (taking your bots
-/// `toks`, all of them unless a flight says which); your bots come to you there.
-function switchZone(k, spot = landing(k), toks = null) {
+/// loot chests, the boss, the rocket, the sky and the HUD all switch over, and the room is told.
+function switchZone(k, spot = landing(k)) {
   zone = k;
   world.setZone(k);
   synced.clear();
@@ -1886,8 +1853,7 @@ function switchZone(k, spot = landing(k), toks = null) {
   breaking = null;
   lastPvp = null;
   onPadSaid = true; // (you land on it: no need to explain it)
-  if (net && net.zone !== k) net.fly(k, toks ?? bots.flyList());
-  bots.landed();
+  if (net && net.zone !== k) net.fly(k);
   drawZoneTag();
 }
 // ---------------------------------------------------------------- the way to safety
@@ -1914,7 +1880,7 @@ function drawSafeNav() {
   const S = safePlace(zone), P = player.pos;
   const dx = wrapDelta(S.x - P.x), dz = wrapDelta(S.z - P.z), dist = Math.hypot(dx, dz);
   const inside = protectedIn(zone, Math.floor(P.x), Math.floor(P.z));
-  // (Your view looks along -z turned by yaw, as the bots' walking does: the way to it, then how far that is from yours.)
+  // (Your view looks along -z turned by yaw: the way to it, then how far that is from yours.)
   let rel = Math.atan2(-dx, -dz) - player.yaw;
   rel = Math.atan2(Math.sin(rel), Math.cos(rel));
   const deg = Math.round((-rel * 180) / Math.PI / 5) * 5;
@@ -2182,9 +2148,8 @@ function frame() {
     if (!trip) padHint();
     if (talking && (now > talking.until || Math.hypot(wrapDelta(talking.v.pos.x - player.pos.x), wrapDelta(talking.v.pos.z - player.pos.z)) > 7)) endTalk();
     offlineMobs(now);
-    bots.update(dt);
     net?.tick({ x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw, pitch: player.pitch,
-      flags: move.sneaking ? SNEAKING : 0, moving: Math.hypot(player.vel.x, player.vel.z) > 0.5 }, bots.wire);
+      flags: move.sneaking ? SNEAKING : 0, moving: Math.hypot(player.vel.x, player.vel.z) > 0.5 });
     voice?.tick(player.pos);
     updateDebris(dt);
     const where = `${Math.floor(player.pos.x)}, ${Math.floor(player.pos.y)}, ${Math.floor(player.pos.z)}${isNight(Date.now() + serverOffset) ? " · night" : ""}`;
@@ -2217,8 +2182,8 @@ function frame() {
 }
 
 /// Bends everything drawn in the world round the planet as seen from the camera, just before the render: the chunks
-/// (in the shader, at their copies nearest the camera), monsters, other miners, your bots, your own miner, the block
-/// outline, the cracks, debris and the Mining Sites' sign.
+/// (in the shader, at their copies nearest the camera), monsters, other miners, your own miner, the block outline,
+/// the cracks, debris and the Mining Sites' sign.
 const _flat = new THREE.Vector3();
 function drawOnPlanet(dt) {
   followPlanet(camera.position, dt);
@@ -2226,7 +2191,6 @@ function drawOnPlanet(dt) {
   mobs.draw();
   villagers.draw();
   net?.draw();
-  bots.draw();
   rocket.draw();
   boss.draw();
   chests.draw();
@@ -2239,9 +2203,6 @@ function drawOnPlanet(dt) {
 }
 const globe = createGlobe();
 world.map(512, 256).then(({ data, w, h }) => data && globe.setMap(data, w, h));
-// Your bots' pickaxe wear is written now and then (inventory.js): at once when the page goes away or out of sight.
-addEventListener("pagehide", () => inv.flush());
-document.addEventListener("visibilitychange", () => { if (document.hidden) inv.flush(); });
 drawHotbar();
 frame();
 if (local) {
@@ -2258,9 +2219,9 @@ if (local) {
     keys, stickState, playerTick, move, hand, hunger, FEEL, settings, drawnPos, get me() { return me; }, get view() { return view; },
     // The first-person hand: its scene and camera, and what's in it.
     handScene, handCamera, heldGroup, get heldMesh() { return heldMesh; }, get eatT() { return eatT; }, setPlacing: (on) => { placing = on; placeAt = 0; },
-    // Autopilot bots, for testing: the bots (bots.list holds each one's state), the activity mark, the tickets, the
-    // rocket's buying (n tickets at once) and redeploying.
-    bots, activity, get tickets() { return tickets; }, buyTicket, needsTicket,
+    // Idle mining, for testing: the roster (bots.list holds each deployed DEGEN's state; bots.redeploy). The tickets and
+    // the rocket's buying (n tickets at once).
+    bots, get tickets() { return tickets; }, buyTicket, needsTicket,
     // The way to safety: the compass (run it by hand after moving or turning), the safe place, the beam.
     drawSafeNav, safePlace, safeBeam,
   };
