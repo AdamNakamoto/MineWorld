@@ -86,7 +86,7 @@
         <input id="chatInput" maxlength="140" autocomplete="off" enterkeyhint="send" placeholder="Say something, or /help for commands" aria-label="Chat message">
       </form>
     </div>
-    <div id="help" class="help card small">Click to play · WASD move · Space jump · Ctrl or double-tap W sprint · Shift sneak · Left click mine / attack · Right click place or eat · 1–9 / wheel pick · E inventory · M Mining Site · V view · B voice · T chat · F the rocket (on its pad) · /help commands</div>
+    <div id="help" class="help card small">Click to play · WASD move · Space jump · Ctrl or double-tap W sprint · Shift sneak · Left click mine / attack · Right click place or eat · 1–9 / wheel pick · Q throw away (Shift+Q the stack) · E inventory · M Mining Site · V view · B voice · T chat · F the rocket (on its pad) · /help commands</div>
   </div>
 
   <div id="touch" class="touch" hidden>
@@ -141,7 +141,7 @@
         <h3>Controls</h3>
         <p class="note">WASD move · Space jump · Ctrl (or double-tap W) sprint · Shift sneak (you won't walk off an edge) ·
         mouse look · left click mine / attack · right click place, or hold to eat ·
-        1–9 or wheel pick · E inventory (click armor to wear it) · H shop · M Mining Site · V view · B voice · T or Enter chat ·
+        1–9 or wheel pick · Q throw away one held (Shift+Q the stack) · E inventory (click armor to wear it; tap a slot to throw it away) · H shop · M Mining Site · V view · B voice · T or Enter chat ·
         F the rocket (stand on its pad, or click it) · Esc menu</p>
       </section>
       <section class="box">
@@ -155,9 +155,10 @@
   <div id="inv" class="overlay" hidden>
     <div class="sheet inv-sheet">
       <header><h2>Inventory</h2><button class="x" data-close aria-label="Close">✕</button></header>
-      <p class="muted small">Tap two slots to swap them. The top row is your hotbar.</p>
+      <p class="muted small">Tap two slots to swap them, or tap one to throw it away. The top row is your hotbar.</p>
       <div id="armorSlots" class="armor-slots"></div>
       <div id="invGrid" class="inv-grid"></div>
+      <div id="invActions" class="inv-actions" hidden></div>
       <h3>Crafting</h3>
       <div id="recipes" class="recipes"></div>
     </div>

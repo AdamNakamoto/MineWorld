@@ -173,6 +173,11 @@ body.ticking { --tick: 28px; }
 .x { background: none; border: none; color: var(--ink); font-size: 20px; cursor: pointer; padding: 4px 8px; font-family: var(--px); }
 .inv-grid { display: grid; grid-template-columns: repeat(9, 50px); gap: 0; justify-content: center; }
 .inv-grid .slot:nth-child(-n + 9) { border-bottom-color: var(--gold); }
+/* What to do with the slot you tapped: throw it away (or all of that kind), or put it back. */
+.inv-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; margin: 10px 0 2px; font-size: 14px; }
+.inv-actions .what { flex-basis: 100%; text-align: center; color: var(--muted); }
+.inv-actions .what b { color: var(--ink); }
+.inv-actions .btn.ask { background: #8a2a1e; box-shadow: inset 2px 2px 0 #c0503c, inset -2px -3px 0 #4a120a; }
 .recipes { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px; }
 .recipe { display: flex; align-items: center; gap: 8px; background: rgba(0, 0, 0, 0.3); border: 2px solid #2c3a42; padding: 6px; cursor: pointer; color: var(--ink); font-family: var(--ui); font-size: 15px; text-align: left; }
 .recipe:disabled { opacity: 0.4; cursor: default; }

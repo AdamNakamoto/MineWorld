@@ -341,6 +341,16 @@ export function createInventory() {
     return 0;
   }
   /// Uses one of the item in slot i (a placed block, an eaten apple).
+  /// Throws away up to n of slot i (all of it when n is left out), for good; how many went.
+  function discard(i, n = Infinity) {
+    const s = slots[i];
+    if (!s) return 0;
+    const k = Math.min(n, s.n);
+    s.n -= k;
+    if (s.n <= 0) slots[i] = null;
+    save();
+    return k;
+  }
   function useSlot(i) {
     const s = slots[i];
     if (!s) return;
@@ -364,7 +374,7 @@ export function createInventory() {
   const toolIn = (i) => (slots[i] && TOOLS[slots[i].id] ? slots[i].id : null);
 
   return {
-    load, count, fits, add, take, useSlot, canCraft, craft, swap, toolIn, equip, unequip, armorPoints, armorTiers,
+    load, count, fits, add, take, useSlot, discard, canCraft, craft, swap, toolIn, equip, unequip, armorPoints, armorTiers,
     wearOut, wearArmor, repairs, repair, stacks, clearAll, give,
     lend, giveBack, dropBot, swapPick, pickSwapped, cancelSwaps, botWear, setStay, takeBack, flush,
     worn: (slot) => armor[slot]?.id ?? null,

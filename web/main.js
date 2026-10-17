@@ -242,8 +242,23 @@ function showTarget(text, ms) {
   targetTimer = setTimeout(() => (t.hidden = true), ms);
 }
 
-// The inventory sheet: swap slots, wear armor, craft.
-let picked = null;
+// The inventory sheet: swap slots, wear armor, craft, throw things away. A tapped slot can go (or every stack of that
+// kind, for a bag full of stone); precious things (tools, armor, gold, diamonds, $MINE crystals) ask once more first.
+let picked = null, trashAsk = null; // trashAsk: "slot" | "all", the throw-away waiting for its "Sure?"
+const PRECIOUS = new Set([BLK.GOLD, BLK.DIAMOND, BLK.CRYSTAL]);
+const precious = (id) => !!TOOLS[id] || !!BLK.ARMOR[id] || PRECIOUS.has(id);
+/// What a stack is called: "64 × Cobblestone", or a tool's name.
+const stackName = (s) => `${s.n > 1 ? `${s.n} × ` : ""}${itemName(s.id)}`;
+function drawInvActions() {
+  const el = $("invActions"), s = picked === null ? null : inv.slot(picked);
+  el.hidden = !s;
+  if (!s) return;
+  const all = inv.count(s.id);
+  el.innerHTML = `<span class="what">Picked: <b>${stackName(s)}</b>. Tap another slot to swap, or:</span>
+    <button class="btn ${trashAsk === "slot" ? "ask" : ""}" data-trash="slot">${trashAsk === "slot" ? "Sure? Throw it away" : "🗑 Throw away"}</button>
+    ${all > s.n ? `<button class="btn ${trashAsk === "all" ? "ask" : ""}" data-trash="all">${trashAsk === "all" ? `Sure? All ${all.toLocaleString("en-US")}` : `🗑 Throw away all ${all.toLocaleString("en-US")} ${itemName(s.id)}`}</button>` : ""}
+    <button class="btn" data-trash="cancel">Cancel</button>`;
+}
 const SLOT_NAMES = { head: "Helmet", chest: "Chestplate", legs: "Leggings", feet: "Boots" };
 function drawInventory() {
   if ($("inv").hidden) return;
@@ -255,6 +270,7 @@ function drawInventory() {
   let html = "";
   for (let i = 0; i < SLOTS; i++) html += slotHtml(i, picked === i ? "picked" : "");
   $("invGrid").innerHTML = html;
+  drawInvActions();
   // Repairs first: two worn copies of the same thing make one (their uses left, plus 5%).
   $("recipes").innerHTML = inv.repairs().map((id) => `<button class="recipe" data-repair="${id}"><img src="${iconFor(id, atlas)}" alt="">
       <span>Repair ${itemName(id).toLowerCase()}<span class="need">Combine 2 into 1 (their uses left, plus 5%)</span></span></button>`).join("")
@@ -283,12 +299,26 @@ $("inv").addEventListener("click", (e) => {
     if (inv.worn(worn.dataset.armor) && !inv.unequip(worn.dataset.armor)) toast("Make room in your inventory first.", "bad");
     return drawInventory();
   }
+  const trash = e.target.closest("[data-trash]");
+  if (trash) {
+    const what = trash.dataset.trash, s = picked === null ? null : inv.slot(picked);
+    if (what === "cancel" || !s) { picked = null; trashAsk = null; return drawInventory(); }
+    if (precious(s.id) && trashAsk !== what) { trashAsk = what; return drawInvActions(); }
+    const name = itemName(s.id), all = inv.count(s.id);
+    const n = what === "all" ? (inv.take(s.id, all) ? all : 0) : inv.discard(picked);
+    picked = null;
+    trashAsk = null;
+    drawInventory();
+    return toast(`Threw away ${n > 1 ? `${n.toLocaleString("en-US")} × ` : ""}${name}.`);
+  }
   const s = e.target.closest("[data-slot]");
   if (s) {
     const i = Number(s.dataset.slot);
+    trashAsk = null;
     // Clicking armor puts it on (whatever was worn there takes its place).
     if (picked === null && BLK.ARMOR[inv.slot(i)?.id]) { inv.equip(i); return drawInventory(); }
     if (picked === null) picked = inv.slot(i) ? i : null;
+    else if (picked === i) picked = null;
     else { inv.swap(picked, i); picked = null; }
     return drawInventory();
   }
@@ -306,7 +336,21 @@ $("inv").addEventListener("click", (e) => {
     toast(`Crafted ${rec.n > 1 ? `${rec.n} ` : ""}${itemName(rec.out)}`, "good");
   }
 });
-function openInventory() { picked = null; $("inv").hidden = false; releaseMouse(); drawInventory(); }
+function openInventory() { picked = null; trashAsk = null; $("inv").hidden = false; releaseMouse(); drawInventory(); }
+/// Q: throws away one of what's in your hand (Shift+Q the whole stack). Something precious asks for a second Q first.
+let qAsk = null; // { sel, id, until }
+function throwHeld(stack) {
+  const s = inv.slot(player.sel);
+  if (!s || anyOverlay() || !player.alive) return;
+  const now = performance.now();
+  if (precious(s.id) && !(qAsk && qAsk.sel === player.sel && qAsk.id === s.id && now < qAsk.until)) {
+    qAsk = { sel: player.sel, id: s.id, until: now + 2500 };
+    return showTarget(`Press Q again to throw away your ${itemName(s.id).toLowerCase()}`, 2500);
+  }
+  qAsk = null;
+  const n = inv.discard(player.sel, stack ? Infinity : 1);
+  if (n) showTarget(`Threw away ${n > 1 ? `${n} × ` : ""}${itemName(s.id)}`, 1500);
+}
 function closeInventory() { $("inv").hidden = true; }
 
 // ---------------------------------------------------------------- held item, target box, cracks, debris
@@ -1232,6 +1276,7 @@ addEventListener("keydown", (e) => {
   else if (e.code === "KeyB") voice?.toggle();
   else if (e.code === "KeyF" && !anyOverlay()) { if (rocket.onPad(player.pos.x, player.pos.y, player.pos.z) || lookingAt === "rocket") openRocket(); }
   else if (/^Digit[1-9]$/.test(e.code)) select(Number(e.code.slice(5)) - 1);
+  else if (e.code === "KeyQ" && !e.repeat) throwHeld(e.shiftKey);
   if (e.code === "Space") e.preventDefault();
 });
 addEventListener("keyup", (e) => keys.delete(e.code));
