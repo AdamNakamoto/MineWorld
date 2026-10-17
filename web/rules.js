@@ -8,7 +8,8 @@
 /// The game's version, sent in its hello: a game older than the room's (a tab still open from before an update) is told
 /// to reload. Raise it when the room and the game change together in a way an old game would show wrongly.
 /// 2 (2026-10-18): no daily cap on everyone's earnings together, no idle-mining fair share.
-export const GAME_VERSION = 2;
+/// 3 (2026-10-18): a deployed Legendary idle-mines LEGENDARY_IDLE_X times faster, with no daily cap.
+export const GAME_VERSION = 3;
 
 export const WORLD = 512; // blocks along each side (x and z run 0..511, then round again)
 export const CHUNK = 16;

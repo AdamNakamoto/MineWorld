@@ -10,7 +10,7 @@ import { createTrade } from "./trade.js";
 import { cardSvg, sealedSvg, TOPS, HEADWEAR, rarityOf, RARITIES, ROOKIE } from "./degen-skin.js";
 import { fmtMine, unitsToWei, BLOCK_REWARDS, MOB_REWARDS, DAILY_EARN_CAP, VAULT_DAILY_LIMIT, ZONE_PAY } from "./rewards.js";
 import { SLOTS, SLOT_KEYS, TIERS, CRAFTER_LEVELS, MAX, NO_BOOST, issued, itemBoost, describe, dailyCap } from "./boosts.js";
-import { BOT_MAX, idleRate } from "./bots-rules.js";
+import { BOT_MAX, LEGENDARY_IDLE_X, idleRateOf, idleUncapped } from "./bots-rules.js";
 import { itemName } from "./blocks.js";
 import { MOBS } from "./rules.js";
 import { short } from "./net.js";
@@ -441,16 +441,18 @@ export function createPanel(game) {
       const m = yours.get(tok);
       const tier = r?.tier ?? (m?.traits ? rarityOf(m.traits) : null), level = r?.level ?? m?.level ?? null;
       const cap = r?.cap ?? (tier === null ? null : dailyCap(itemBoost("crafter", tier, level ?? 1).cap, "home"));
-      const today = B.today(tok)[0], why = r ? null : B.cannot(tok);
+      const today = B.today(tok)[0], why = r ? null : B.cannot(tok), uncapped = tier !== null && idleUncapped(tier);
       const pct = cap ? Math.min(100, (today / cap) * 100) : 0;
+      const hour = cap === null ? 0 : Math.round(idleRateOf(tier, cap) * 3_600_000);
       return `<div class="bot-row ${r?.live ? "out" : ""}">
         <img src="${pic(m?.traits ? cardSvg(m.traits) : sealedSvg())}" alt="">
         <div class="cr-text">
           <b>#${tok}${tier === null ? "" : ` · <span class="tier t${tier}">${RARITIES[tier]}</span>`}${level === null ? "" : ` · Level ${level}`}</b>
-          ${cap === null ? "" : `<span class="boost">${fmtMine(cap)} $MINE a day · ${fmtMine(Math.round(idleRate(cap) * 3_600_000))} an hour</span>`}
+          ${cap === null ? "" : `<span class="boost">${uncapped ? `${LEGENDARY_IDLE_X.toLocaleString("en-US")}x: ${fmtMine(hour)} $MINE an hour, no daily cap`
+            : `${fmtMine(cap)} $MINE a day · ${fmtMine(hour)} an hour`}</span>`}
           ${r ? `<span class="state">${esc(r.state)}</span>` : ""}
-          <span class="small">Today ${fmtMine(today)}${cap === null ? "" : ` / ${fmtMine(cap)}`} $MINE</span>
-          <div class="bot-cap"><i style="width:${pct}%"></i></div>
+          <span class="small">Today ${fmtMine(today)}${cap === null || uncapped ? "" : ` / ${fmtMine(cap)}`} $MINE</span>
+          ${uncapped ? "" : `<div class="bot-cap"><i style="width:${pct}%"></i></div>`}
         </div>
         ${r ? `<button class="btn" data-act="botoff" data-id="${tok}">Recall</button>`
           : `<button class="btn gold" data-act="boton" data-id="${tok}" ${why ? `disabled title="${esc(why)}"` : ""}>Deploy</button>`}
@@ -467,8 +469,8 @@ export function createPanel(game) {
     return `<section class="box">
       <h3>Idle mining <span class="status ${live ? "open" : "closed"}">${live} / ${BOT_MAX} DEPLOYED</span></h3>
       <p class="note">You mine with the DEGEN you wear; deploy up to ${BOT_MAX} of your others to mine for you by time. While you're online, each earns
-      its own daily cap (${DAILY_EARN_CAP.toLocaleString("en-US")} $MINE, more with its cap boost) spread over 24 hours, into your wallet's total. Nothing
-      walks, digs or wears out.</p>
+      its own daily cap (${DAILY_EARN_CAP.toLocaleString("en-US")} $MINE, more with its cap boost) spread over 24 hours, into your wallet's total. A Legendary
+      earns ${LEGENDARY_IDLE_X.toLocaleString("en-US")} times as fast, with no daily cap. Nothing walks, digs or wears out.</p>
       ${rows ? `${why && free.length ? `<p class="note">${esc(why)}</p>` : ""}<div class="bot-rows">${rows}</div>`
         : `<p class="note">${(M.mine ?? []).length ? "Your other revealed DEGENs show here (not the one you wear)." : "Idle miners are your other I'M DEGENs: mint or buy one to deploy it."}</p>`}
       ${waiting}
@@ -476,8 +478,11 @@ export function createPanel(game) {
       Logged off, the tab closed or the phone asleep, they earn nothing, and that time isn't made up later.</p>
       <p class="note">At most ${BOT_MAX} at once, and ${BOT_MAX} different DEGENs a day (UTC): swapping in fresh ones doesn't add caps. The DEGEN you wear
       (or wore while earning today) can't be deployed, and one that idle-mined today can't be worn until tomorrow.</p>
-      ${s.walletCap !== undefined ? `<p class="note">Converting is limited to ${mine(s.walletCap)} $MINE a day per wallet: what you and your DEGENs earn
-      above it waits for later days.</p>` : ""}
+      ${s.walletCap === undefined ? "" : s.dailyCap !== undefined && s.walletCap >= s.dailyCap
+        ? `<p class="note">Converting has no limit per wallet: everyone's ${mine(s.dailyCap)} $MINE a day is first come, first served from 00:00 UTC,
+      and what you and your DEGENs earn beyond what you convert waits for later days.</p>`
+        : `<p class="note">Converting is limited to ${mine(s.walletCap)} $MINE a day per wallet: what you and your DEGENs earn
+      above it waits for later days.</p>`}
     </section>`;
   }
 

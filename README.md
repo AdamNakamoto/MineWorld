@@ -205,7 +205,7 @@ servers only, so players behind strict networks may not connect until a TURN rel
 | Mining site | Opened once per wallet with ETH (0.005 at launch), paid to the treasury. Needed to convert earnings to $MINE. A new site is level 1 and converts 50% of what it earns; upgrades raise it to 60%, 70%, 85% and 100% at levels 2 to 5, for 4,620, 18,942, 77,662 and 318,415 $MINE (about $1,000 for all four at a $50,000 market cap) |
 | DEGEN levels | Every DEGEN starts at level 1; its holder raises it to level 5 for 2,310, 9,471, 38,831 and 159,207 $MINE (half a site's). The level stays with the DEGEN when it's sold, shows as its "Level" trait, and adds to its boost (below) |
 | Shop and tickets | Paid in $MINE through `MinePayments` at the game's prices (`web/shop.js` `CATALOG`, `web/zones.js` `ticket`): the shop's 75% burned and 25% to the treasury; rocket tickets (2,100 for Deepvein or Cinderfall, 210 for Red Mesa; one per trip out; a payment buys as many tickets as it covers, up to 5) and revives (420, to revive on the spot after dying on the home planet: kind 2 "revive") all to the treasury |
-| Idle mining | A signed-in player can deploy up to 4 of their other DEGENs to mine for them while they're online (connected and signed in): each earns its own daily cap (1,650 to 3,750 $MINE by its rarity and level, counted per token) spread over 24 hours, into the wallet's ledger total (not the player's own cap), always at its full rate. Offline, nothing. At most 4 different DEGENs a wallet a UTC day. Rules below, under Idle mining |
+| Idle mining | A signed-in player can deploy up to 4 of their other DEGENs to mine for them while they're online (connected and signed in): each Common or Rare earns its own daily cap (1,650 to 3,375 $MINE by its rarity and level, counted per token) spread over 24 hours, and each Legendary 1000 times that rate with no daily cap (93,750 to 156,250 an hour, since 2026-10-18), into the wallet's ledger total (not the player's own cap), always at its full rate. Offline, nothing. At most 4 different DEGENs a wallet a UTC day. Rules below, under Idle mining |
 | Burns | Site upgrades and DEGEN levels burn 75% of what they cost and send 25% to the treasury, as the shop does. The token counts every mint against its 21M cap, so a burn is for good: the supply only ever shrinks from what was minted |
 | NFT: I'M DEGEN | "I'M DEGEN" (symbol DEGEN; the contract is `MineWorldCrafters`): 3,333 frogs, each a full Minecraft-style skin (64 x 64, with the second layer), drawn and stored entirely on chain, no two alike (every token has a different face and top). The NFT's picture is the skin as a "skin card"; the one a player wears is their miner in the game, the same skin pixel for pixel, and boosts their mining by its rarity and level (below). Traits: background, skin (5 greens; Ice, Purple and Stone are Rare, Gold Legendary), eyes, mouth, cheeks, top (58: hoodies, tees, jackets, tracksuits, suits, miner's overalls and vests, sweaters, flannels; royal robes, space suits and iron armour Rare, gold armour Legendary), bottoms, shoes, headwear (caps, beanies, hard hats with a lamp, headphones, goggles, a straw hat, the hood on hoodies; wizard hat and viking helmet Rare, the crowns Legendary) and an accessory; about 69% Common, 25% Rare, 6% Legendary. Free blind mint for wallets only (no contracts, so one transaction can't sweep it through throwaway contracts), at most 3 a wallet (the owner can change that, 1 to 50, or set a price, paid straight to the treasury), then revealed: the owner publishes the secret committed at deploy, and the seed waits for the next block's hash, which anyone then locks in (`seal`) within about 26 seconds (the panel sends both at once), so nobody can pick looks or see them before everyone else. If nobody locks it in, only the owner can move it on to a new block, in public, at most 3 times; anyone can run `tools/sealer.sh` to lock it in the moment it can be. 5% royalty, enforced through the transfer validator the owner picks (it can relax that, in public) |
 | Owner and treasury | `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` owns the vault, the three upgradeable contracts and I'M DEGEN, and is the treasury (site sales, the unburned share of upgrades and payments, tickets, any mint price, the royalty) and the fee recipient. Ownership moves in two steps and can't be renounced; it can be handed to a multisig or a timelock (I'M DEGEN's only to a wallet that can sign in to OpenSea Studio: launch step 10). A treasury must take ETH where ETH is sent to it (MiningSites and I'M DEGEN refuse one that doesn't) |
@@ -229,8 +229,8 @@ a leaked server key could take is the vault's 35,000 a day.
 natural blocks and defeating monsters, at the rates in `web/rewards.js` (grass, dirt and sand 0.01; stone and logs 0.05;
 coal 0.3, iron 0.8, gold 2, diamond 6, a $MINE crystal 15; monsters 0.6 to 2.5; Deepvein pays 2x). Blocks players placed
 pay nothing. A player earns up to 1,500 $MINE a UTC day by their own play before boosts (`DAILY_EARN_CAP`, times a
-zone's `capMul` in `web/zones.js`, 1 everywhere for now), and each of their deployed DEGENs up to its own cap by idle
-mining (below). What everyone earns together isn't capped (since 2026-10-18); converting is: at most 35,000 a day for
+zone's `capMul` in `web/zones.js`, 1 everywhere for now), and each of their deployed Common or Rare DEGENs up to its own
+cap by idle mining (a deployed Legendary with no cap: below). What everyone earns together isn't capped (since 2026-10-18); converting is: at most 35,000 a day for
 everyone (below, under Converting). The ledger counts ten-thousandths
 of a $MINE, so a percentage boost on a 0.01 block is kept exactly. To add an activity or change a rate, edit
 `web/rewards.js` and deploy the server and the site.
@@ -257,11 +257,13 @@ harder than the best sword's. A player who moves faster than anyone can earns no
 **Converting.** With a mining site open, **Convert to $MINE** asks the server for a voucher for the wallet's lifetime
 total (in wei) and `MiningSites.claim` converts the earnings it hasn't converted before at the site's rate (50% at level
 1, up to 100% at level 5) at the moment it claims, so an upgrade before claiming converts everything still unclaimed at
-the better rate. It pays within a per-wallet daily cap (3,500 $MINE, the most it allows, raised from 1,500 on 2026-10-17; idle mining counts in
-the wallet's total, and a player's own cap can be above it too, so what a wallet earns above it waits for later days)
-and one across everyone (35,000, the vault's daily limit); the owner can change the caps and pause claims. What
-everyone earns isn't capped, so the 35,000 is first come, first served: once a UTC day's conversions reach it,
-converting opens again at 00:00 UTC, and what isn't converted waits on the ledger for later days. Players together
+the better rate. It pays within a per-wallet daily cap (35,000 $MINE since 2026-10-18: an upgrade raised its most,
+`MAX_WALLET_DAILY_CAP`, from 3,500 to the vault's 35,000, and `setCaps` set it there; it was raised from 1,500 to 3,500
+on 2026-10-17) and one across everyone (35,000, the vault's daily limit); the owner can change the caps and pause
+claims. So there's no per-wallet limit of its own: one wallet can convert the whole day's 35,000. What everyone earns
+isn't capped, and a deployed Legendary earns millions a day, so the 35,000 is first come, first served: the first
+conversions after 00:00 UTC can take all of it, then nobody converts until the next 00:00 UTC, and what isn't converted
+waits on the ledger for later days. Players together
 can now earn more than the vault can ever mint (10,500,000 in all), so an earned balance isn't a promise that all of it
 converts. The panel
 shows both what you earned and what you'll receive. A leaked server key can take at most the daily caps until it's
@@ -290,12 +292,19 @@ game and the server follow exactly, are in [`docs/AUTOPILOT.md`](docs/AUTOPILOT.
 
 **Own cap, by time.** Each deployed DEGEN earns its own daily cap, `dailyCap` with that DEGEN's cap boost on the home
 planet's terms (1,650 for a Common level 1, 3,750 for a Legendary level 5), spread over 24 hours online
-(`IDLE_DAY_MS`): `idleRate(cap)` a millisecond, so 1,650 a day is 68.75 an hour. Its earn boost doesn't change the
+(`IDLE_DAY_MS`): `idleRate(cap)` a millisecond, so 1,650 a day is 68.75 an hour (a Legendary earns 1000 times that,
+with no cap: below). Its earn boost doesn't change the
 rate (its cap boost already does), the player's boost never applies, and the planet doesn't matter: deployed DEGENs
 don't travel and need no tickets. Counted per token id, so a DEGEN passed to another wallet keeps the same day. Idle
 earnings go into the wallet's ledger total, so they convert like any earnings, but not into the player's own `today`.
-MiningSites converts at most `walletDailyCap` (3,500 today) a day per wallet; the rest waits for later days, and the
-panel says so.
+MiningSites converts at most `walletDailyCap` (35,000 since 2026-10-18, the same as everyone's daily limit) a day per
+wallet; the rest waits for later days, and the panel says so.
+
+**Legendary: 1000x, no cap.** Since 2026-10-18 a deployed Legendary (rarity tier 2) idle-mines `LEGENDARY_IDLE_X`
+(1000) times its normal rate, with no daily cap (`idleRateOf`, `idleUncapped`): 93,750 $MINE an hour at level 1 (its
+2,250 cap over 24 hours, times 1000) up to 156,250 at level 5, so 2,250,000 to 3,750,000 a day online. Everything
+else holds: online only, at most 4 deployed, 4 distinct DEGENs a wallet a UTC day, never the worn one. Common and Rare
+deployed DEGENs are unchanged, and so is wearing a Legendary (its normal boosts, the player's normal daily cap).
 
 **Online only.** A deployed DEGEN earns while its player's game is connected and signed in and was heard from in the
 last 150 s (`IDLE_ONLINE_MS`: any message, or the game's 45 s ping, which the room answers without waking). Idle
@@ -320,7 +329,7 @@ worn until tomorrow.
 them costs one alarm every 5 minutes, and one message to each such player.
 
 In the game (`web/bots.js`), the Mining Site panel's **Idle mining** box deploys and recalls DEGENs (each with its cap
-a day, its rate an hour and what it earned today), remembers them per wallet and deploys them again after a sign-in,
+a day and its rate an hour, a Legendary with its 1000x rate an hour and no cap, and what it earned today), remembers them per wallet and deploys them again after a sign-in,
 and gives back the pickaxes the old bots held (**Take back**); a HUD line shows them and what they earned today. The
 players' guide (`web/docs.html#bots`) explains it all for players.
 
@@ -331,7 +340,7 @@ players' guide (`web/docs.html#bots`) explains it all for players.
 | `MineToken.sol` | $MINE: Courier World's $STAMP (StampToken) line for line. ERC-20 with permit and burn, 21M cap counting every mint (so burns are for good), 10.5M to the hook (pool) at launch, the rest minted only by its one minter, the vault (set once). Renounced at deploy: no owner, no proxy, no pause, no tax |
 | `MineVault.sol` | The mining vault, $MINE's minter: mints straight to players when its distributor (MiningSites) asks, never more than 35,000 in a UTC day nor 10,500,000 in all. Not upgradeable. The owner can replace the distributor only in the open (`proposeDistributor`, then `acceptDistributor` two days later), and only with a contract whose `owner()` is the vault's owner, `vault()` the vault and `predecessor()` the current distributor: propose the new proxy's predicted address, deploy it with `initialize` in its constructor, then accept (the steps are in its NatSpec) |
 | `MineHook.sol`, `MineRouter.sol`, `MineEthRouter.sol` | Courier's audited `StampHook` and routers for $MINE: one pool, locked launch liquidity, 4% fee on the IMD side, buy/sell with IMD or ETH. The one difference from StampHook: the lowest start tick is -300,000 (was -400,000, as CourierPad); everything else, the 21M launch limit and the market-cap maths included, is StampHook's |
-| `MiningSites.sol` | UUPS proxy, the rules for converting: mining sites (ETH, once per wallet) with levels 1 to 5 converting 50/60/70/85/100% (`upgradeSite(maxCost, minRateBps)`, paid in $MINE: `upgradeCost(level)`, 75% burned, never more than `maxCost`, never for a rate below `minRateBps`), and the claims the vault pays: EIP-712 vouchers from the world server, a daily cap per wallet (3,500, the most it allows) and across everyone (35,000), pause. The owner tunes prices, rates, costs and caps, adds levels (up to 20) and can upgrade it. `initialize` runs only in the proxy's own constructor, never later. A replacement can take over from any distributor, one without code too (a predicted address nothing was deployed at: no books), and carries each player's site (its level as bought, even above the replacement's top, which then earns the top rate), `settled` and `claimed` over from its predecessor (read through, then imported on the player's first act), and the replaced one retires (`NotActive`) |
+| `MiningSites.sol` | UUPS proxy, the rules for converting: mining sites (ETH, once per wallet) with levels 1 to 5 converting 50/60/70/85/100% (`upgradeSite(maxCost, minRateBps)`, paid in $MINE: `upgradeCost(level)`, 75% burned, never more than `maxCost`, never for a rate below `minRateBps`), and the claims the vault pays: EIP-712 vouchers from the world server, a daily cap per wallet (35,000, the most it allows since the upgrade of 2026-10-18, so one wallet can take the whole day's) and across everyone (35,000), pause. The owner tunes prices, rates, costs and caps, adds levels (up to 20) and can upgrade it. `initialize` runs only in the proxy's own constructor, never later. A replacement can take over from any distributor, one without code too (a predicted address nothing was deployed at: no books), and carries each player's site (its level as bought, even above the replacement's top, which then earns the top rate), `settled` and `claimed` over from its predecessor (read through, then imported on the player's first act), and the replaced one retires (`NotActive`) |
 | `CrafterLevels.sol` | UUPS proxy: each DEGEN's level (`levelOf`, 1 to `maxLevel`), raised by its holder with `upgrade(tokenId, maxCost)` for `upgradeCost(level)` $MINE (75% burned, never more than `maxCost`). I'M DEGEN shows it as the "Level" trait once pointed at it (`setAttributesExtension`) |
 | `MinePayments.sol` | UUPS proxy: `pay(kind, amount, ref)` takes $MINE from the player (with their exact approval), burns the kind's share, sends the rest to the treasury and emits `Paid(player, kind, amount, burned, ref)`, which the game checks. Kinds at launch: 0 "shop" (75% burned), 1 "ticket" and 2 "revive" (the 420 $MINE revive on the spot after dying on the home planet), both burning nothing (all to the treasury); the owner can change burn shares and add kinds. Prices live in the game, not here |
 | `MinePayer.sol`, `UpgradeCosts.sol`, `lib/OwnedUUPS.sol` | What the three proxies share: taking a payment (burned share burned from the payer's wallet, the rest to the treasury; nothing ever held), level costs, and two-step ownership that can't be renounced, with the owner alone upgrading; each proxy is set up only in its own constructor (`__Owned_init` refuses anywhere else), so a proxy deployed without its setup is nobody's. State in ERC-7201 namespaced storage |

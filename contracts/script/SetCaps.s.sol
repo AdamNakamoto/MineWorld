@@ -11,9 +11,10 @@ interface ICaps {
     function owner() external view returns (address);
 }
 
-/// @notice Sets MiningSites' converting limits: how much $MINE one wallet (WALLET_CAP, whole $MINE, 3,500 by default:
-///         the most the contract allows) and everyone together (DAILY_CAP, 35,000 by default: the mining vault's limit)
-///         may convert in a UTC day. Signed by the owner in the browser:
+/// @notice Sets MiningSites' converting limits: how much $MINE one wallet (WALLET_CAP, whole $MINE, 3,500 by default;
+///         the contract allows up to MAX_WALLET_DAILY_CAP: 35,000, the vault's whole day, since the 2026-10-18 upgrade
+///         in script/UpgradeSites.s.sol, 3,500 before it) and everyone together (DAILY_CAP, 35,000 by default: the
+///         mining vault's limit) may convert in a UTC day. Signed by the owner in the browser:
 ///   SITES=0x... forge script script/SetCaps.s.sol --rpc-url <rpc> --broadcast --browser --browser-disable-open
 contract SetCaps is Script {
     function run() external {

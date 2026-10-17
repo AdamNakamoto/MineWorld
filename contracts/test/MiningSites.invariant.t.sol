@@ -179,7 +179,7 @@ contract SitesHandler is SitesFixture {
     }
 
     function setCaps(uint256 wallet, uint256 global) external {
-        wallet = bound(wallet, 1e18, 3_500e18);
+        wallet = bound(wallet, 1e18, 35_000e18);
         global = bound(global, wallet, 35_000e18);
         vm.prank(owner);
         sites.setCaps(wallet, global);

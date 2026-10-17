@@ -27,6 +27,7 @@ import { createShop } from "./shop.js";
 import { createSky } from "./sky.js";
 import { createNet, short, SNEAKING } from "./net.js";
 import { createBots } from "./bots.js";
+import { idleUncapped } from "./bots-rules.js";
 import { createAvatar } from "./avatar.js";
 import { heldModel, setHeldAtlas, tileUVs, bareArm, tickGlint } from "./held.js";
 import * as BLK from "./blocks.js";
@@ -838,7 +839,7 @@ function drawBots() {
   if (el.hidden) return;
   const text = `⛏ ${s.live < s.n ? `${s.live}/${s.n}` : s.n} DEGEN${s.n === 1 ? "" : "s"} idle mining · +${fmtMine(s.today)} today`;
   if (el.textContent !== text) el.textContent = text;
-  el.title = s.each.map(([tok, t, cap]) => `#${tok}: ${fmtMine(t)}${cap ? ` / ${fmtMine(cap)}` : ""} $MINE today`).join(" · ");
+  el.title = s.each.map(([tok, t, cap, tier]) => `#${tok}: ${fmtMine(t)}${cap && !idleUncapped(tier) ? ` / ${fmtMine(cap)}` : ""} $MINE today`).join(" · ");
 }
 let voice = null;
 const url = roomUrl();

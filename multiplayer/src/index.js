@@ -53,7 +53,8 @@
 // every BOOST_RECHECK_MS), never the one they wear, one another connection holds or one worn while earning today, and
 // at most BOT_MAX distinct ones a UTC day. Nothing of them is in the world (no avatars, no digging, no trips): while
 // the player is online (signed in, and their game heard from in the last IDLE_ONLINE_MS: a message, or its ping), each
-// earns its own daily cap (DAILY_EARN_CAP with its DEGEN's cap boost) spread over IDLE_DAY_MS, paid by a Durable Object
+// earns its own daily cap (DAILY_EARN_CAP with its DEGEN's cap boost) spread over IDLE_DAY_MS (a Legendary
+// LEGENDARY_IDLE_X times that, with no cap: bots-rules.js idleRateOf, idleUncapped), paid by a Durable Object
 // alarm every IDLE_TICK_MS into the wallet's ledger total (not the player's own day), counted by token id
 // (`${ledgerKey}bots`). Offline time never pays. Every incoming message counts towards the
 // day's: past BOT_BUSY_AT the room takes no new deploys until 00:00 UTC (the free plan's limits).
@@ -80,7 +81,7 @@ import {
 import { cleanChat, CHAT_EVERY_MS } from "../../web/chat-rules.js";
 import { traitsOf, packTraits, rarityOf, SUPPLY } from "../../web/degen-skin.js";
 import { cleanName, nameShown, NAME_EVERY_MS } from "../../web/name-rules.js";
-import { BOT_MAX, IDLE_TICK_MS, IDLE_ONLINE_MS, IDLE_GAP_MAX_MS, BOT_BUSY_AT, idleRate } from "../../web/bots-rules.js";
+import { BOT_MAX, IDLE_TICK_MS, IDLE_ONLINE_MS, IDLE_GAP_MAX_MS, BOT_BUSY_AT, idleRateOf, idleUncapped } from "../../web/bots-rules.js";
 
 const MAX_SOCKETS = 300;
 const MAX_PER_IP = 8;
@@ -435,7 +436,7 @@ export class World extends DurableObject {
     this.send(ws, ["welcome", a.id, Date.now(), here.map(([, o]) => this.shown(o)), total, a.zone,
       { practice: this.practice, ticketsFree: this.ticketsFree(), reviveFree: this.reviveFree(), world: [w.total, w.day] }]);
     // (A tab still open from before an update runs the old game: it shows some things wrongly until it reloads.)
-    if (!(info?.v >= GAME_VERSION)) this.send(ws, ["sys", "MineWorldCraft was updated: reload the page for the new version (everyone's daily mining limit is gone)."]);
+    if (!(info?.v >= GAME_VERSION)) this.send(ws, ["sys", "MineWorldCraft was updated: reload the page for the new version."]);
     const voices = this.players().filter(([w, o]) => w !== ws && o.voice).map(([, o]) => o.id);
     if (voices.length) this.send(ws, ["voices", voices]);
     this.zoneCast(a.zone, ["join", ...this.shown(a)], ws);
@@ -2085,12 +2086,14 @@ export class World extends DurableObject {
     return out;
   }
   /// What each of player `a`'s deployed DEGENs wants now (`d`: botDays): [[b, want, today, cap, gap], ...], its full
-  /// rate (idleRate of its own cap) for the time since it was last paid (`gap`, at most IDLE_GAP_MAX_MS: a late tick
-  /// doesn't pay a long gap), within what's left of its cap today.
+  /// rate (idleRateOf: its own cap over a day, LEGENDARY_IDLE_X times that for a Legendary) for the time since it was
+  /// last paid (`gap`, at most IDLE_GAP_MAX_MS: a late tick doesn't pay a long gap), within what's left of its cap today
+  /// (a Legendary has no cap).
   idleRows(a, d, now) {
     return a.bots.map((b) => {
       const cap = this.botCap(b), today = d.t[b[0]] ?? 0, gap = Math.max(0, Math.min(now - b[3], IDLE_GAP_MAX_MS));
-      return [b, Math.max(0, Math.min(idleRate(cap) * gap, cap - today)), today, cap, gap];
+      const earned = idleRateOf(b[1], cap) * gap;
+      return [b, Math.max(0, idleUncapped(b[1]) ? earned : Math.min(earned, cap - today)), today, cap, gap];
     });
   }
   /// Pays player `a`'s DEGENs `toks` what they earned up to `now`, before they go
@@ -2116,7 +2119,7 @@ export class World extends DurableObject {
       // (At most BOT_MAX different DEGENs earn for a wallet in a day, however they were deployed: a 5th earns nothing.)
       const fifth = !(l.bots ?? []).includes(b[0]) && (l.bots?.length ?? 0) >= BOT_MAX;
       const due = fifth ? 0 : want, c = Math.floor(due);
-      const owed = due > c ? Math.min(gap, (due - c) / idleRate(cap)) : 0; // (ms)
+      const owed = due > c ? Math.min(gap, (due - c) / idleRateOf(b[1], cap)) : 0; // (ms)
       b[3] = Math.max(b[3], now - owed);
       if (c > 0) {
         l.total += c;

@@ -23,7 +23,8 @@ $STAMP hook for the 4% fee, the audited enforced-royalty NFT pattern, and server
 
 No auto yield farming: nothing pays while a player is offline, and an NFT merely held earns nothing. $MINE is paid
 for things players do in the game, and for idle mining by the DEGENs a player deploys while they're online (connected
-and signed in), each within its own daily cap (`docs/AUTOPILOT.md`).
+and signed in), each Common or Rare within its own daily cap, each Legendary at 1000 times its rate with no cap (since
+2026-10-18; `docs/AUTOPILOT.md`).
 
 **Fixed forever:** the token, the vault (its daily and total limits; a new distributor only two days after it's
 proposed, in the open), the hook (renounced: the 4% fee is final, and only the current fee recipient can move its fees)
@@ -42,8 +43,9 @@ the vault caps what can be minted at 35,000 a day.
    monster was really spawned for that player, hits come no faster than a sword swings and no harder than the best
    sword. Each wallet earns at most a daily cap from its own play (server-side: `DAILY_EARN_CAP` 1,500 times its NFT
    cap boost and the zone's `capMul`); its idle miners (up to 4 other DEGENs of the wallet, deployed while the player
-   is online: see `docs/AUTOPILOT.md`) earn into the same wallet total on top of that, by time, each its own daily cap
-   spread over 24 hours and counted by token id, always at its full rate. What everyone earns together, manual and
+   is online: see `docs/AUTOPILOT.md`) earn into the same wallet total on top of that, by time, each Common or Rare
+   its own daily cap spread over 24 hours, each Legendary `LEGENDARY_IDLE_X` (1000) times that rate with no cap (since
+   2026-10-18), counted by token id, always at its full rate. What everyone earns together, manual and
    idle, isn't capped (since 2026-10-18): the vault mints at most `VAULT_DAILY_LIMIT` (35,000) a day for everyone's
    conversions, first come, first served (step 4). The ledger counts ten-thousandths of a $MINE (`UNIT`); vouchers are in wei.
 5. NFT boosts (`web/boosts.js`): the NFTs a signed-in player uses (one per slot: DEGEN, skin, companion, aura,
@@ -55,7 +57,8 @@ the vault caps what can be minted at 35,000 a day.
 4. To convert, the player needs an open mining site (on-chain). The server signs a voucher for the wallet's
    lifetime total earned; `MiningSites.claim` converts what hasn't been converted yet (`total - settled`) at the
    site's rate now, within a per-wallet daily cap and a global daily cap (both owner-settable below hard maxima, they
-   bound what a leaked server key could take a day), and the owner can pause claims. Earnings a cap holds back stay
+   bound what a leaked server key could take a day; since 2026-10-18 both are 35,000, so one wallet can convert a
+   whole day's, first come, first served), and the owner can pause claims. Earnings a cap holds back stay
    claimable; the share a rate doesn't convert stays in the vault for good.
 
 ## The contracts (the spec the game and the server rely on)
@@ -82,10 +85,11 @@ the vault caps what can be minted at 35,000 a day.
 - Views for the panel: `sitePrice`, `treasury`, `signer`, `paused`, `walletDailyCap`, `dailyCap`, `paidToday()`,
   `walletPaidToday(address)`, `claimed(address)`, `settled(address)`, `token`, `vault`, `vaultBalance()`.
 - Owner: `setSitePrice` (never 0), `setTreasury` (must take ETH: `TreasuryRefusesEth`), `setSigner`, `setPaused`, `setCaps(wallet, global)` within
-  `MAX_WALLET_DAILY_CAP` (3,500 $MINE) and `MAX_DAILY_CAP()` (the vault's 35,000), `setUpgradeCosts` (each 1 wei to
+  `MAX_WALLET_DAILY_CAP` (35,000 $MINE since the upgrade of 2026-10-18, 3,500 before) and `MAX_DAILY_CAP()` (the vault's 35,000), `setUpgradeCosts` (each 1 wei to
   1,000,000 $MINE), `setRates` (each 10% to 100%, never lower for a higher level), `setUpgradeBurnBps` (0-100%),
   `addLevel(cost, rate)` (up to 20 levels, never fewer), `sweep(token, to)` for tokens sent by mistake, and upgrades.
-  Defaults: 1,500 $MINE a wallet a day, 35,000 across everyone (the wallet cap raised to its most, 3,500, on 2026-10-17).
+  Defaults: 1,500 $MINE a wallet a day, 35,000 across everyone (the wallet cap raised to 3,500 on 2026-10-17, then to
+  its new most, 35,000, on 2026-10-18).
 
 **MineVault** (not upgradeable): `release(to, amount)` only from `distributor` (MiningSites), at most `DAILY_LIMIT`
 (35,000) a UTC day and `TOTAL_LIMIT` (10,500,000) in all; `released`, `releasedToday()`, `remaining()`, `roomToday()`.

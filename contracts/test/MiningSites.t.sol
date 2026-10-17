@@ -8,6 +8,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
+import {IERC1967} from "@openzeppelin/contracts/interfaces/IERC1967.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {MineToken} from "../src/MineToken.sol";
@@ -20,6 +22,7 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {CrafterLevels} from "../src/CrafterLevels.sol";
 import {MinePayments} from "../src/MinePayments.sol";
 import {MineDeployer} from "../script/Deploy.s.sol";
+import {MiningSitesV1} from "./legacy/MiningSitesV1.sol";
 
 /// MiningSites' next version, for the upgrade test: the same contract, plus a way to tell it apart.
 contract MiningSitesV2 is MiningSites {
@@ -256,7 +259,7 @@ contract MiningSitesTest is SitesFixture {
         assertEq(sites.walletDailyCap(), WALLET_CAP);
         assertEq(sites.dailyCap(), DAILY_CAP);
         assertFalse(sites.paused());
-        assertEq(sites.MAX_WALLET_DAILY_CAP(), 3_500e18);
+        assertEq(sites.MAX_WALLET_DAILY_CAP(), 35_000e18, "one wallet may be allowed the vault's whole day");
         assertEq(sites.MAX_DAILY_CAP(), 35_000e18);
         assertEq(sites.maxLevel(), 5);
         assertEq(sites.MAX_LEVELS(), 20);
@@ -288,11 +291,11 @@ contract MiningSitesTest is SitesFixture {
         assertEq(vault.TOTAL_LIMIT(), token.MAX_SUPPLY() - token.totalMinted());
     }
 
-    /// Everyone claiming everything they can, every day, with the caps at their highest: the vault still lasts 300
-    /// days (ten wallets at the 3,500 wallet cap fill the 35,000 a day).
+    /// Everyone claiming everything they can, every day, with the caps at their highest (35,000 a wallet and across
+    /// everyone, so the first claim of each UTC day takes the whole day): the vault still lasts 300 days.
     function test_VaultCantEmptyInUnder300Days() public {
         vm.prank(owner);
-        sites.setCaps(3_500e18, 35_000e18);
+        sites.setCaps(35_000e18, 35_000e18);
         address[10] memory miners;
         bytes[10] memory sigs;
         uint64 deadline = type(uint64).max;
@@ -305,8 +308,13 @@ contract MiningSitesTest is SitesFixture {
             sigs[i] = _sig(miners[i], huge, deadline);
         }
         for (uint256 day = 1; day <= 300; day++) {
-            for (uint256 i; i < 10; i++) {
+            uint256 first = day % 10; // first come, first served: a different miner is first each day
+            vm.prank(miners[first]);
+            assertEq(sites.claim(huge, deadline, sigs[first]), 35_000e18, "the first claim of the day takes it all");
+            for (uint256 k = 1; k < 10; k++) {
+                uint256 i = (first + k) % 10;
                 vm.prank(miners[i]);
+                vm.expectRevert(MiningSites.NothingToClaim.selector);
                 sites.claim(huge, deadline, sigs[i]);
             }
             assertEq(sites.paidToday(), 35_000e18);
@@ -338,7 +346,9 @@ contract MiningSitesTest is SitesFixture {
         vm.expectRevert(MiningSites.BadCaps.selector);
         this.newSites(t, owner, treasury, signer, PRICE, 0, DAILY_CAP);
         vm.expectRevert(MiningSites.BadCaps.selector);
-        this.newSites(t, owner, treasury, signer, PRICE, 3_500e18 + 1, DAILY_CAP);
+        this.newSites(t, owner, treasury, signer, PRICE, 35_000e18 + 1, DAILY_CAP);
+        vm.expectRevert(MiningSites.BadCaps.selector);
+        this.newSites(t, owner, treasury, signer, PRICE, 35_000e18 + 1, 35_000e18 + 1);
         vm.expectRevert(MiningSites.BadCaps.selector);
         this.newSites(t, owner, treasury, signer, PRICE, WALLET_CAP, WALLET_CAP - 1);
         vm.expectRevert(MiningSites.BadCaps.selector);
@@ -996,18 +1006,70 @@ contract MiningSitesTest is SitesFixture {
         vm.expectRevert(MiningSites.BadCaps.selector);
         sites.setCaps(0, 1_000e18);
         vm.expectRevert(MiningSites.BadCaps.selector);
-        sites.setCaps(3_500e18 + 1, 35_000e18);
+        sites.setCaps(35_000e18 + 1, 35_000e18); // a wallet never above the vault's day
+        vm.expectRevert(MiningSites.BadCaps.selector);
+        sites.setCaps(35_000e18 + 1, 35_000e18 + 1);
+        vm.expectRevert(MiningSites.BadCaps.selector);
+        sites.setCaps(type(uint256).max, type(uint256).max);
         vm.expectRevert(MiningSites.BadCaps.selector);
         sites.setCaps(1_500e18, 1_499e18); // the cap across everyone below one wallet's
         vm.expectRevert(MiningSites.BadCaps.selector);
+        sites.setCaps(35_000e18, 34_999e18);
+        vm.expectRevert(MiningSites.BadCaps.selector);
         sites.setCaps(1_500e18, 35_000e18 + 1); // never above the 300-day pace
+        sites.setCaps(3_500e18, 35_000e18); // the old wallet maximum still works
         vm.expectEmit(address(sites));
-        emit MiningSites.CapsSet(3_500e18, 35_000e18);
-        sites.setCaps(3_500e18, 35_000e18); // the maxima themselves are fine
+        emit MiningSites.CapsSet(35_000e18, 35_000e18);
+        sites.setCaps(35_000e18, 35_000e18); // the maxima themselves are fine
+        assertEq(sites.walletDailyCap(), 35_000e18);
+        assertEq(sites.dailyCap(), 35_000e18);
         sites.setCaps(1, 1); // and so is the smallest
         vm.stopPrank();
         assertEq(sites.walletDailyCap(), 1);
         assertEq(sites.dailyCap(), 1);
+    }
+
+    /// With both caps at the vault's daily limit (the rule since 2026-10-18), one wallet can convert the whole day's
+    /// 35,000, in one claim or several, and then nobody converts until the next 00:00 UTC: first come, first served.
+    /// The vault's own limit holds whatever runs in front of it.
+    function test_OneWalletCanConvertTheWholeDay() public {
+        vm.prank(owner);
+        sites.setCaps(35_000e18, 35_000e18);
+        // Alice (level 1, 50%) has earned 100,000: worth 50,000, more than a day.
+        assertEq(sites.claimable(alice, 100_000e18), 35_000e18);
+        assertEq(_claim(alice, 40_000e18), 20_000e18, "paid in full");
+        assertEq(sites.settled(alice), 40_000e18);
+        assertEq(_claim(alice, 100_000e18), 15_000e18, "the rest of the day");
+        assertEq(sites.settled(alice), 70_000e18, "15,000 at 50% covers 30,000 more earnings");
+        assertEq(sites.walletPaidToday(alice), 35_000e18);
+        assertEq(sites.paidToday(), 35_000e18);
+        assertEq(vault.releasedToday(), 35_000e18);
+        assertEq(vault.roomToday(), 0);
+        assertEq(token.balanceOf(alice), 35_000e18);
+        // Nobody else converts today, nor alice again.
+        assertEq(sites.claimable(bob, 10_000e18), 0);
+        vm.expectRevert(MiningSites.NothingToClaim.selector);
+        this.claimAs(bob, 10_000e18);
+        assertEq(sites.claimable(alice, 100_000e18), 0);
+        vm.expectRevert(MiningSites.NothingToClaim.selector);
+        this.claimAs(alice, 100_000e18);
+        // Whatever the rules said, the vault mints nothing more today.
+        vm.prank(address(sites));
+        vm.expectRevert(MineVault.OverDailyLimit.selector);
+        vault.release(bob, 1);
+        // One second before midnight: still nothing. At 00:00 UTC the new day goes to whoever claims first.
+        uint256 midnight = (_now() / 1 days + 1) * 1 days;
+        vm.warp(midnight - 1);
+        assertEq(sites.claimable(bob, 10_000e18), 0);
+        vm.warp(midnight);
+        assertEq(sites.paidToday(), 0);
+        assertEq(_claim(bob, 100_000e18), 35_000e18, "bob is first today and takes it all");
+        assertEq(sites.claimable(alice, 100_000e18), 0);
+        vm.expectRevert(MiningSites.NothingToClaim.selector);
+        this.claimAs(alice, 100_000e18);
+        assertEq(sites.claimed(alice), 35_000e18);
+        assertEq(sites.claimed(bob), 35_000e18);
+        assertEq(sites.vaultBalance(), VAULT - 70_000e18);
     }
 
     /// Near the end of the vault's share, a claim pays what's left to mint; the rest of the earnings stay settled
@@ -1052,7 +1114,7 @@ contract MiningSitesTest is SitesFixture {
         uint256 level,
         uint256 earlier
     ) public {
-        walletCap = bound(walletCap, 1, 3_500e18);
+        walletCap = bound(walletCap, 1, 35_000e18);
         cap = bound(cap, walletCap, 35_000e18);
         vm.prank(owner);
         sites.setCaps(walletCap, cap);
@@ -2341,5 +2403,352 @@ contract LateInitProofTest is Test {
         CrafterLevels(levels).initialize(IERC20(address(token)), IERC721(address(token)), address(this), address(this));
         vm.expectRevert(OwnedUUPS.InitializeOutsideConstructor.selector);
         MinePayments(payments).initialize(IERC20(address(token)), address(this), address(this));
+    }
+}
+
+/// The 2026-10-18 upgrade of the live MiningSites proxy (Robinhood Chain, 0x2B3E...004b), as
+/// script/UpgradeSites.s.sol makes it: from the implementation live until then (MiningSitesV1, a frozen copy that
+/// compiles to the live bytecode), whose wallet cap tops out at 3,500 a day, to this one, where it tops out at the
+/// vault's 35,000, then setCaps(35,000, 35,000), so one wallet can convert the whole day. The proxy starts as the live
+/// one stands: launched with the defaults (1,500 a wallet, 35,000 across everyone), the wallet cap raised to 3,500 on
+/// 2026-10-17, sites at several levels, claims on an earlier day and today.
+contract MiningSitesLiveUpgradeTest is SitesFixture {
+    uint256 constant SIGNER_KEY = 0x5160;
+    address signer = vm.addr(SIGNER_KEY);
+    address owner = makeAddr("owner");
+    address treasury = makeAddr("treasury");
+    address pool = makeAddr("pool");
+    address alice = makeAddr("alice"); // level 3 (70%); claimed yesterday, and today up to the 3,500 cap
+    address bob = makeAddr("bob"); // level 1 (50%); claimed yesterday and today
+    address carol = makeAddr("carol"); // a site, never claimed
+    address dave = makeAddr("dave"); // no site
+    address stranger = makeAddr("stranger");
+
+    uint256 constant PRICE = 0.005 ether;
+    uint256 constant WALLET = 35_000e18;
+    uint256 constant DAY = 35_000e18;
+    bytes32 constant INITIALIZABLE_SLOT = 0xf0c57e16840df040f15088dc2f81fe391c3923bec73e23a9662efc9c229c6a00;
+
+    MineToken token;
+    MineVault vault;
+    /// The proxy, through this code's ABI (the live code's, function for function).
+    MiningSites sites;
+    address v1;
+
+    function setUp() public {
+        vm.warp(20_000 days + 9 hours);
+        // As the launch did it (MineDeployer._deployGame), with the live implementation.
+        token = new MineToken(address(this), pool, 10_500_000e18);
+        v1 = address(new MiningSitesV1());
+        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
+        vault = new MineVault(token, owner, predicted);
+        sites = MiningSites(
+            address(
+                new ERC1967Proxy(
+                    v1,
+                    abi.encodeCall(
+                        MiningSitesV1.initialize,
+                        (IERC20(address(token)), vault, owner, treasury, signer, PRICE, 1_500e18, 35_000e18)
+                    )
+                )
+            )
+        );
+        assertEq(address(sites), predicted);
+        token.setMinter(address(vault));
+        token.renounceOwnership();
+
+        // Yesterday: three sites, alice's raised to level 3, and claims under the launch's 1,500 cap.
+        address[3] memory openers = [alice, bob, carol];
+        for (uint256 i; i < 3; i++) {
+            vm.deal(openers[i], 1 ether);
+            vm.prank(openers[i]);
+            sites.openSite{value: PRICE}();
+        }
+        _upgrade(sites, token, pool, alice);
+        _upgrade(sites, token, pool, alice);
+        assertEq(_claim(alice, 2_000e18), 1_400e18);
+        assertEq(_claim(bob, 1_000e18), 500e18);
+        // 2026-10-17: the wallet cap raised to the live code's most.
+        vm.prank(owner);
+        sites.setCaps(3_500e18, 35_000e18);
+        // Today: alice hits the 3,500 cap (5,000 of her 8,000 new earnings settled), bob is paid in full.
+        vm.warp(_now() + 1 days);
+        assertEq(_claim(alice, 10_000e18), 3_500e18);
+        assertEq(sites.settled(alice), 7_000e18);
+        assertEq(_claim(bob, 3_000e18), 1_000e18);
+        assertEq(sites.paidToday(), 4_500e18);
+    }
+
+    // ---------------------------------------------------------------- helpers
+
+    function _now() internal view returns (uint256) {
+        return vm.getBlockTimestamp();
+    }
+
+    function _claim(address who, uint256 total) internal returns (uint256) {
+        uint64 deadline = uint64(_now() + 1 hours);
+        bytes memory sig = _voucher(sites, SIGNER_KEY, who, total, deadline);
+        vm.prank(who);
+        return sites.claim(total, deadline, sig);
+    }
+
+    function claimAs(address who, uint256 total) external returns (uint256) {
+        return _claim(who, total);
+    }
+
+    function _impl() internal view returns (address) {
+        return address(uint160(uint256(vm.load(address(sites), ERC1967Utils.IMPLEMENTATION_SLOT))));
+    }
+
+    /// @dev The upgrade and the caps, as script/UpgradeSites.s.sol sends them.
+    function _upgradeLive() internal returns (MiningSites next) {
+        next = new MiningSites();
+        vm.startPrank(owner);
+        sites.upgradeToAndCall(address(next), "");
+        sites.setCaps(WALLET, DAY);
+        vm.stopPrank();
+    }
+
+    /// @dev Everything a player's books read as.
+    function _book(address p) internal view returns (bytes memory) {
+        (uint64 openedAt, uint256 level, uint256 done, uint256 paid) = sites.bookOf(p);
+        return bytes.concat(
+            abi.encode(openedAt, level, done, paid, sites.siteOf(p), sites.siteLevel(p), sites.hasSite(p)),
+            abi.encode(sites.rateBps(p), sites.settled(p), sites.claimed(p), sites.walletPaidToday(p)),
+            abi.encode(sites.claimable(p, 20_000e18), sites.claimable(p, 100_000e18))
+        );
+    }
+
+    /// @dev Every book, setting and view the proxy answers.
+    function _books() internal view returns (bytes memory b) {
+        b = bytes.concat(_book(alice), _book(bob), _book(carol), _book(dave));
+        b = bytes.concat(
+            b,
+            abi.encode(
+                sites.paidToday(), sites.walletDailyCap(), sites.dailyCap(), sites.MAX_DAILY_CAP(), sites.rates(),
+                sites.upgradeCosts(), sites.upgradeBurnBps(), sites.maxLevel()
+            )
+        );
+        b = bytes.concat(
+            b,
+            abi.encode(
+                sites.signer(), sites.treasury(), sites.sitePrice(), sites.owner(), sites.pendingOwner(), sites.paused()
+            ),
+            abi.encode(address(sites.vault()), address(sites.token()), sites.predecessor(), sites.vaultBalance())
+        );
+        b = bytes.concat(
+            b,
+            abi.encode(
+                sites.domainSeparator(), sites.EARNINGS_TYPEHASH(), sites.today(), sites.levelRateBps(3),
+                sites.upgradeCost(2), sites.upgradeCost(5), sites.MAX_LEVELS(), sites.MIN_RATE_BPS()
+            )
+        );
+        (bytes1 fields, string memory name, string memory version, uint256 chainId, address verifying, bytes32 salt,
+            uint256[] memory extensions) = sites.eip712Domain();
+        b = bytes.concat(b, abi.encode(fields, name, version, chainId, verifying, salt, extensions));
+    }
+
+    // ---------------------------------------------------------------- the upgrade
+
+    /// Upgrading the live-like proxy keeps every player's site, level, settled, claimed, the caps, today's counters
+    /// (per wallet and across everyone), every setting and the voucher domain, slot for slot; vouchers the server
+    /// signed before the upgrade pay after it, and never twice.
+    function test_UpgradeFromTheLiveCodeKeepsEveryBook() public {
+        assertEq(_impl(), v1);
+        assertEq(sites.MAX_WALLET_DAILY_CAP(), 3_500e18, "the live code tops a wallet out at 3,500");
+        vm.prank(owner);
+        vm.expectRevert(MiningSites.BadCaps.selector);
+        sites.setCaps(WALLET, DAY); // which is why it takes an upgrade
+
+        // Vouchers the server signed before the upgrade.
+        uint64 deadline = uint64(_now() + 30 days);
+        bytes memory aliceVoucher = _voucher(sites, SIGNER_KEY, alice, 60_000e18, deadline);
+        bytes memory bobVoucher = _voucher(sites, SIGNER_KEY, bob, 40_000e18, deadline);
+        bytes memory carolVoucher = _voucher(sites, SIGNER_KEY, carol, 2_000e18, deadline);
+
+        // Every view, and the raw value of every storage slot behind them (and the initializer's).
+        bytes memory before = _books();
+        vm.record();
+        _books();
+        (bytes32[] memory slots,) = vm.accesses(address(sites));
+        bytes32[] memory values = new bytes32[](slots.length);
+        for (uint256 i; i < slots.length; i++) {
+            values[i] = vm.load(address(sites), slots[i]);
+        }
+        assertGt(slots.length, 20);
+        assertEq(vm.load(address(sites), INITIALIZABLE_SLOT), bytes32(uint256(1)));
+
+        MiningSites next = new MiningSites();
+        vm.expectEmit(address(sites));
+        emit IERC1967.Upgraded(address(next));
+        vm.prank(owner);
+        sites.upgradeToAndCall(address(next), "");
+
+        assertEq(_impl(), address(next));
+        assertEq(sites.MAX_WALLET_DAILY_CAP(), 35_000e18);
+        assertEq(_books(), before, "every book, setting and view reads the same");
+        for (uint256 i; i < slots.length; i++) {
+            if (slots[i] == ERC1967Utils.IMPLEMENTATION_SLOT) continue;
+            assertEq(vm.load(address(sites), slots[i]), values[i], "a storage slot changed");
+        }
+        assertEq(vm.load(address(sites), INITIALIZABLE_SLOT), bytes32(uint256(1)), "no reinitializer ran");
+        assertEq(sites.walletDailyCap(), 3_500e18, "the caps stay until the owner sets them");
+        assertEq(sites.dailyCap(), 35_000e18);
+
+        vm.expectEmit(address(sites));
+        emit MiningSites.CapsSet(WALLET, DAY);
+        vm.prank(owner);
+        sites.setCaps(WALLET, DAY);
+        assertEq(sites.walletDailyCap(), 35_000e18);
+        assertEq(sites.dailyCap(), 35_000e18);
+
+        // Today's counters carried over: alice has had 3,500 today and everyone 4,500, so 30,500 is left today.
+        // Alice's old voucher (53,000 new earnings at 70%: 37,100) takes all of it.
+        assertEq(sites.claimable(alice, 60_000e18), 30_500e18);
+        vm.prank(alice);
+        assertEq(sites.claim(60_000e18, deadline, aliceVoucher), 30_500e18);
+        assertEq(sites.walletPaidToday(alice), 34_000e18);
+        assertEq(sites.paidToday(), 35_000e18);
+        assertEq(vault.releasedToday(), 35_000e18);
+        assertEq(vault.roomToday(), 0);
+        // The day is spent: bob's and carol's old vouchers pay nothing more today.
+        vm.prank(bob);
+        vm.expectRevert(MiningSites.NothingToClaim.selector);
+        sites.claim(40_000e18, deadline, bobVoucher);
+        vm.prank(carol);
+        vm.expectRevert(MiningSites.NothingToClaim.selector);
+        sites.claim(2_000e18, deadline, carolVoucher);
+
+        // Tomorrow they do, first come, first served: bob (37,000 new at 50%), carol (2,000 at 50%), then alice's rest.
+        vm.warp(_now() + 1 days);
+        vm.prank(bob);
+        assertEq(sites.claim(40_000e18, deadline, bobVoucher), 18_500e18);
+        vm.prank(carol);
+        assertEq(sites.claim(2_000e18, deadline, carolVoucher), 1_000e18);
+        uint256 rest = sites.claimable(alice, 60_000e18);
+        assertGt(rest, 0);
+        assertLe(rest, 15_500e18);
+        vm.prank(alice);
+        assertEq(sites.claim(60_000e18, deadline, aliceVoucher), rest);
+        assertEq(sites.settled(alice), 60_000e18, "alice's voucher is used up");
+        assertEq(sites.settled(bob), 40_000e18);
+        assertEq(sites.settled(carol), 2_000e18);
+        // Never twice.
+        vm.prank(alice);
+        vm.expectRevert(MiningSites.NothingToClaim.selector);
+        sites.claim(60_000e18, deadline, aliceVoucher);
+        vm.prank(bob);
+        vm.expectRevert(MiningSites.NothingToClaim.selector);
+        sites.claim(40_000e18, deadline, bobVoucher);
+        assertEq(sites.claimed(alice), 1_400e18 + 3_500e18 + 30_500e18 + rest);
+        assertEq(vault.released(), sites.claimed(alice) + sites.claimed(bob) + sites.claimed(carol));
+
+        // Sites still work as before: dave opens one, bob buys a level.
+        vm.deal(dave, 1 ether);
+        vm.prank(dave);
+        sites.openSite{value: PRICE}();
+        _upgrade(sites, token, pool, bob);
+        assertEq(sites.siteLevel(bob), 2);
+        // Still locked: no second initialize, on the proxy or the new implementation.
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        sites.initialize(IERC20(address(token)), vault, alice, alice, alice, PRICE, 1, 1);
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        next.initialize(IERC20(address(token)), vault, alice, alice, alice, PRICE, 1, 1);
+    }
+
+    /// After the upgrade and setCaps(35,000, 35,000), one wallet converts the whole day's 35,000, in one claim, and
+    /// a second wallet gets nothing more that day: the vault's limit holds. The next 00:00 UTC opens a new day.
+    function test_AfterTheUpgradeOneWalletConvertsTheWholeDay() public {
+        _upgradeLive();
+        vm.warp((_now() / 1 days + 1) * 1 days); // the next 00:00 UTC
+        assertEq(sites.paidToday(), 0);
+        // Alice: 53,000 earnings not yet converted, at 70%: 37,100, more than a day.
+        assertEq(_claim(alice, 60_000e18), 35_000e18, "one wallet, the whole day");
+        assertEq(sites.walletPaidToday(alice), 35_000e18);
+        assertEq(sites.paidToday(), 35_000e18);
+        assertEq(vault.releasedToday(), 35_000e18);
+        assertEq(vault.roomToday(), 0);
+        assertEq(sites.claimable(bob, 40_000e18), 0);
+        vm.expectRevert(MiningSites.NothingToClaim.selector);
+        this.claimAs(bob, 40_000e18);
+        vm.expectRevert(MiningSites.NothingToClaim.selector);
+        this.claimAs(carol, 2_000e18);
+        // The vault itself refuses one wei more today, whoever asks.
+        vm.prank(address(sites));
+        vm.expectRevert(MineVault.OverDailyLimit.selector);
+        vault.release(bob, 1);
+        // The next day: bob is first and is paid in full (18,500); alice gets the rest of her earnings' worth.
+        vm.warp(_now() + 1 days);
+        assertEq(_claim(bob, 40_000e18), 18_500e18);
+        assertEq(_claim(alice, 60_000e18), 2_100e18, "the 3,000 earnings left, at 70%");
+        assertEq(sites.settled(alice), 60_000e18);
+    }
+
+    /// The wallet cap tops out at the vault's 35,000 a day: never above it, nor above the cap across everyone.
+    function test_WalletCapNeverAboveTheVaultsDay() public {
+        vm.startPrank(owner);
+        vm.expectRevert(MiningSites.BadCaps.selector);
+        sites.setCaps(3_500e18 + 1, 35_000e18); // the live code's limit, before the upgrade
+        vm.stopPrank();
+        _upgradeLive();
+        vm.startPrank(owner);
+        vm.expectRevert(MiningSites.BadCaps.selector);
+        sites.setCaps(35_000e18 + 1, 35_000e18);
+        vm.expectRevert(MiningSites.BadCaps.selector);
+        sites.setCaps(35_000e18 + 1, 35_000e18 + 1);
+        vm.expectRevert(MiningSites.BadCaps.selector);
+        sites.setCaps(type(uint256).max, type(uint256).max);
+        vm.expectRevert(MiningSites.BadCaps.selector);
+        sites.setCaps(35_000e18, 34_999e18);
+        vm.expectRevert(MiningSites.BadCaps.selector);
+        sites.setCaps(0, 35_000e18);
+        vm.stopPrank();
+        assertEq(sites.walletDailyCap(), 35_000e18, "the failed calls changed nothing");
+        assertEq(sites.dailyCap(), 35_000e18);
+    }
+
+    /// Only the owner upgrades and sets the caps: not a stranger, the server's key, the treasury, a player, nor an
+    /// owner-to-be before it accepts; not through the implementation itself; and only to a UUPS implementation.
+    function test_OnlyTheOwnerUpgradesAndSetsCaps() public {
+        MiningSites next = new MiningSites();
+        address multisig = makeAddr("multisig");
+        vm.prank(owner);
+        sites.transferOwnership(multisig);
+        address[5] memory notOwners = [stranger, signer, treasury, alice, multisig];
+        for (uint256 i; i < notOwners.length; i++) {
+            bytes memory unauthorized = abi.encodeWithSelector(OwnedUUPS.OwnableUnauthorizedAccount.selector, notOwners[i]);
+            vm.prank(notOwners[i]);
+            vm.expectRevert(unauthorized);
+            sites.upgradeToAndCall(address(next), "");
+            vm.prank(notOwners[i]);
+            vm.expectRevert(unauthorized);
+            sites.setCaps(WALLET, DAY);
+        }
+        vm.prank(owner);
+        vm.expectRevert(UUPSUpgradeable.UUPSUnauthorizedCallContext.selector);
+        next.upgradeToAndCall(address(next), "");
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(ERC1967Utils.ERC1967InvalidImplementation.selector, address(token)));
+        sites.upgradeToAndCall(address(token), "");
+        assertEq(_impl(), v1, "nothing upgraded");
+        assertEq(sites.walletDailyCap(), 3_500e18);
+
+        // The owner can.
+        _upgradeLive();
+        assertTrue(_impl() != v1);
+        assertEq(sites.walletDailyCap(), WALLET);
+        // Once ownership is handed over, only the new owner.
+        vm.prank(multisig);
+        sites.acceptOwnership();
+        bytes memory oldOwner = abi.encodeWithSelector(OwnedUUPS.OwnableUnauthorizedAccount.selector, owner);
+        vm.startPrank(owner);
+        vm.expectRevert(oldOwner);
+        sites.setCaps(1_500e18, 35_000e18);
+        vm.expectRevert(oldOwner);
+        sites.upgradeToAndCall(v1, "");
+        vm.stopPrank();
+        vm.prank(multisig);
+        sites.setCaps(3_500e18, 35_000e18);
+        assertEq(sites.walletDailyCap(), 3_500e18);
     }
 }

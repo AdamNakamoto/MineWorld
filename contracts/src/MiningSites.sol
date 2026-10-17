@@ -63,8 +63,9 @@ contract MiningSites is UpgradeCosts, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
     bytes32 public constant EARNINGS_TYPEHASH = keccak256("Earnings(address player,uint256 total,uint64 deadline)");
-    /// @notice The highest the per-wallet daily cap can be set (3,500 $MINE).
-    uint256 public constant MAX_WALLET_DAILY_CAP = 3_500e18;
+    /// @notice The highest the per-wallet daily cap can be set (35,000 $MINE, the vault's daily limit): at most, one
+    ///         wallet may convert the whole day's 35,000.
+    uint256 public constant MAX_WALLET_DAILY_CAP = 35_000e18;
     /// @notice The most one level can be set to cost (1,000,000 $MINE).
     uint256 public constant MAX_UPGRADE_COST = 1_000_000e18;
     /// @notice The lowest share of earnings a level can convert (10%).

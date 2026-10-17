@@ -266,9 +266,9 @@ export function createBots(opts) {
       });
     },
     /// For the HUD: { n (deployed), live (deployed on this connection now), today (units, all of them together), each
-    /// ([tokenId, today, cap]) }.
+    /// ([tokenId, today, cap, tier]) }.
     summary() {
-      const each = [...roster.keys()].map((tok) => [tok, ...todayOf(tok)]);
+      const each = [...roster.keys()].map((tok) => [tok, ...todayOf(tok), roster.get(tok).tier]);
       let live = 0;
       for (const b of roster.values()) if (b.live) live++;
       return { n: roster.size, live, today: each.reduce((t, e) => t + e[1], 0), each };
