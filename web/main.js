@@ -38,7 +38,7 @@ import { packTraits, unpackTraits } from "./degen-skin.js";
 import { connectChain, explain } from "./chain.js";
 import { createPanel } from "./panel.js";
 import { cleanChat } from "./chat-rules.js";
-import { fmtMine, toUnits, WORLD_DAILY_CAP, UNIT } from "./rewards.js";
+import { fmtMine, toUnits, VAULT_DAILY_LIMIT, UNIT } from "./rewards.js";
 import { NO_BOOST, dailyCap, withSpeed, withMove, describe } from "./boosts.js";
 import { sfx } from "./sfx.js";
 import { roomUrl } from "./config.js";
@@ -831,17 +831,14 @@ const bots = createBots({
   toast,
   changed() { drawBots(); panel?.render(); },
 });
-/// The HUD's idle mining line, under your earnings: your deployed DEGENs and what they earned today (and the fair
-/// share, while a busy day slows everyone's idle rate).
+/// The HUD's idle mining line, under your earnings: your deployed DEGENs and what they earned today.
 function drawBots() {
   const el = $("earnIdle"), s = bots.summary();
   el.hidden = !ledger.signedIn || !s.n;
   if (el.hidden) return;
-  const busy = s.share !== null && s.share < 1 ? ` · ${Math.floor(s.share * 100)}% rate` : "";
-  const text = `⛏ ${s.live < s.n ? `${s.live}/${s.n}` : s.n} DEGEN${s.n === 1 ? "" : "s"} idle mining · +${fmtMine(s.today)} today${busy}`;
+  const text = `⛏ ${s.live < s.n ? `${s.live}/${s.n}` : s.n} DEGEN${s.n === 1 ? "" : "s"} idle mining · +${fmtMine(s.today)} today`;
   if (el.textContent !== text) el.textContent = text;
-  el.title = `${s.each.map(([tok, t, cap]) => `#${tok}: ${fmtMine(t)}${cap ? ` / ${fmtMine(cap)}` : ""} $MINE today`).join(" · ")}${busy
-    ? `. A busy day: everyone's idle rate is at ${Math.floor(s.share * 100)}% so today's ${WORLD_DAILY_CAP.toLocaleString("en-US")} $MINE lasts until 00:00 UTC.` : ""}`;
+  el.title = s.each.map(([tok, t, cap]) => `#${tok}: ${fmtMine(t)}${cap ? ` / ${fmtMine(cap)}` : ""} $MINE today`).join(" · ");
 }
 let voice = null;
 const url = roomUrl();
@@ -956,21 +953,16 @@ if (url) {
     botoff(tok, why, retry) { bots.off(tok, why, retry); },
     /// What idle mining paid (every few minutes, and on a recall): into your wallet's total (not your own today), and
     /// the coin pops (quietly: it isn't something you just did).
-    idle(list, total, share) {
-      const units = bots.paid(list, share);
+    idle(list, total) {
+      const units = bots.paid(list);
       if (Number.isFinite(total)) ledger.total = total;
       if (units > 0) { const c = document.querySelector(".coin"); c.classList.remove("pop"); void c.offsetWidth; c.classList.add("pop"); }
       drawLedger();
     },
     earn({ units, today, total, what }) {
       Object.assign(ledger, { today, total });
-      if (what === "cap" || what === "worldcap" || !units) {
+      if (what === "cap" || !units) {
         if (what === "cap") showTarget(`Your daily $MINE limit (${fmtMine(ledger.cap)}) is reached: ${bots.summary().live ? "your deployed DEGENs keep idle mining to their own caps" : "come back tomorrow (UTC)"}`, 2500);
-        if (what === "worldcap") {
-          showTarget(`Today's ${WORLD_DAILY_CAP.toLocaleString("en-US")} $MINE for everyone is all mined: back at 00:00 UTC`, 2500);
-          worldMined = [WORLD_DAILY_CAP * UNIT, Math.floor((Date.now() + serverOffset) / 86_400_000)];
-          drawTicker();
-        }
       }
       else {
         sfx.coin();
@@ -1118,7 +1110,6 @@ connectChain().catch((e) => { console.warn("chain unavailable", e); return null;
     bots: {
       list: () => bots.roster(),
       today: (tok) => bots.today(tok),
-      share: () => bots.share,
       cannot: (tok) => bots.cannot(tok),
       wearWhy: (tok) => bots.wearWhy(tok),
       deploy: (tok) => bots.deploy(tok),
@@ -1438,22 +1429,20 @@ function loadCount(retry = true) {
 loadCount();
 
 // ---------------------------------------------------------------- the ticker
-// Scrolls across the top of the screen: how much of today's WORLD_DAILY_CAP $MINE is left to mine (everyone's earnings
-// today, as the room counts them: /count on the title screen, then the welcome and ["world", ...] while people mine),
-// when it resets (00:00 UTC), what's left in the mining vault, and the mining sites open. Hidden until the room has said.
+// Scrolls across the top of the screen: how much $MINE everyone has mined today (as the room counts them: /count on the
+// title screen, then the welcome and ["world", ...] while people mine; there's no limit to it), when the daily limits
+// reset (00:00 UTC: each player's cap, and converting's VAULT_DAILY_LIMIT for everyone), what mining sites have paid
+// out, what's left in the mining vault, and the mining sites open. Hidden until the room has said.
 // The message is repeated to fill the screen twice over, and the strip slides by half its width, so it loops seamlessly.
 function drawTicker() {
   const el = $("ticker");
   if (!worldMined) { el.hidden = true; document.body.classList.remove("ticking"); return; }
   const now = Date.now() + serverOffset, day = Math.floor(now / 86_400_000);
   const mined = worldMined[1] === day ? worldMined[0] : 0; // (a new UTC day starts at 0)
-  const left = Math.max(0, WORLD_DAILY_CAP * UNIT - mined);
   const ms = (day + 1) * 86_400_000 - now, h = Math.floor(ms / 3_600_000), m = Math.floor((ms % 3_600_000) / 60_000);
   const n = (x) => Math.floor(x).toLocaleString("en-US");
-  const items = left > 0
-    ? [`⛏ <b>${n(left / UNIT)}</b> of ${n(WORLD_DAILY_CAP)} $MINE left to mine today`, `${n(mined / UNIT)} mined so far today`]
-    : [`⛏ All <b>${n(WORLD_DAILY_CAP)}</b> $MINE for today are mined`];
-  items.push(`Resets in <b>${h}h ${m}m</b> (00:00 UTC)`);
+  const items = [`⛏ <b>${n(mined / UNIT)}</b> $MINE mined today`, `Up to ${n(VAULT_DAILY_LIMIT)} $MINE converts a day`,
+    `Daily limits reset in <b>${h}h ${m}m</b> (00:00 UTC)`];
   if (siteEarned !== null) items.push(`<b>${n(siteEarned)}</b> $MINE earned by mining sites in total`);
   if (vaultLeft !== null) items.push(`<b>${n(vaultLeft)}</b> $MINE left in the mining vault`);
   if (sitesOpen !== null) items.push(`${n(sitesOpen)} mining site${sitesOpen === 1 ? "" : "s"} open`);

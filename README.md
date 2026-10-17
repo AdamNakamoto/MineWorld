@@ -142,7 +142,7 @@ for 20 blocks: no mining, building or fighting there. Everything tunable is in `
 | Zone | | |
 |---|---|---|
 | Home planet | No PvP | The town and its villagers |
-| **Deepvein**, the 2x Mine Zone | No PvP | Rocky crags riddled with caves, stone over harder deep rock (1.5x stone's breaking time), glowcaps on cave floors, rare ores three times as common (iron 2x, coal 1.5x). Everything a player earns pays **2x** (blocks and monsters; idle mining earns the same on every planet), within the usual caps (1,500 a day for a player's own play, more with a cap boost) and 35,000 a day for everyone. Monsters come day and night, up to 5 at once, about every 10 s, with 1.5x health and damage. Its edits are kept a week at a time: every Monday 00:00 UTC it grows back |
+| **Deepvein**, the 2x Mine Zone | No PvP | Rocky crags riddled with caves, stone over harder deep rock (1.5x stone's breaking time), glowcaps on cave floors, rare ores three times as common (iron 2x, coal 1.5x). Everything a player earns pays **2x** (blocks and monsters; idle mining earns the same on every planet), within the usual cap (1,500 a day for a player's own play, more with a cap boost). Monsters come day and night, up to 5 at once, about every 10 s, with 1.5x health and damage. Its edits are kept a week at a time: every Monday 00:00 UTC it grows back |
 | **Cinderfall**, the Boss Zone | No PvP | Ash plains, basalt, volcanoes with glowing craters, cracks of fire and ember-tipped spires. A stone-brick path runs north from the pad to the arena, where **Ashgrim, the Cinder Colossus** (an original giant of cooled lava with a molten heart, 1,500 HP) fights everyone at once |
 | **Red Mesa**, the PvP Zone | PvP off the pad | Terraced mesas in banded clays over red sand, dry riverbeds and cacti. Players can hit each other; a player beaten here drops everything they carry and is sent home |
 
@@ -200,12 +200,12 @@ servers only, so players behind strict networks may not connect until a TURN rel
 |---|---|
 | $MINE | 21,000,000 in all, the same as Courier World's $STAMP. ERC-20 with permit, no transfer tax |
 | Liquidity | 50% (10,500,000) locked forever, single-sided, in one $MINE/IMD Uniswap v4 pool at launch |
-| Mining vault | 50% (10,500,000), minted by `MineVault` only as players convert what they earn in the game: at most 35,000 a day, whatever the rules contract asks, so it lasts at least 300 days (longer still: earnings a site's rate doesn't convert are never minted) |
+| Mining vault | 50% (10,500,000), minted by `MineVault` only as players convert what they earn in the game: at most 35,000 a day, whatever the rules contract asks, so it lasts at least 300 days |
 | Trading fee | Every swap pays 4% of its IMD side to `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` (taken by the pool's hook; the hook is renounced at launch: after the renounce only the current fee recipient can move the fees; nobody else can). The fees wait in the pool until someone calls `MineHook.collectProtocolFees(IMD)` (anyone may; it always pays the fee recipient): logged in with the project's wallet, the Mining Site panel shows an **Admin** box with the fees waiting and a **Claim fees** button, plus the treasury's balances and $MINE's numbers (`web/panel.js` `adminBox`, `web/chain.js` `adminStats`) |
 | Mining site | Opened once per wallet with ETH (0.005 at launch), paid to the treasury. Needed to convert earnings to $MINE. A new site is level 1 and converts 50% of what it earns; upgrades raise it to 60%, 70%, 85% and 100% at levels 2 to 5, for 4,620, 18,942, 77,662 and 318,415 $MINE (about $1,000 for all four at a $50,000 market cap) |
 | DEGEN levels | Every DEGEN starts at level 1; its holder raises it to level 5 for 2,310, 9,471, 38,831 and 159,207 $MINE (half a site's). The level stays with the DEGEN when it's sold, shows as its "Level" trait, and adds to its boost (below) |
 | Shop and tickets | Paid in $MINE through `MinePayments` at the game's prices (`web/shop.js` `CATALOG`, `web/zones.js` `ticket`): the shop's 75% burned and 25% to the treasury; rocket tickets (2,100 for Deepvein or Cinderfall, 210 for Red Mesa; one per trip out; a payment buys as many tickets as it covers, up to 5) and revives (420, to revive on the spot after dying on the home planet: kind 2 "revive") all to the treasury |
-| Idle mining | A signed-in player can deploy up to 4 of their other DEGENs to mine for them while they're online (connected and signed in): each earns its own daily cap (1,650 to 3,750 $MINE by its rarity and level, counted per token) spread over 24 hours, into the wallet's ledger total (not the player's own cap), and every idle rate slows evenly when the world's 35,000 a day is busy. Offline, nothing. At most 4 different DEGENs a wallet a UTC day. Rules below, under Idle mining |
+| Idle mining | A signed-in player can deploy up to 4 of their other DEGENs to mine for them while they're online (connected and signed in): each earns its own daily cap (1,650 to 3,750 $MINE by its rarity and level, counted per token) spread over 24 hours, into the wallet's ledger total (not the player's own cap), always at its full rate. Offline, nothing. At most 4 different DEGENs a wallet a UTC day. Rules below, under Idle mining |
 | Burns | Site upgrades and DEGEN levels burn 75% of what they cost and send 25% to the treasury, as the shop does. The token counts every mint against its 21M cap, so a burn is for good: the supply only ever shrinks from what was minted |
 | NFT: I'M DEGEN | "I'M DEGEN" (symbol DEGEN; the contract is `MineWorldCrafters`): 3,333 frogs, each a full Minecraft-style skin (64 x 64, with the second layer), drawn and stored entirely on chain, no two alike (every token has a different face and top). The NFT's picture is the skin as a "skin card"; the one a player wears is their miner in the game, the same skin pixel for pixel, and boosts their mining by its rarity and level (below). Traits: background, skin (5 greens; Ice, Purple and Stone are Rare, Gold Legendary), eyes, mouth, cheeks, top (58: hoodies, tees, jackets, tracksuits, suits, miner's overalls and vests, sweaters, flannels; royal robes, space suits and iron armour Rare, gold armour Legendary), bottoms, shoes, headwear (caps, beanies, hard hats with a lamp, headphones, goggles, a straw hat, the hood on hoodies; wizard hat and viking helmet Rare, the crowns Legendary) and an accessory; about 69% Common, 25% Rare, 6% Legendary. Free blind mint for wallets only (no contracts, so one transaction can't sweep it through throwaway contracts), at most 3 a wallet (the owner can change that, 1 to 50, or set a price, paid straight to the treasury), then revealed: the owner publishes the secret committed at deploy, and the seed waits for the next block's hash, which anyone then locks in (`seal`) within about 26 seconds (the panel sends both at once), so nobody can pick looks or see them before everyone else. If nobody locks it in, only the owner can move it on to a new block, in public, at most 3 times; anyone can run `tools/sealer.sh` to lock it in the moment it can be. 5% royalty, enforced through the transfer validator the owner picks (it can relax that, in public) |
 | Owner and treasury | `0x6e85Dc9f094b7DD35a2A981AbBd0AC9C496670eD` owns the vault, the three upgradeable contracts and I'M DEGEN, and is the treasury (site sales, the unburned share of upgrades and payments, tickets, any mint price, the royalty) and the fee recipient. Ownership moves in two steps and can't be renounced; it can be handed to a multisig or a timelock (I'M DEGEN's only to a wallet that can sign in to OpenSea Studio: launch step 10). A treasury must take ETH where ETH is sent to it (MiningSites and I'M DEGEN refuse one that doesn't) |
@@ -229,8 +229,9 @@ a leaked server key could take is the vault's 35,000 a day.
 natural blocks and defeating monsters, at the rates in `web/rewards.js` (grass, dirt and sand 0.01; stone and logs 0.05;
 coal 0.3, iron 0.8, gold 2, diamond 6, a $MINE crystal 15; monsters 0.6 to 2.5; Deepvein pays 2x). Blocks players placed
 pay nothing. A player earns up to 1,500 $MINE a UTC day by their own play before boosts (`DAILY_EARN_CAP`, times a
-zone's `capMul` in `web/zones.js`, 1 everywhere for now), each of their deployed DEGENs up to its own cap by idle mining
-(below), and everyone together at most 35,000 a day, boosts and idle mining included. The ledger counts ten-thousandths
+zone's `capMul` in `web/zones.js`, 1 everywhere for now), and each of their deployed DEGENs up to its own cap by idle
+mining (below). What everyone earns together isn't capped (since 2026-10-18); converting is: at most 35,000 a day for
+everyone (below, under Converting). The ledger counts ten-thousandths
 of a $MINE, so a percentage boost on a 0.01 block is kept exactly. To add an activity or change a rate, edit
 `web/rewards.js` and deploy the server and the site.
 
@@ -258,7 +259,11 @@ total (in wei) and `MiningSites.claim` converts the earnings it hasn't converted
 1, up to 100% at level 5) at the moment it claims, so an upgrade before claiming converts everything still unclaimed at
 the better rate. It pays within a per-wallet daily cap (3,500 $MINE, the most it allows, raised from 1,500 on 2026-10-17; idle mining counts in
 the wallet's total, and a player's own cap can be above it too, so what a wallet earns above it waits for later days)
-and one across everyone (35,000, the vault's daily limit); the owner can change the caps and pause claims. The panel
+and one across everyone (35,000, the vault's daily limit); the owner can change the caps and pause claims. What
+everyone earns isn't capped, so the 35,000 is first come, first served: once a UTC day's conversions reach it,
+converting opens again at 00:00 UTC, and what isn't converted waits on the ledger for later days. Players together
+can now earn more than the vault can ever mint (10,500,000 in all), so an earned balance isn't a promise that all of it
+converts. The panel
 shows both what you earned and what you'll receive. A leaked server key can take at most the daily caps until it's
 paused and replaced.
 
@@ -299,10 +304,9 @@ never paid later. The world server pays every 5 minutes (`IDLE_TICK_MS`: a Durab
 connected player has DEGENs deployed, so an empty room sleeps), one payment covering at most 10 minutes
 (`IDLE_GAP_MAX_MS`), and on recall, sign-out or disconnect.
 
-**Fair share.** Everyone's 35,000 a day holds for everything. Each tick the room works out what the world can still pay
-this tick (what's left of the 35,000, times the tick's length, over the time left until 00:00 UTC) and what all online
-deployed DEGENs want; when they want more, each gets the same share of what it wants, so every idle rate slows evenly
-and the 35,000 lasts the day. Manual mining pays as before, from the same total.
+**Full rate.** What everyone earns together isn't capped (since 2026-10-18), so each tick every online deployed DEGEN
+gets all it earned, however busy the day: no idle rate ever slows. The vault's 35,000 a day limits converting only
+(above, under Converting). Manual mining pays as before.
 
 **You + 4, per day.** At most 4 deployed at once, and at most 4 distinct DEGENs earn as one wallet's idle miners in a
 UTC day: swapping in fresh DEGENs adds no caps, and a 5th distinct DEGEN that day is refused. A deployed DEGEN is one
@@ -317,8 +321,8 @@ them costs one alarm every 5 minutes, and one message to each such player.
 
 In the game (`web/bots.js`), the Mining Site panel's **Idle mining** box deploys and recalls DEGENs (each with its cap
 a day, its rate an hour and what it earned today), remembers them per wallet and deploys them again after a sign-in,
-and gives back the pickaxes the old bots held (**Take back**); a HUD line shows them (and the share when the day is
-busy). The players' guide (`web/docs.html#bots`) explains it all for players.
+and gives back the pickaxes the old bots held (**Take back**); a HUD line shows them and what they earned today. The
+players' guide (`web/docs.html#bots`) explains it all for players.
 
 ## Contracts
 
@@ -452,10 +456,11 @@ Knock-outs, loot chests and revives on the wire (the rest of the protocol is in 
 | room → game | `["revived", x, y, z, txHash]` / `["reviveno", why, txHash, retry]` | Done, the room has you there / refused: retry 1 the chain couldn't be read, 2 the payment wasn't used (it can pay for a later revive), 0 never |
 | room → game | `["welcome", ..., { practice, ticketsFree, reviveFree }]` | Whether revives are free right now |
 
-`GET /count` answers `{ online, sites, mined, day, cap }` for the title screen: the players connected, the mining sites
-open, and everyone's earnings so far today (`mined`, in $MINE, on UTC day `day`, out of `cap`). The ticker across the
-top of the screen shows what's left of today's cap, when it resets, the $MINE left in the mining vault and the sites
-open; in the world it's kept up to date by the welcome's `world: [units, day]` and `["world", units, day]`, which the
+`GET /count` answers `{ online, sites, mined, day }` for the title screen: the players connected, the mining sites
+open, and everyone's earnings so far today (`mined`, in $MINE, on UTC day `day`; there's no cap on it). The ticker
+across the top of the screen shows everyone's earnings today, the most that converts a day (35,000), when the daily
+limits reset (00:00 UTC), the $MINE mining sites have paid out in total, the $MINE left in the mining vault and the
+sites open; in the world it's kept up to date by the welcome's `world: [units, day]` and `["world", units, day]`, which the
 room sends everyone at most every 15 seconds while people earn. Old
 logs can't be read from Cloudflare (the official RPC answers its log queries with 429, publicnode serves none), so the
 room keeps the wallets it has seen with a site (`site:<wallet>`, and how many under `sitecount`): it checks
@@ -464,6 +469,6 @@ room keeps the wallets it has seen with a site (`site:<wallet>`, and how many un
 whose wallet never signs in to the game isn't counted. `sites` is null until the first count has worked.
 
 For tests on your own machine, `npx wrangler dev --var DEV_HOOKS:1` turns on two dev hooks, `["dev", "today", mine]`
-and `["dev", "world", mine]` (set a signed-in wallet's earnings today, or everyone's), so the daily caps can be tried
-without mining for hours. They only answer connections made to that local server; never put `DEV_HOOKS` in
+and `["dev", "world", mine]` (set a signed-in wallet's earnings today, or everyone's for the ticker), so the daily cap
+and the ticker can be tried without mining for hours. They only answer connections made to that local server; never put `DEV_HOOKS` in
 `wrangler.toml`.

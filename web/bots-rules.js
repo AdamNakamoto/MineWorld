@@ -1,9 +1,8 @@
 // Idle mining: a signed-in player deploys up to BOT_MAX of their other I'M DEGENs to mine for them, as Courier World's
 // couriers work at a post office. While the player is online (connected and signed in: idle or not, the tab hidden or
 // not), each deployed DEGEN earns its own daily cap (rewards.js DAILY_EARN_CAP plus its DEGEN's cap boost) spread over
-// 24 hours, paid by the world server every IDLE_TICK_MS into the wallet's ledger total and counted by token id. When
-// more is wanted than everyone's WORLD_DAILY_CAP has left for the rest of the UTC day, every idle rate slows evenly
-// (a fair share) so it lasts until 00:00 UTC. Offline, nothing. Shared by the game (web/bots.js) and the world server
+// 24 hours, paid by the world server every IDLE_TICK_MS into the wallet's ledger total and counted by token id.
+// Offline, nothing. Shared by the game (web/bots.js) and the world server
 // (multiplayer/src/index.js). docs/AUTOPILOT.md has the whole design and the protocol.
 
 export const BOT_MAX = 4; // DEGENs deployed at once, and distinct DEGENs that may earn as one wallet's in a UTC day

@@ -65,7 +65,7 @@ kbd { font-family: var(--px); font-size: 11px; padding: 0 4px; border: 2px solid
 .menu-links { margin: 10px 0 2px; }
 .fine { font-size: 13px; color: var(--muted); margin-top: 18px; }
 
-/* ---------------------------------------------------------------- the ticker: $MINE left to mine today, scrolling */
+/* ---------------------------------------------------------------- the ticker: $MINE mined today, the vault, scrolling */
 body.ticking { --tick: 28px; }
 .ticker { position: fixed; top: 0; left: 0; right: 0; height: 28px; z-index: 8; overflow: hidden; pointer-events: none;
   background: rgba(8, 11, 14, 0.82); border-bottom: 2px solid #3a2f0e; font-size: 15px; font-weight: 700; line-height: 26px;

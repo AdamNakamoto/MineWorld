@@ -116,12 +116,12 @@
 
 <h3>What earns $MINE</h3>
 <p>Once you're signed in, you earn $MINE for real play. Breaking the planet's own blocks pays: dirt and sand a tiny amount, stone and logs a little more, and ore the most. The rarer the ore, the more it pays. Beating monsters pays too. Blocks that players placed pay nothing when they're broken again, and neither do leaves or plants. If you have more I'M DEGENs, you can deploy up to 4 of them for <a href="#bots">idle mining</a>: they earn by the hour while you're online, even while you rest. Nothing pays while you're offline.</p>
-<p>Everything you earn on Deepvein pays double. Beating Ashgrim, the boss on Cinderfall, shares 150 $MINE among the signed-in players who hit it, by the damage each one did. The world server keeps the count: up to 1,500 $MINE a UTC day for what you earn yourself (wearing an I'M DEGEN can raise that), a cap of its own for each deployed DEGEN, and 35,000 for all players together.</p>
+<p>Everything you earn on Deepvein pays double. Beating Ashgrim, the boss on Cinderfall, shares 150 $MINE among the signed-in players who hit it, by the damage each one did. The world server keeps the count: up to 1,500 $MINE a UTC day for what you earn yourself (wearing an I'M DEGEN can raise that), and a cap of its own for each deployed DEGEN. What all players earn together has no limit.</p>
 
 <h3>Turning earnings into $MINE</h3>
 <p>To get your earnings as $MINE in your wallet, you need a mining site. It costs 0.005 ETH, once per wallet, and it stays with that wallet. When you press <b>Convert to $MINE</b>, your site converts everything you haven't converted yet: 50% of it at level 1, and up to 100% at level 5 once you upgrade. The share your site doesn't convert isn't saved for later. It stays in the mining vault.</p>
-<p>Each wallet can receive up to 3,500 $MINE a day this way, idle mining included, and all players together 35,000. Whatever a day's limits don't cover waits for the next day.</p>
-<p>A ticker across the top of the screen shows how much of today's 35,000 $MINE is left to mine, how much was mined so far today, when the day resets (00:00 UTC), how much $MINE is left in the mining vault (the $MINE set aside for players), and how many mining sites are open. The title screen also shows how many people are mining right now.</p>
+<p>Each wallet can receive up to 3,500 $MINE a day this way, idle mining included, and all players together 35,000. That 35,000 is first come, first served: once the day's conversions reach it, converting opens again at 00:00 UTC. Whatever a day's limits don't cover waits for a later day.</p>
+<p>A ticker across the top of the screen shows how much $MINE was mined today, the most that converts in a day (35,000 $MINE), when the daily limits reset (00:00 UTC), how much $MINE is left in the mining vault (the $MINE set aside for players), and how many mining sites are open. The title screen also shows how many people are mining right now.</p>
 
 <h3>Quick start</h3>
 <ul>
@@ -170,7 +170,7 @@
 <li><b>The way to safety:</b> under your position, an arrow points to the nearest safe zone with how many blocks away it is: the town on the home planet (no monsters, and nobody can dig or build), or the landing pad on the other planets (no mining or building, no monsters nearby, and no fighting in Red Mesa). Follow the arrow, or click it to go there at once (like <b>/spawn</b>). While you're more than 40 blocks away, a green beam of light stands over it. Inside, it says <b>Safe here</b>.</li>
 <li><b>Top right:</b> how many players are online, and the <b>Mining Site</b>, <b>Inventory</b>, <b>Shop</b>, <b>Chat</b> and <b>View</b> buttons.</li>
 <li><b>Bottom:</b> your hearts (health) and your food bar side by side, your armor above them when you wear some, and the hotbar: the first 9 slots of your bag.</li>
-<li><b>Across the very top:</b> the ticker, with the $MINE left to mine today.</li>
+<li><b>Across the very top:</b> the ticker, with the $MINE mined today.</li>
 </ul>
 
 <h3>The menu</h3>
@@ -417,9 +417,9 @@
 <tr><td>You, for what you earn yourself, before boosts</td><td class="num">1,500 $MINE</td></tr>
 <tr><td>You, wearing an I'M DEGEN (by its rarity and level)</td><td class="num">1,650 to 3,750 $MINE</td></tr>
 <tr><td>Each DEGEN deployed for idle mining, set by that DEGEN and counted for it</td><td class="num">1,650 to 3,750 $MINE</td></tr>
-<tr><td>Everyone together, boosts and idle mining included</td><td class="num">35,000 $MINE</td></tr>
+<tr><td>Everyone together, boosts and idle mining included</td><td class="num">No limit</td></tr>
 </table></div>
-<p>All caps reset at 00:00 UTC. Once a cap is reached, nothing more pays against it until the reset (blocks, monsters and boss shares alike), and nothing is saved up for later. Your own cap counts only what you earn yourself: idle mining never uses it up, and your deployed DEGENs keep earning to their own caps after you reach yours. A deployed DEGEN at its cap stops until the reset. The game tells you when you reach your own cap, and when everyone's 35,000 is used up. The ticker at the top of the screen shows how much of today's 35,000 is left to mine.</p>
+<p>All caps reset at 00:00 UTC. Once a cap is reached, nothing more pays against it until the reset (blocks, monsters and boss shares alike), and nothing is saved up for later. Your own cap counts only what you earn yourself: idle mining never uses it up, and your deployed DEGENs keep earning to their own caps after you reach yours. A deployed DEGEN at its cap stops until the reset. The game tells you when you reach your own cap. The ticker at the top of the screen shows how much everyone has mined today.</p>
 <p>These caps are on what you earn in the world. Converting your earnings to $MINE has its own daily limits (see <a href="#sites">Mining sites</a>).</p>
 
 <h3>Boosts raise your cap</h3>
@@ -429,7 +429,7 @@
 <li><b>$MINE:</b> every block, monster and boss share pays from +5% to +70% more.</li>
 <li><b>Speed:</b> blocks break from +5% to +70% faster.</li>
 </ul>
-<p>Boosts count only while you're signed in and wearing the DEGEN, and the world server checks on chain that it's yours. An NFT in your wallet earns nothing by itself. A DEGEN deployed for <a href="#bots">idle mining</a> earns only while you're online, by its own daily cap, never with the boost of the DEGEN you wear. Across all slots, boosts top out at +150% speed, +150% $MINE and +300% daily cap (6,000 $MINE a day). For now only the DEGEN slot is live; the other slots (Skin, Companion, Aura, Vehicle) show <b>Coming soon</b>. Everyone's 35,000 a day holds, whatever anyone's boost.</p>
+<p>Boosts count only while you're signed in and wearing the DEGEN, and the world server checks on chain that it's yours. An NFT in your wallet earns nothing by itself. A DEGEN deployed for <a href="#bots">idle mining</a> earns only while you're online, by its own daily cap, never with the boost of the DEGEN you wear. Across all slots, boosts top out at +150% speed, +150% $MINE and +300% daily cap (6,000 $MINE a day). For now only the DEGEN slot is live; the other slots (Skin, Companion, Aura, Vehicle) show <b>Coming soon</b>.</p>
 
 <h3>The world server checks every earning</h3>
 <div class="grid">
@@ -480,7 +480,7 @@
 <tr><td>Your wallet</td><td class="num">3,500</td></tr>
 <tr><td>Everyone together</td><td class="num">35,000</td></tr>
 </table></div>
-<p>Both limits reset at 00:00 UTC. 35,000 is also the most the mining vault can mint in a day. If a limit holds a conversion back, you get what fits. Only the earnings that payment covers count as converted, and the rest waits for a later day. The panel shows <b>Your conversions today</b> and <b>Everyone's conversions today</b>.</p>
+<p>Both limits reset at 00:00 UTC. 35,000 is also the most the mining vault can mint in a day. What all players earn together has no limit, so the 35,000 is first come, first served: once the day's conversions reach it, nobody can convert more until 00:00 UTC. Players together can earn more than the vault mints, so a big balance can take many days to convert, and the vault holds 10,500,000 $MINE in all: an earned balance isn't a promise that all of it converts. If a limit holds a conversion back, you get what fits. Only the earnings that payment covers count as converted, and the rest waits for a later day. The panel shows <b>Your conversions today</b> and <b>Everyone's conversions today</b>.</p>
 <p>What your DEGENs earn by <a href="#bots">idle mining</a> goes into your wallet's total, so it converts like your own earnings, at your site's rate, within the same 3,500 a day. You can earn more than that in a day: your own cap alone can be higher, and idle mining adds more. The rest stays on the ledger and converts on later days.</p>
 <p>The owner can pause converting (for example, if the server's signing key were ever exposed). While it's paused, your earnings stay on the ledger, and sites can still be opened and upgraded.</p>
 
@@ -558,7 +558,7 @@
 <tr><td>Rare</td><td class="num">1,875</td><td class="num">2,025</td><td class="num">2,325</td><td class="num">2,775</td><td class="num">3,375</td></tr>
 <tr><td>Legendary</td><td class="num">2,250</td><td class="num">2,400</td><td class="num">2,700</td><td class="num">3,150</td><td class="num">3,750</td></tr>
 </table></div>
-<div class="note">Boosts only add to what you do. A DEGEN in your wallet earns nothing by itself, and a deployed one earns only while you're online. Guests earn nothing, so they get no boost. The limit of 35,000 $MINE a day for all players together still holds.</div>
+<div class="note">Boosts only add to what you do. A DEGEN in your wallet earns nothing by itself, and a deployed one earns only while you're online. Guests earn nothing, so they get no boost.</div>
 <p>Boosts raise what the game counts as your earnings. To get $MINE in your wallet, you still convert those earnings in the Mining Site panel, at your mining site's rate.</p>
 
 <h3>Levels</h3>
@@ -623,7 +623,7 @@
 <tr><td>Legendary</td><td class="num">2,250 / 93.75</td><td class="num">2,400 / 100</td><td class="num">2,700 / 112.5</td><td class="num">3,150 / 131.25</td><td class="num">3,750 / 156.25</td></tr>
 </table></div>
 <p>So a Common at level 1 earns 68.75 $MINE an hour. Online for 6 hours, it earns 412.5. Online for the whole UTC day, it reaches its 1,650 cap just as the day ends at 00:00 UTC.</p>
-<p>Wear one DEGEN, deploy 4 more and stay online all day, and all five can reach their caps. With five Commons at level 1, that's up to 1,650 from your own mining and 4 × 1,650 = 6,600 from idle mining (unless the day is busy: see <a href="#bots-share">the world's fair share</a>).</p>
+<p>Wear one DEGEN, deploy 4 more and stay online all day, and all five can reach their caps. With five Commons at level 1, that's up to 1,650 from your own mining and 4 × 1,650 = 6,600 from idle mining. However many players are mining, every deployed DEGEN earns its full rate.</p>
 <ul>
 <li><b>Paid every 5 minutes:</b> the world server pays idle mining into your wallet's total on the ledger every 5 minutes, and when you recall a DEGEN. It converts like your own earnings, at your mining site's rate.</li>
 <li><b>Counted for the DEGEN:</b> a deployed DEGEN's day is counted for that DEGEN, not for your wallet. A DEGEN that already earned today keeps its count if it moves to another wallet. At its cap, it stops until 00:00 UTC.</li>
@@ -638,10 +638,6 @@
 <p>Your deployed DEGENs earn while your game is connected to the world and signed in. You don't have to move: standing still, chatting, or leaving the game open in a background tab all count. The game checks in with the world server by itself about every 45 seconds.</p>
 <p>Offline, nothing pays. You're offline when you sign out, close the tab or the browser, lose your connection, or your phone goes to sleep. On a phone, the browser usually pauses the game when you switch to another app, and that counts as offline too. If the world server hasn't heard from your game for 2½ minutes, it stops paying. Time away is never paid later. When you're back and signed in, the game deploys your DEGENs again and they carry on.</p>
 
-<h3 id="bots-share">The world's fair share</h3>
-<p>All players together can earn at most 35,000 $MINE a day, and idle mining shares it with everyone's own mining. Every 5 minutes, the world server works out how much of the 35,000 is left for the rest of the UTC day. If all deployed DEGENs together want more than that, every one of them slows down by the same share, so the 35,000 lasts until 00:00 UTC. At a share of 60%, a DEGEN that earns 68.75 an hour earns 41.25.</p>
-<p>When the share is below 100%, the line by your earnings shows it. What you mine yourself pays as usual, from the same 35,000. Once the 35,000 is used up, nothing more pays until 00:00 UTC.</p>
-
 <h3>Pickaxes from the old bots</h3>
 <p>Idle mining replaced the autopilot bots, which dug beside you with pickaxes from your bag. Any pickaxe a bot still held comes back to your bag, with its wear. If your bag is full, it waits in the <b>Idle mining</b> box until you make room and press <b>Take back</b>.</p>
 
@@ -651,8 +647,6 @@
 <tr><td>You go offline: you sign out, close the tab, lose your connection, or your phone sleeps</td><td>Your DEGENs are paid up to then and stop. Nothing pays while you're away. When you sign in again in this browser, the game deploys them again.</td></tr>
 <tr><td>You sign in somewhere else</td><td>Your DEGENs are recalled from the old place. A wallet earns in one place at a time.</td></tr>
 <tr><td>A DEGEN reaches its daily cap</td><td>That DEGEN stops earning until 00:00 UTC.</td></tr>
-<tr><td>The day is busy</td><td>Every deployed DEGEN slows down by the same share, so everyone's 35,000 lasts the day.</td></tr>
-<tr><td>Everyone's 35,000 is used up</td><td>All idle mining stops until 00:00 UTC.</td></tr>
 <tr><td>A DEGEN leaves your wallet</td><td>That DEGEN is recalled.</td></tr>
 <tr><td>The world server is very busy that day</td><td>It takes no new deploys for the rest of the UTC day, and the game tries again later. DEGENs already deployed keep earning. This keeps the world within its free daily limits.</td></tr>
 </table></div>
@@ -805,7 +799,7 @@
 <h3>Deepvein, the 2x Mine Zone</h3>
 <ul>
 <li><b>Double pay:</b> every natural block you break and every monster you beat here pays 2x.</li>
-<li><b>Same caps:</b> no daily cap doubles. Yours stays at 1,500 $MINE a UTC day before boosts, and all players together still share 35,000. Idle mining earns the same here as anywhere.</li>
+<li><b>Same caps:</b> no daily cap doubles. Yours stays at 1,500 $MINE a UTC day before boosts. Idle mining earns the same here as anywhere.</li>
 <li><b>Richer rock:</b> diamond ore, gold ore and $MINE crystal ore are three times as common, iron ore twice and coal ore 1.5x. Diamond, $MINE crystal, gold and iron ore also show up closer to the surface. Deep rock fills the lower layers and shows in dark patches on the surface. It takes 1.5x as long to break as stone.</li>
 <li><b>Tougher monsters:</b> monsters come day and night, not only at night or underground. Up to 5 can come at once for each player instead of 3, about every 10 seconds instead of every 20, with 1.5x health and 1.5x damage.</li>
 <li><b>Weekly regrowth:</b> every Monday at 00:00 UTC, Deepvein grows back as new. Every block anyone mined or placed that week is reset, so don't build anything here that you want to keep.</li>
@@ -887,7 +881,7 @@
 <div class="tile"><b>50% mining vault</b><br>10,500,000 $MINE are minted only when players convert their earnings at a mining site. The vault mints at most 35,000 a day, so mining it all takes at least 300 days.</div>
 <div class="tile"><b>4% trading fee</b><br>Every trade in the pool pays 4% of its IMD side to the fee wallet. The token itself has no transfer tax.</div>
 </div>
-<p>The vault lasts even longer than 300 days, because the earnings a site's rate doesn't convert are never minted. The scrolling ticker at the top of the screen shows the $MINE mining sites have earned in total (everything conversions have minted so far) and how much is left in the mining vault; the title screen shows that total too. You can also read both on chain on the MineVault contract: <b>released</b> (minted so far) and <b>remaining</b> (left to mine).</p>
+<p>The earnings a site's rate doesn't convert are never minted. The scrolling ticker at the top of the screen shows the $MINE mining sites have earned in total (everything conversions have minted so far) and how much is left in the mining vault; the title screen shows that total too. You can also read both on chain on the MineVault contract: <b>released</b> (minted so far) and <b>remaining</b> (left to mine).</p>
 
 <h3>Where spent $MINE goes</h3>
 <div class="scroll"><table>

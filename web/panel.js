@@ -8,7 +8,7 @@ import { formatEther } from "https://esm.sh/viem@2";
 import { explain } from "./chain.js";
 import { createTrade } from "./trade.js";
 import { cardSvg, sealedSvg, TOPS, HEADWEAR, rarityOf, RARITIES, ROOKIE } from "./degen-skin.js";
-import { fmtMine, unitsToWei, BLOCK_REWARDS, MOB_REWARDS, DAILY_EARN_CAP, WORLD_DAILY_CAP, ZONE_PAY } from "./rewards.js";
+import { fmtMine, unitsToWei, BLOCK_REWARDS, MOB_REWARDS, DAILY_EARN_CAP, VAULT_DAILY_LIMIT, ZONE_PAY } from "./rewards.js";
 import { SLOTS, SLOT_KEYS, TIERS, CRAFTER_LEVELS, MAX, NO_BOOST, issued, itemBoost, describe, dailyCap } from "./boosts.js";
 import { BOT_MAX, idleRate } from "./bots-rules.js";
 import { itemName } from "./blocks.js";
@@ -23,8 +23,7 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 /// wear(traits, id), leveled(tokenId, level) (a DEGEN was just leveled up), sitesOpen() (mining sites open, as the
 /// world server counts them, or null), refreshCount() (ask the world server again, at most once a minute),
 /// siteOpened() (this wallet just opened its site: the world server counts it), bots: the Idle mining box's { list()
-/// (bots.js roster), today(tokenId) ([units earned today, its cap or null]), share() (the fair share idle mining last
-/// paid at, or null), cannot(tokenId) (why it can't be deployed now, or null), wearWhy(tokenId) (why it can't be worn
+/// (bots.js roster), today(tokenId) ([units earned today, its cap or null]), cannot(tokenId) (why it can't be deployed now, or null), wearWhy(tokenId) (why it can't be worn
 /// now, or null), deploy(tokenId) (returns why not, or null), recall(tokenId), returned() (pickaxes the old autopilot
 /// bots held, waiting for room in the bag: { i, id, d, max, name, icon }), takeBack(i) } }. The ledger's amounts are in
 /// units (rewards.js UNIT).
@@ -429,7 +428,7 @@ export function createPanel(game) {
   /// The Idle mining box (bots.js, docs/AUTOPILOT.md): your DEGENs but the one you wear (the deployed ones first, with
   /// their state), each with its cap a day and its rate an hour (its DEGEN's cap boost raises both), what it earned
   /// today of that cap, and Deploy or Recall; the pickaxes the old autopilot bots held that wait for room in your bag;
-  /// and the rules (online only, BOT_MAX a day, the fair share and the one now, the conversion limit per wallet).
+  /// and the rules (online only, BOT_MAX a day, the conversion limit per wallet).
   function idleBox(s, L) {
     const M = s?.crafters, B = game.bots;
     if (!M || !B || !chain.account) return "";
@@ -459,7 +458,7 @@ export function createPanel(game) {
       </div>`;
     };
     const rows = [...roster.map((r) => row(r.tok, r)), ...free.map((m) => row(m.id, null))].join("");
-    const returned = B.returned(), live = roster.filter((r) => r.live).length, share = B.share();
+    const returned = B.returned(), live = roster.filter((r) => r.live).length;
     const waiting = returned.length ? `<h3>Pickaxes back from your bots</h3><p class="note">The autopilot bots held these before idle mining, and your bag
       was full when they came back: take them when there's room.</p>
       <div class="pick-list">${returned.map((p) => `<button class="pick-btn" data-act="bottake" data-i="${p.i}"><img src="${p.icon}" alt="">${esc(p.name)} · ${p.max - p.d}/${p.max} · Take back</button>`).join("")}</div>` : "";
@@ -477,9 +476,6 @@ export function createPanel(game) {
       Logged off, the tab closed or the phone asleep, they earn nothing, and that time isn't made up later.</p>
       <p class="note">At most ${BOT_MAX} at once, and ${BOT_MAX} different DEGENs a day (UTC): swapping in fresh ones doesn't add caps. The DEGEN you wear
       (or wore while earning today) can't be deployed, and one that idle-mined today can't be worn until tomorrow.</p>
-      <p class="note">A fair share: everyone's ${WORLD_DAILY_CAP.toLocaleString("en-US")} $MINE a day is shared, so on a busy day every deployed DEGEN's
-      rate slows by the same share and it lasts until 00:00 UTC (what players mine themselves counts too).${share === null ? ""
-        : share < 1 ? ` Right now: ${Math.floor(share * 100)}% of the full rate.` : " Right now: the full rate."}</p>
       ${s.walletCap !== undefined ? `<p class="note">Converting is limited to ${mine(s.walletCap)} $MINE a day per wallet: what you and your DEGENs earn
       above it waits for later days.</p>` : ""}
     </section>`;
@@ -507,7 +503,7 @@ export function createPanel(game) {
       ${rows}
       <p class="note">One NFT a slot, and the slots add up. They only add to what you do: blocks break faster, every block, monster and boss share
       pays more, and your daily cap (${DAILY_EARN_CAP.toLocaleString("en-US")} $MINE) is higher. Nothing pays for holding. At most +${MAX.speed}%
-      speed, +${MAX.earn}% $MINE and +${MAX.cap}% cap; everyone's ${WORLD_DAILY_CAP.toLocaleString("en-US")} $MINE a day still holds.</p>
+      speed, +${MAX.earn}% $MINE and +${MAX.cap}% cap.</p>
       <details><summary class="note">DEGEN boosts (% speed / $MINE / daily cap): rarity and level add up</summary>${table}
       <p class="note">Each of your DEGENs shows its rarity and level below (I'M DEGEN, Levels); levels are bought there with $MINE, and stay
       with the DEGEN.</p></details>
@@ -518,7 +514,7 @@ export function createPanel(game) {
     return `<section class="box"><h3>How $MINE works</h3>
       <div class="kv"><span>Supply</span><b>21,000,000 $MINE in all (upgrades and the shop burn 75% of what they cost)</b></div>
       <div class="kv"><span>Liquidity</span><b>50% (10,500,000), locked forever in the $MINE/IMD pool</b></div>
-      <div class="kv"><span>Mining vault</span><b>50% (10,500,000), minted only as players convert, at most ${WORLD_DAILY_CAP.toLocaleString("en-US")} a day</b></div>
+      <div class="kv"><span>Mining vault</span><b>50% (10,500,000), minted only as players convert, at most ${VAULT_DAILY_LIMIT.toLocaleString("en-US")} a day</b></div>
       <div class="kv"><span>Trading fee</span><b>4% per trade</b></div>
       <p class="note">No yield farming: holding an NFT pays nothing. $MINE comes only from the world: what you mine yourself, and what your
       deployed DEGENs idle-mine while you're online (offline, nothing).</p></section>`;

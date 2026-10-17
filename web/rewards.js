@@ -3,9 +3,10 @@
 // the room and the site. Nothing pays for holding: no auto yield farming. Idle mining (bots-rules.js) pays the DEGENs a
 // player deploys by time, only while the player is online, each up to a daily cap of its own spread over 24 hours.
 //
-// Sized for the 21,000,000 $MINE supply: half of it (10,500,000) is the mining vault, and WORLD_DAILY_CAP below pays it
-// out over at least 300 days. NFT boosts (boosts.js) add a percentage on top of these rates and raise a player's
-// daily cap (a deployed DEGEN's cap boost raises its own cap); the world's cap holds whatever anyone's boost.
+// Sized for the 21,000,000 $MINE supply: half of it (10,500,000) is the mining vault, which mints at most
+// VAULT_DAILY_LIMIT below a day for everyone's conversions together, so it lasts at least 300 days. NFT boosts
+// (boosts.js) add a percentage on top of these rates and raise a player's daily cap (a deployed DEGEN's cap boost raises
+// its own cap).
 //
 // The ledger counts UNIT ten-thousandths of a $MINE (whole numbers only), so the smallest reward (0.01) with a
 // percentage boost on top (+5% = 0.0105) is still counted exactly; every amount here has at most four decimals.
@@ -45,10 +46,11 @@ export const MOB_REWARDS = { mudling: 0.6, crawler: 0.8, rattler: 1, golem: 2.5 
 /// and for everyone; this one is the room's.)
 export const DAILY_EARN_CAP = 1_500;
 
-/// The most all players together earn in a UTC day, idle mining included, boosts or not: once it's reached, nothing
-/// more is counted until 00:00 UTC. It matches MiningSites' daily cap across everyone, so a day's earnings can always
-/// be converted the same day; at this rate the 10.5M mining vault lasts at least 300 days.
-export const WORLD_DAILY_CAP = 35_000;
+/// The most $MINE the mining vault mints in a UTC day, for all players' conversions together (MineVault.DAILY_LIMIT,
+/// fixed forever; MiningSites' daily cap across everyone matches it), so the 10.5M lasts at least 300 days. What all
+/// players together earn isn't capped (since 2026-10-18; each player's own cap still holds): once a day's conversions
+/// reach this, converting opens again at 00:00 UTC, and what's left waits on the ledger.
+export const VAULT_DAILY_LIMIT = 35_000;
 
 /// The ledger's unit: 1 $MINE is UNIT of them. Every amount the room sends (earn, signedin, boost, bossreward, botok,
 /// idle) is in these.

@@ -43,9 +43,9 @@ the vault caps what can be minted at 35,000 a day.
    sword. Each wallet earns at most a daily cap from its own play (server-side: `DAILY_EARN_CAP` 1,500 times its NFT
    cap boost and the zone's `capMul`); its idle miners (up to 4 other DEGENs of the wallet, deployed while the player
    is online: see `docs/AUTOPILOT.md`) earn into the same wallet total on top of that, by time, each its own daily cap
-   spread over 24 hours and counted by token id; and everyone together, manual and idle, earns at most
-   `WORLD_DAILY_CAP` (35,000) a day (every idle rate slows evenly when the day is busy, so it lasts until 00:00 UTC).
-   The ledger counts ten-thousandths of a $MINE (`UNIT`); vouchers are in wei.
+   spread over 24 hours and counted by token id, always at its full rate. What everyone earns together, manual and
+   idle, isn't capped (since 2026-10-18): the vault mints at most `VAULT_DAILY_LIMIT` (35,000) a day for everyone's
+   conversions, first come, first served (step 4). The ledger counts ten-thousandths of a $MINE (`UNIT`); vouchers are in wei.
 5. NFT boosts (`web/boosts.js`): the NFTs a signed-in player uses (one per slot: DEGEN, skin, companion, aura,
    vehicle; only the DEGEN is out) add a % to their block-breaking speed (allowed for in the server's break-rate
    check), to every block, monster and boss share they earn, to their daily cap, and (client only) to walking. Totals
@@ -171,7 +171,7 @@ reconnected while down), so the next position is no jump. Free (no hash) before 
 player was up first) answers retry 2, and the game keeps it for the next revive.
 
 Protocol additions (client → room):
-`["hello", {zone}]`, `["zone", key]` (fly), `["ticket", txHash, zone]`, `["bosshit", damage]`, `["pvp", target,
+`["hello", {zone, v}]` (`v`: rules.js GAME_VERSION; an older game is told to reload), `["zone", key]` (fly), `["ticket", txHash, zone]`, `["bosshit", damage]`, `["pvp", target,
 damage]`, `["dead", stacks, x, y, z, killer]` (any knock-out; a game from before may still send `["pvpdead", killer,
 stacks]`), `["respawn"]`, `["revive", txHash | null]`, `["loot", chestId]`; (room → client): `["zoned", key, players,
 at]`, `["tickets", { zone: count }]` (after signing in, buying and using them), `["ticketok", zone, count, txHash,
@@ -191,8 +191,8 @@ only while someone is in the fight. Idle mining's messages (`bot`, `botok`, `bot
 ## Ledger units and boosts on the wire
 
 Every $MINE amount the room sends is in units of 1/10,000 $MINE (`rewards.js` UNIT): `["earn", units, today, total,
-what]` (`what` a block id, a monster, "boss", or "cap" / "worldcap" with 0), `["signedin", wallet, token, today, total,
-dailyCap, name]`, `["bossreward", units, ...]`, `["idle", [[tokenId, units, today, cap], ...], walletTotal, share]`
+what]` (`what` a block id, a monster, "boss", or "cap" with 0), `["signedin", wallet, token, today, total,
+dailyCap, name]`, `["bossreward", units, ...]`, `["idle", [[tokenId, units, today, cap], ...], walletTotal]` (a 4th field, 1, for old games)
 (idle mining). Vouchers stay 18-decimal wei of the lifetime total (units x 1e14). NFT boosts (`web/boosts.js`): client →
 room `["wear", crafterId | null]` (the DEGEN slot, as before) and `["equip", slot, tokenId | null]` (any other slot:
 checked with `ownerOf` and the slot's `tierOf` on its contract; "coming soon" while it has none) and `["recheck"]` (read

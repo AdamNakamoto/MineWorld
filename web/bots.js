@@ -1,13 +1,11 @@
 // Idle mining: up to BOT_MAX of your other I'M DEGENs deployed to mine for you while you're online, as Courier World's
 // couriers work at a post office (docs/AUTOPILOT.md has the rules and the protocol; the numbers both sides share are in
 // bots-rules.js). The world server does the work: it checks each DEGEN is yours, pays each one its own daily cap spread
-// over 24 hours (every DEGEN slowing by the same fair share when the day is busy) while your game is connected and
-// signed in, and forgets them all when your connection goes. Nothing walks, digs or wears out in the game.
+// over 24 hours while your game is connected and signed in, and forgets them all when your connection goes. Nothing walks, digs or wears out in the game.
 //
 // This keeps the roster: the DEGENs you deployed, remembered per wallet in this browser (mwc:deployed:<wallet>) and
 // deployed again once you're signed in (after a reload, a reconnect, signing in again); what the server said about each
-// (botok, botoff); what each earned today of its cap (idle, botok), the fair share it last paid at, and the summary the
-// HUD and the Mining Site panel's Idle mining box show. A deploy the server can't take now (it couldn't read the chain,
+// (botok, botoff); what each earned today of its cap (idle, botok), and the summary the HUD and the Mining Site panel's Idle mining box show. A deploy the server can't take now (it couldn't read the chain,
 // or it's busy: retry 1), or one it doesn't answer within ASK_MS, is tried again, waiting longer each time (RETRY_MS);
 // one it refused (retry 0) is forgotten, and you're told why.
 
@@ -28,7 +26,6 @@ export function createBots(opts) {
   const days = new Map();
   // token id -> when (performance.now()): DEGENs recalled whose last word from the server (a botoff) hasn't come yet.
   const calledBack = new Map();
-  let share = null; // the fair share the server last paid at (1: the full rate), or null before any payment
   let timer = 0; // the next retry, waiting
   const net = () => opts.net?.() ?? null;
   const day = () => Math.floor(opts.now() / DAY_MS);
@@ -187,16 +184,15 @@ export function createBots(opts) {
     opts.toast?.(`DEGEN #${tok} stopped idle mining: ${String(why).replace(/\.$/, "")}.`, "bad");
     changed();
   }
-  /// ["idle", [[tokenId, units, today, cap], ...], walletTotal, share]: what idle mining just paid (every IDLE_TICK_MS,
-  /// and on a recall). Returns the units paid, all together.
-  function paid(list, s) {
+  /// ["idle", [[tokenId, units, today, cap], ...], walletTotal]: what idle mining just paid (every IDLE_TICK_MS, and on
+  /// a recall). Returns the units paid, all together.
+  function paid(list) {
     let units = 0;
     for (const [tok, u, today, cap] of list) {
       if (!Number.isInteger(tok)) continue;
       note(tok, today, cap);
       if (Number.isFinite(u) && u > 0) units += u;
     }
-    if (Number.isFinite(s) && s >= 0) share = Math.min(1, s);
     changed();
     return units;
   }
@@ -245,7 +241,6 @@ export function createBots(opts) {
       roster.clear();
       calledBack.clear();
       days.clear();
-      share = null;
       clearTimeout(timer);
       changed();
     },
@@ -259,8 +254,6 @@ export function createBots(opts) {
     },
     /// What DEGEN `tok` earned idle mining today and its cap: [today, cap] in units (cap null until the server said).
     today: todayOf,
-    /// The fair share the server last paid at (1: the full rate), or null before any payment.
-    get share() { return share; },
     /// The Idle mining box's rows: every DEGEN deployed, { tok, tier, level (null until the server has read them),
     /// live, state (in words), today, cap (units; null until the server has said) }.
     roster() {
@@ -272,13 +265,13 @@ export function createBots(opts) {
         return { tok: b.tok, tier: b.tier, level: b.level, live: b.live, state, today, cap };
       });
     },
-    /// For the HUD: { n (deployed), live (deployed on this connection now), today (units, all of them together), share
-    /// (or null), each ([tokenId, today, cap]) }.
+    /// For the HUD: { n (deployed), live (deployed on this connection now), today (units, all of them together), each
+    /// ([tokenId, today, cap]) }.
     summary() {
       const each = [...roster.keys()].map((tok) => [tok, ...todayOf(tok)]);
       let live = 0;
       for (const b of roster.values()) if (b.live) live++;
-      return { n: roster.size, live, today: each.reduce((t, e) => t + e[1], 0), share, each };
+      return { n: roster.size, live, today: each.reduce((t, e) => t + e[1], 0), each };
     },
   };
 }

@@ -8,7 +8,8 @@
 // monsters are spawned by the room and their hits come no faster and no harder than the best sword's. A player who
 // moves faster than anyone can, or has just (re)connected, earns nothing for a few seconds. Each wallet earns at most
 // DAILY_EARN_CAP a UTC day (more with boosts), from one connection at a time, its idle-mining DEGENs each up to their
-// own cap on top (below), and everyone together at most WORLD_DAILY_CAP. A player
+// own cap on top (below); what everyone earns together isn't capped (the mining vault converts at most rewards.js
+// VAULT_DAILY_LIMIT a day for everyone, first come, first served). A player
 // signs in once with their wallet (a free signature), and the room signs vouchers for their lifetime total, which
 // MiningSites pays out on-chain to wallets with an open mining site. The ledger counts ten-thousandths of a $MINE
 // (rewards.js UNIT); vouchers are in wei.
@@ -54,8 +55,7 @@
 // the player is online (signed in, and their game heard from in the last IDLE_ONLINE_MS: a message, or its ping), each
 // earns its own daily cap (DAILY_EARN_CAP with its DEGEN's cap boost) spread over IDLE_DAY_MS, paid by a Durable Object
 // alarm every IDLE_TICK_MS into the wallet's ledger total (not the player's own day), counted by token id
-// (`${ledgerKey}bots`). When they all want more than WORLD_DAILY_CAP has left spread over the rest of the UTC day, each
-// gets the same fair share of its rate (idleShare). Offline time never pays. Every incoming message counts towards the
+// (`${ledgerKey}bots`). Offline time never pays. Every incoming message counts towards the
 // day's: past BOT_BUSY_AT the room takes no new deploys until 00:00 UTC (the free plan's limits).
 
 import { DurableObject } from "cloudflare:workers";
@@ -67,10 +67,10 @@ import { privateKeyToAccount } from "viem/accounts";
 import { BLOCKS, AIR, WATER, BEDROCK, fastestBreak, BEST_DAMAGE, itemName, stackSize, maxDurability, damageable } from "../../web/blocks.js";
 import { naturalBlock, index as blockIndex } from "../../web/worldgen.js";
 import {
-  WORLD, CHUNK, HEIGHT, ROOM_REACH, isNight, MOBS, MOB_LIFE_MS, UNDERGROUND_Y, wrap, wrapDelta, wrapDist,
+  WORLD, CHUNK, HEIGHT, ROOM_REACH, isNight, MOBS, MOB_LIFE_MS, UNDERGROUND_Y, wrap, wrapDelta, wrapDist, GAME_VERSION,
 } from "../../web/rules.js";
 import {
-  BLOCK_REWARDS, MOB_REWARDS, WORLD_DAILY_CAP, ZONE_PAY, BOSS_POOL, UNIT, toUnits, unitsToWei, fmtMine,
+  BLOCK_REWARDS, MOB_REWARDS, ZONE_PAY, BOSS_POOL, UNIT, toUnits, unitsToWei, fmtMine,
 } from "../../web/rewards.js";
 import { SLOTS, isSlot, boostOf, NO_BOOST, dailyCap, withEarn, withSpeed, packBoost } from "../../web/boosts.js";
 import {
@@ -98,7 +98,6 @@ const EDIT_CHUNKS_PER_MIN = 12; // distinct chunks one connection may change a m
 const AUTH_EVERY_MS = 5000;
 const CHUNKS = WORLD / CHUNK;
 const DAY_MS = 86_400_000;
-const WORLD_CAP = toUnits(WORLD_DAILY_CAP);
 // The ledger's shards are stored as `${LEDGER}${shard}` and today's world total as WORLD_DAY, in units (rewards.js
 // UNIT). Before boosts they counted hundredths of a $MINE under "led:" and "worldday": those are read once, converted
 // (x100, so every total stays the same in wei and vouchers stay as they were), written under the new keys and deleted.
@@ -132,7 +131,7 @@ const RECHECKS = 2, RECHECK_EVERY_S = 15; // re-reads of a player's NFTs they ma
 // opened one; the first count checks SITES_SEED (the sites' owners when this count began) and every wallet in the
 // ledger, in one multicall. A site whose wallet never signs in to the game isn't counted. Sites never close.
 const SITES_KEY = "sitecount", SITE_KEY = "site:";
-// The top ticker shows how much of today's WORLD_DAILY_CAP is left to mine: games get today's total in their welcome
+// The top ticker shows how much everyone has mined today: games get today's total in their welcome
 // and in /count, and everyone hears ["world", units, day] as it grows, at most every WORLD_CAST_MS (sent while people
 // earn, so it never keeps the room awake).
 const WORLD_CAST_MS = 15_000;
@@ -318,7 +317,7 @@ export class World extends DurableObject {
     if (url.pathname === "/count") {
       const wait = new Promise((r) => setTimeout(() => r(this.siteCount ?? null), SITES_WAIT_MS));
       const [sites, w] = await Promise.all([Promise.race([this.sitesOpen(), wait]), this.worldToday()]);
-      return Response.json({ online: this.players().length, sites, mined: w.total / UNIT, day: w.day, cap: WORLD_DAILY_CAP, now: Date.now() },
+      return Response.json({ online: this.players().length, sites, mined: w.total / UNIT, day: w.day, now: Date.now() },
         { headers: { "access-control-allow-origin": "*" } });
     }
     if (req.headers.get("upgrade") !== "websocket") return new Response("Expected a WebSocket", { status: 426 });
@@ -435,6 +434,8 @@ export class World extends DurableObject {
     const w = await this.worldToday();
     this.send(ws, ["welcome", a.id, Date.now(), here.map(([, o]) => this.shown(o)), total, a.zone,
       { practice: this.practice, ticketsFree: this.ticketsFree(), reviveFree: this.reviveFree(), world: [w.total, w.day] }]);
+    // (A tab still open from before an update runs the old game: it shows some things wrongly until it reloads.)
+    if (!(info?.v >= GAME_VERSION)) this.send(ws, ["sys", "MineWorldCraft was updated: reload the page for the new version (everyone's daily mining limit is gone)."]);
     const voices = this.players().filter(([w, o]) => w !== ws && o.voice).map(([, o]) => o.id);
     if (voices.length) this.send(ws, ["voices", voices]);
     this.zoneCast(a.zone, ["join", ...this.shown(a)], ws);
@@ -1348,7 +1349,7 @@ export class World extends DurableObject {
     this.scheduleFlush();
   }
   /// Player `a` did something worth `mine` $MINE at home's rate: it's counted times their zone's rate (rewards.js
-  /// ZONE_PAY) and their earn boost, within their daily cap (with their cap boost, in this zone) and everyone's.
+  /// ZONE_PAY) and their earn boost, within their daily cap (with their cap boost, in this zone).
   async earn(ws, a, mine, what) {
     const b = this.boost(a), worn = a.wallet ? a.eq?.crafter?.[0] : null;
     this.recheck(ws, a);
@@ -1356,15 +1357,15 @@ export class World extends DurableObject {
     if (c > 0 && worn) await this.wornToday(worn);
     return c;
   }
-  /// Counts `units` for `wallet` (within its daily cap `cap` and everyone's), and tells its game (`ws`, if it's here).
+  /// Counts `units` for `wallet` (within its daily cap `cap`), and tells its game (`ws`, if it's here).
   /// Returns what was counted.
   async creditWallet(wallet, units, what, ws, cap) {
     if (!units || !wallet) return 0;
     const [s, l] = await this.ledger(wallet);
     const w = await this.worldToday();
-    const c = Math.min(units, cap - l.today, WORLD_CAP - w.total);
+    const c = Math.min(units, cap - l.today);
     if (c <= 0) {
-      if (ws) this.send(ws, ["earn", 0, l.today, l.total, w.total >= WORLD_CAP ? "worldcap" : "cap"]);
+      if (ws) this.send(ws, ["earn", 0, l.today, l.total, "cap"]);
       return 0;
     }
     l.today += c;
@@ -2045,8 +2046,8 @@ export class World extends DurableObject {
     await this.flush().catch((e) => console.log("flush failed", e?.message ?? e));
     await Promise.all(reads);
   }
-  /// One idle tick: every online player's deployed DEGENs are paid at one fair share for everyone (idleShare), and each
-  /// of those players hears their payment (["idle", ...]); an offline player's are marked paid up to now without pay
+  /// One idle tick: every online player's deployed DEGENs are paid what they earned since the last one, and each of
+  /// those players hears their payment (["idle", ...]); an offline player's are marked paid up to now without pay
   /// (offline time never pays). Resolves the reads on-chain started for the players whose DEGENs were due one
   /// (readBots: each player's every BOOST_RECHECK_MS).
   async idleTick(now) {
@@ -2057,12 +2058,12 @@ export class World extends DurableObject {
       if (wallet && !led.has(wallet)) led.set(wallet, await this.ledger(wallet));
     }
     // (Everything is read: from here, everyone is paid in one go.)
-    const owners = this.idleOwners(now, d), share = this.idleShare(w, owners, now), reads = [];
+    const owners = this.idleOwners(now, d), reads = [];
     for (const ws of socks) {
       const a = this.att(ws), rows = owners.find(([o]) => o === ws)?.[2];
       if (rows && led.has(a.wallet)) {
         const [s, l] = led.get(a.wallet);
-        this.send(ws, this.idlePay(s, l, rows, share, w, d, now));
+        this.send(ws, this.idlePay(s, l, rows, w, d, now));
         if (now >= (a.botsAt ?? 0)) {
           a.botsAt = now + BOOST_RETRY_MS; // (one read at a time)
           reads.push(this.readBots(ws, a, a.wallet).catch((e) => console.log("idle DEGENs check failed", e?.shortMessage ?? e?.message ?? e)));
@@ -2072,12 +2073,12 @@ export class World extends DurableObject {
     }
     return reads;
   }
-  /// The online players with DEGENs deployed (never a closed connection, nor `skip`), each with what its DEGENs want
-  /// now (idleRows): [[ws, a, rows], ...].
-  idleOwners(now, d, skip) {
+  /// The online players with DEGENs deployed (never a closed connection), each with what its DEGENs want now
+  /// (idleRows): [[ws, a, rows], ...].
+  idleOwners(now, d) {
     const out = [];
     for (const ws of this.ctx.getWebSockets()) {
-      if (ws === skip || this.left.has(ws)) continue;
+      if (this.left.has(ws)) continue;
       const a = this.att(ws);
       if (a.bots?.length && this.online(ws, a, now)) out.push([ws, a, this.idleRows(a, d, now)]);
     }
@@ -2092,18 +2093,7 @@ export class World extends DurableObject {
       return [b, Math.max(0, Math.min(idleRate(cap) * gap, cap - today)), today, cap, gap];
     });
   }
-  /// The fair share for paying `owners` (idleOwners) now: what the world has left today (`w`), spread evenly over the
-  /// rest of the UTC day, is what idle mining may take for the time this payment covers (the longest gap of those that
-  /// want something). If they all want more, each gets the same part of its want (every idle rate slows evenly, so
-  /// WORLD_DAILY_CAP lasts until 00:00 UTC); otherwise each gets all of it (1).
-  idleShare(w, owners, now) {
-    let want = 0, span = 0;
-    for (const [, , rows] of owners) for (const [, wi, , , gap] of rows) if (wi > 0) { want += wi; span = Math.max(span, gap); }
-    const left = Math.max(0, WORLD_CAP - w.total), msLeft = (Math.floor(now / DAY_MS) + 1) * DAY_MS - now;
-    const budget = Math.min(left, (left * span) / msLeft);
-    return want > budget ? budget / want : 1;
-  }
-  /// Pays player `a`'s DEGENs `toks` what they earned up to `now`, at this moment's fair share, before they go
+  /// Pays player `a`'s DEGENs `toks` what they earned up to `now`, before they go
   /// (recalled, signed out, signed in elsewhere, the connection closing). Resolves the payment (["idle", ...]), or null
   /// when the player isn't online (offline time never pays) or none of them is deployed.
   async idleSettle(ws, a, toks, now) {
@@ -2112,22 +2102,21 @@ export class World extends DurableObject {
     if (a.wallet !== wallet || !a.bots?.length) return null;
     const rows = this.idleRows(a, d, now), mine = rows.filter(([b]) => toks.includes(b[0]));
     if (!mine.length) return null;
-    return this.idlePay(s, l, mine, this.idleShare(w, [...this.idleOwners(now, d, ws), [ws, a, rows]], now), w, d, now);
+    return this.idlePay(s, l, mine, w, d, now);
   }
-  /// Pays DEGENs `rows` (idleRows, of the wallet whose ledger entry is `l`, in shard `s`) their want times `share` in
-  /// whole units, never past what the world has left today (`w`), and marks them paid up to `now` (less the time the
-  /// fraction of a unit left over is worth: the next payment covers it, so a whole day online reaches the cap exactly):
-  /// into the wallet's total (never its own day, l.today), each token's day (`d`), the wallet's day list (l.bots) and
-  /// the world's total. Returns the payment for its game: ["idle", [[tokenId, units, today, cap], ...], walletTotal,
-  /// share].
-  idlePay(s, l, rows, share, w, d, now) {
+  /// Pays DEGENs `rows` (idleRows, of the wallet whose ledger entry is `l`, in shard `s`) their want in whole units, and
+  /// marks them paid up to `now` (less the time the fraction of a unit left over is worth: the next payment covers it,
+  /// so a whole day online reaches the cap exactly): into the wallet's total (never its own day, l.today), each token's
+  /// day (`d`), the wallet's day list (l.bots) and today's world total (`w`, for the ticker). Returns the payment for its
+  /// game: ["idle", [[tokenId, units, today, cap], ...], walletTotal] (and a 1 for old games: see the end).
+  idlePay(s, l, rows, w, d, now) {
     const out = [];
     let paid = 0;
     for (const [b, want, today, cap, gap] of rows) {
       // (At most BOT_MAX different DEGENs earn for a wallet in a day, however they were deployed: a 5th earns nothing.)
       const fifth = !(l.bots ?? []).includes(b[0]) && (l.bots?.length ?? 0) >= BOT_MAX;
-      const due = fifth ? 0 : want * share, c = Math.max(0, Math.min(Math.floor(due), WORLD_CAP - w.total));
-      const owed = c === Math.floor(due) && share > 0 ? Math.min(gap, (due - c) / (idleRate(cap) * share)) : 0; // (ms)
+      const due = fifth ? 0 : want, c = Math.floor(due);
+      const owed = due > c ? Math.min(gap, (due - c) / idleRate(cap)) : 0; // (ms)
       b[3] = Math.max(b[3], now - owed);
       if (c > 0) {
         l.total += c;
@@ -2145,13 +2134,13 @@ export class World extends DurableObject {
       this.scheduleFlush();
       this.castWorld();
     }
-    return ["idle", out, l.total, Math.floor(share * 1000) / 1000];
+    return ["idle", out, l.total, 1]; // (1: the full rate, for games from before 2026-10-18, which show a fair share)
   }
 
   // ---------------------------------------------------------------- local testing only
 
   /// Dev hooks, for trying the daily caps without mining for hours: ["dev", "today", mine] sets the signed-in wallet's
-  /// earnings today, ["dev", "world", mine] everyone's. For idle mining: ["dev", "msgs", n] sets today's message count
+  /// earnings today, ["dev", "world", mine] today's world total (the ticker). For idle mining: ["dev", "msgs", n] sets today's message count
   /// (BOT_BUSY_AT), ["dev", "bot", tokenId] deploys a Common level 1 DEGEN without reading the chain (so it can be tried
   /// with a wallet that owns no DEGEN, until its first read on-chain recalls it), ["dev", "tick", 0] runs the idle tick
   /// now. Only when the room runs under `wrangler dev --var DEV_HOOKS:1` (never put DEV_HOOKS in wrangler.toml) and the

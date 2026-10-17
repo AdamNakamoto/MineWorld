@@ -29,7 +29,7 @@ import { createAvatar } from "./avatar.js";
 import { heldModel } from "./held.js";
 import { unpackTraits } from "./degen-skin.js";
 import { unpackBoost } from "./boosts.js";
-import { wrap, wrapDelta } from "./rules.js";
+import { wrap, wrapDelta, GAME_VERSION } from "./rules.js";
 /// An angle brought round into [-pi, pi).
 const turnBy = (a) => a - 2 * Math.PI * Math.floor(a / (2 * Math.PI) + 0.5);
 import { place } from "./planet.js";
@@ -104,7 +104,7 @@ export function createNet(url, scene, h) {
     ws.onopen = () => {
       open = true;
       backoff = 1000;
-      ws.send(JSON.stringify(["hello", { ...(hello ?? {}), zone }]));
+      ws.send(JSON.stringify(["hello", { ...(hello ?? {}), zone, v: GAME_VERSION }]));
       flying = null;
       lastSent = unsent(); // (the room starts us on the pad: say where we really are)
       if (resume) ws.send(JSON.stringify(["resume", resume.address, resume.token]));
@@ -253,7 +253,7 @@ export function createNet(url, scene, h) {
       // Your deployed DEGENs (bots.js), as the room keeps them, and what idle mining paid.
       case "botok": h.botok?.(m[1], m[2], m[3], m[4], m[5]); break;
       case "botoff": h.botoff?.(m[1], m[2] ?? null, m[3] ? 1 : 0); break;
-      case "idle": h.idle?.(Array.isArray(m[1]) ? m[1].filter(Array.isArray) : [], m[2], m[3]); break;
+      case "idle": h.idle?.(Array.isArray(m[1]) ? m[1].filter(Array.isArray) : [], m[2]); break;
       case "earn": h.earn?.({ units: m[1], today: m[2], total: m[3], what: m[4] }); break;
       case "boost": h.boost?.(unpackBoost(m.slice(1)), m[6]); break;
       case "ledger": h.ledger?.({ today: m[1], total: m[2], cap: m[3] }); break;

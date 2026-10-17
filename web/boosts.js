@@ -14,7 +14,7 @@
 //   move   walking (and, once there are vehicles, driving) is this much faster. Only the game uses it: the server's
 //          speed check (40 blocks a second) allows far more than the fastest boosted walk.
 // A player uses one item per slot (a Crafter, a skin, a companion, an aura, a vehicle); the slots' boosts add up, and
-// each total is clamped to MAX. The world's daily cap (rewards.js WORLD_DAILY_CAP) holds whatever anyone's boost.
+// each total is clamped to MAX.
 // Guests earn nothing, so they get no boost.
 //
 // How the server knows: a Crafter's boost comes from `["wear", tokenId]` (ownerOf on MineWorldCrafters, its rarity
