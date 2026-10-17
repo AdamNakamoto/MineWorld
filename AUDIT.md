@@ -1327,3 +1327,16 @@ seeds two tokens drew the same card (e.g. #1311 and #2077 under keccak256(abi.en
 on-chain "no two look alike". Fixed in the art (the glasses' lower frame is `.11..11.`, the hood's edge starts at row
 5), CrafterArt.sol and the vectors regenerated, and two checks added (above). A direct simulation over 4,000 random
 seeds compares every token's card with every other's and finds no two alike.
+
+## 13. MiningSites upgrade: per-wallet cap up to 35,000 (2026-10-18, not audited by IMD)
+
+At the owner's request, after launch, MiningSites' `MAX_WALLET_DAILY_CAP` went from `3_500e18` to `35_000e18` (the
+vault's daily limit), so the owner can let one wallet convert the whole day's 35,000; nothing else in the contract
+changed (storage layout, ABI and the EIP-712 domain are identical; the bytecode differs only in the constant). The
+owner upgraded the proxy with `script/UpgradeSites.s.sol`: new implementation
+`0xf6aD061be48f0CD20BEEaAAc39f3E52292DAE3b0` (source-verified on Sourcify, full match), `upgradeToAndCall`, then
+`setCaps(35,000e18, 35,000e18)`. The previous implementation was `0x185a49240D3B2EC7BAC1b00b6df9B74a5F4674F6`; a frozen
+copy of it is `test/legacy/MiningSitesV1.sol` (same creation bytecode), and the tests upgrade from it and check every
+player's books, the caps' bounds, old vouchers and owner-only access. What changes: a leaked server key and one wallet
+with a site can now take the whole day's 35,000 (before, it took ten wallets); the vault's 35,000 a day and 10,500,000
+in all are unchanged. **IMD Swarm has not seen this change.**

@@ -3,8 +3,9 @@ pragma solidity ^0.8.26;
 
 // A FROZEN COPY, for the upgrade tests only: MiningSites exactly as it runs on Robinhood Chain before the 2026-10-18
 // upgrade (implementation 0x185a49240D3B2EC7BAC1b00b6df9B74a5F4674F6 behind the proxy
-// 0x2B3Ed234eF4A048984cC833Ac52373CC3E27004b), from `git show a78c375:contracts/src/MiningSites.sol`, with the contract
-// renamed MiningSitesV1 and its imports pointed at src/. It compiles to the same bytecode as the live implementation.
+// 0x2B3Ed234eF4A048984cC833Ac52373CC3E27004b), from `git show 9682984:contracts/src/MiningSites.sol` (the launch;
+// unchanged until the upgrade), with the contract renamed MiningSitesV1 and its imports pointed at src/. It compiles
+// to the same creation bytecode as the live implementation (checked against the launch broadcast).
 // Never edit it.
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
